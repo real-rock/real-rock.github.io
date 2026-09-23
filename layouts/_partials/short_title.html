@@ -1,0 +1,6 @@
+{{- /* "PostgreSQL 인터널 1: 프로세스 구조" → "프로세스 구조". 시리즈 글이 아니면 제목 그대로 */ -}}
+{{- $title := .Title }}
+{{- if .GetTerms "series" }}
+  {{- $title = replaceRE `^[^:]+:\s*` "" .Title }}
+{{- end }}
+{{- return $title }}

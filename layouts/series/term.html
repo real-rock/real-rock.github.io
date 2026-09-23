@@ -1,0 +1,32 @@
+{{- define "main" }}
+{{- $pages := .Pages.ByWeight }}
+<header class="series-hero s-{{ .Params.key | default "default" }}">
+  {{- partial "breadcrumbs.html" . }}
+  <span class="series-mark">{{ .Params.mark | default "SERIES" }}</span>
+  <h1>{{ .Title }}</h1>
+  {{- with .Description }}<p class="series-hero-desc">{{ . }}</p>{{ end }}
+  <p class="series-hero-meta">
+    {{- if $pages }}전체 {{ len $pages }}편{{ else }}연재 예정{{ end }}
+    {{- with .Params.version }} · {{ . }} 기준{{ end }}
+  </p>
+</header>
+
+{{- if $pages }}
+<ol class="chapter-list s-{{ .Params.key | default "default" }}">
+  {{- range $i, $p := $pages }}
+  <li class="chapter">
+    <span class="chapter-no">{{ printf "%02d" (add $i 1) }}</span>
+    <div class="chapter-body">
+      <h3>
+        <a href="{{ $p.RelPermalink }}">{{ partial "short_title.html" $p }}</a>
+        {{- if $p.Draft }}<span class="chip chip-draft">초안</span>{{ end }}
+      </h3>
+      {{- with $p.Summary }}<p>{{ . | plainify | htmlUnescape | truncate 140 }}</p>{{ end }}
+    </div>
+  </li>
+  {{- end }}
+</ol>
+{{- else }}
+<p class="series-soon">첫 글을 준비하고 있습니다.</p>
+{{- end }}
+{{- end }}

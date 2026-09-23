@@ -1,0 +1,24 @@
+{{- /*
+  페이지가 속한 시리즈 정보를 반환합니다.
+  반환값: dict term(시리즈 페이지) key(색상 키) pages(weight 순 글 목록) index(1부터) total shortTitle
+  시리즈가 없으면 빈 dict를 반환합니다.
+*/ -}}
+{{- $page := . }}
+{{- $info := dict }}
+{{- with $page.GetTerms "series" }}
+  {{- $term := index . 0 }}
+  {{- $pages := $term.Pages.ByWeight }}
+  {{- $idx := 0 }}
+  {{- range $i, $p := $pages }}
+    {{- if eq $p.RelPermalink $page.RelPermalink }}{{ $idx = add $i 1 }}{{ end }}
+  {{- end }}
+  {{- $info = dict
+      "term" $term
+      "key" ($term.Params.key | default "default")
+      "pages" $pages
+      "index" $idx
+      "total" (len $pages)
+      "shortTitle" (partial "short_title.html" $page)
+  }}
+{{- end }}
+{{- return $info }}

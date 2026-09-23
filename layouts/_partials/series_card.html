@@ -1,0 +1,26 @@
+{{- $t := . }}
+{{- $pages := $t.Pages.ByWeight }}
+<article class="series-card s-{{ $t.Params.key | default "default" }}">
+  <div class="series-card-top">
+    <span class="series-mark">{{ $t.Params.mark | default (substr $t.Title 0 2) }}</span>
+    <span class="series-count">{{ if $pages }}{{ len $pages }}편{{ else }}연재 예정{{ end }}</span>
+  </div>
+  <h3 class="series-card-title"><a href="{{ $t.RelPermalink }}">{{ $t.Title }}</a></h3>
+  {{- with $t.Description }}<p class="series-card-desc">{{ . }}</p>{{ end }}
+  {{- if $pages }}
+  <ol class="series-peek">
+    {{- range $i, $p := first 4 $pages }}
+    <li><span class="n">{{ printf "%02d" (add $i 1) }}</span>{{ partial "short_title.html" $p }}</li>
+    {{- end }}
+    {{- if gt (len $pages) 4 }}
+    <li class="more"><span class="n">··</span>외 {{ sub (len $pages) 4 }}편</li>
+    {{- end }}
+  </ol>
+  {{- else }}
+  <p class="series-soon">첫 글을 준비하고 있습니다.</p>
+  {{- end }}
+  <div class="series-card-foot">
+    <span>{{ with $t.Params.version }}{{ . }} 기준{{ end }}</span>
+    <span class="go">목차 보기 →</span>
+  </div>
+</article>

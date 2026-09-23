@@ -1,0 +1,27 @@
+{{- /* 글 상단의 시리즈 목차 박스 */ -}}
+{{- $s := partial "series_info.html" . }}
+{{- with $s.term }}
+<aside class="series-nav s-{{ $s.key }}" aria-label="시리즈 목차">
+  <details>
+    <summary>
+      <span class="series-nav-label">시리즈</span>
+      <span class="series-nav-title">{{ .Title }}</span>
+      <span class="series-nav-progress">{{ $s.index }} / {{ $s.total }}</span>
+      <span class="series-nav-bar" aria-hidden="true"><i style="width: {{ div (mul $s.index 100) $s.total }}%"></i></span>
+    </summary>
+    <ol>
+      {{- range $i, $p := $s.pages }}
+      {{- $current := eq (add $i 1) $s.index }}
+      <li{{ if $current }} class="current"{{ end }}>
+        <span class="n">{{ printf "%02d" (add $i 1) }}</span>
+        {{- if $current }}
+        <span>{{ partial "short_title.html" $p }}</span>
+        {{- else }}
+        <a href="{{ $p.RelPermalink }}">{{ partial "short_title.html" $p }}</a>
+        {{- end }}
+      </li>
+      {{- end }}
+    </ol>
+  </details>
+</aside>
+{{- end }}

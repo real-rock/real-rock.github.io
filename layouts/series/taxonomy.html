@@ -1,0 +1,11 @@
+{{- define "main" }}
+<header class="page-header">
+  <h1>{{ .Title }}</h1>
+  {{- with .Description }}
+  <div class="post-description">{{ . }}</div>
+  {{- end }}
+</header>
+<div class="series-grid">
+  {{- range sort .Pages "Params.order" }}{{ partial "series_card.html" . }}{{ end }}
+</div>
+{{- end }}

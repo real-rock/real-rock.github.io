@@ -1,0 +1,30 @@
+{{- /* 시리즈 글이면 시리즈 순서로, 아니면 날짜 순서로 이전/다음 글을 연결합니다 */ -}}
+{{- $s := partial "series_info.html" . }}
+{{- $prev := false }}
+{{- $next := false }}
+{{- if $s.index }}
+  {{- if gt $s.index 1 }}{{ $prev = index $s.pages (sub $s.index 2) }}{{ end }}
+  {{- if lt $s.index $s.total }}{{ $next = index $s.pages $s.index }}{{ end }}
+{{- else }}
+  {{- $pages := where site.RegularPages "Type" "in" site.Params.mainSections }}
+  {{- if in $pages . }}
+    {{- $prev = $pages.Next . }}
+    {{- $next = $pages.Prev . }}
+  {{- end }}
+{{- end }}
+{{- if or $prev $next }}
+<nav class="paginav{{ with $s.key }} s-{{ . }}{{ end }}">
+  {{- with $prev }}
+  <a class="prev" href="{{ .RelPermalink }}">
+    <span class="title">← 이전 글</span>
+    <span>{{ partial "short_title.html" . }}</span>
+  </a>
+  {{- end }}
+  {{- with $next }}
+  <a class="next" href="{{ .RelPermalink }}">
+    <span class="title">다음 글 →</span>
+    <span>{{ partial "short_title.html" . }}</span>
+  </a>
+  {{- end }}
+</nav>
+{{- end }}

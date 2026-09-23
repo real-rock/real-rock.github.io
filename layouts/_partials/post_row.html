@@ -1,0 +1,17 @@
+{{- $p := . }}
+{{- $s := partial "series_info.html" $p }}
+<article class="post-row{{ with $s.key }} s-{{ . }}{{ end }}">
+  <div class="post-row-meta">
+    <time datetime="{{ $p.Date.Format "2006-01-02" }}">{{ $p.Date.Format "2006.01.02" }}</time>
+    {{- with $s.term }}
+    <span class="chip">{{ .LinkTitle }}{{ with $s.index }} · {{ printf "%02d" . }}{{ end }}</span>
+    {{- end }}
+    {{- if $p.Draft }}<span class="chip chip-draft">초안</span>{{ end }}
+  </div>
+  <h3 class="post-row-title">
+    <a href="{{ $p.RelPermalink }}">{{ $s.shortTitle | default $p.Title }}</a>
+  </h3>
+  {{- with $p.Summary }}
+  <p class="post-row-summary">{{ . | plainify | htmlUnescape | truncate 140 }}</p>
+  {{- end }}
+</article>
