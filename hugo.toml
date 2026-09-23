@@ -1,0 +1,68 @@
+baseURL = "https://example.github.io/"   # 배포 시 GitHub Actions가 자동으로 덮어씁니다
+languageCode = "ko-kr"
+defaultContentLanguage = "ko"
+hasCJKLanguage = true
+title = "DB 인터널 노트"
+theme = "PaperMod"
+enableRobotsTXT = true
+enableEmoji = true
+
+[pagination]
+  pagerSize = 10
+
+[taxonomies]
+  tag = "tags"
+  series = "series"
+
+[outputs]
+  home = ["HTML", "RSS", "JSON"]   # JSON은 블로그 내 검색용
+
+[params]
+  author = "Jin"
+  description = "PostgreSQL과 MongoDB의 내부 구조를 운영 관점에서 풀어 쓰는 블로그"
+  defaultTheme = "auto"
+  ShowReadingTime = true
+  ShowToc = true
+  TocOpen = false
+  ShowCodeCopyButtons = true
+  ShowPostNavLinks = true
+  ShowBreadCrumbs = true
+  ShowWordCount = false
+  ShowShareButtons = false
+  ShowLastMod = true
+  DateFormat = "2006-01-02"
+
+  [params.homeInfoParams]
+    Title = "DB 인터널 노트"
+    Content = "PostgreSQL과 MongoDB가 내부에서 어떻게 동작하는지, 그리고 그 구조가 운영에서 어떤 현상으로 나타나는지 기록합니다."
+
+  [params.fuseOpts]
+    keys = ["title", "summary", "content"]
+
+[[menu.main]]
+  name = "글"
+  url = "/posts/"
+  weight = 10
+[[menu.main]]
+  name = "시리즈"
+  url = "/series/"
+  weight = 20
+[[menu.main]]
+  name = "태그"
+  url = "/tags/"
+  weight = 30
+[[menu.main]]
+  name = "검색"
+  url = "/search/"
+  weight = 40
+[[menu.main]]
+  name = "소개"
+  url = "/about/"
+  weight = 50
+
+[markup]
+  [markup.goldmark.renderer]
+    unsafe = true
+  [markup.highlight]
+    style = "github"
+    lineNos = false

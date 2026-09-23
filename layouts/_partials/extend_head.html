@@ -1,0 +1,8 @@
+{{- /* 글 안에 mermaid 코드 블록이 있을 때만 Mermaid 스크립트를 불러옵니다 */ -}}
+{{- if and .IsPage (strings.Contains .RawContent "```mermaid") }}
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  const dark = document.body.classList.contains("dark");
+  mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default" });
+</script>
+{{- end }}
