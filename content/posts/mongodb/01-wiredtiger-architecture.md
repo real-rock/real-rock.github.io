@@ -1,11 +1,12 @@
 ---
-title: "MongoDB 인터널 1: WiredTiger 스토리지 엔진 구조"
+title: "MongoDB 인터널 1: WiredTiger 스토리지 엔진 구조와 캐시"
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
 tags: ["MongoDB", "WiredTiger", "캐시"]
 weight: 1
 summary: "MongoDB의 데이터는 실제로 어디에 어떻게 저장되는가"
+description: "WiredTiger의 파일 구조, B-tree, 캐시와 eviction"
 ---
 
 > 이 글은 MongoDB 8.0 기준으로 작성했습니다.

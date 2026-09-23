@@ -6,6 +6,7 @@ series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "MVCC", "트랜잭션", "격리 수준"]
 weight: 4
 summary: "PostgreSQL은 어떻게 읽기와 쓰기를 서로 막지 않는가"
+description: "xmin/xmax, 스냅샷, 튜플 가시성 판단"
 ---
 
 > 이 글은 PostgreSQL 17 기준으로 작성했습니다.

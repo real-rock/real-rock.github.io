@@ -6,6 +6,7 @@ series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "프로세스", "아키텍처"]
 weight: 1
 summary: "postmaster와 backend, 백그라운드 프로세스가 각각 무슨 일을 하는지"
+description: "postmaster, backend, 백그라운드 프로세스들의 역할"
 ---
 
 > 이 글은 PostgreSQL 17 기준으로 작성했습니다.

@@ -1,23 +1,25 @@
 {{- /*
   페이지가 속한 시리즈 정보를 반환합니다.
-  반환값: dict term(시리즈 페이지) key(색상 키) pages(weight 순 글 목록) index(1부터) total shortTitle
+  반환값: dict term(시리즈 페이지) key(색상 키) pages(weight 순 공개 글) chapters(공개 목차)
+          index(목차상 번호, 1부터) total(목차 전체 편수) shortTitle
   시리즈가 없으면 빈 dict를 반환합니다.
 */ -}}
 {{- $page := . }}
 {{- $info := dict }}
 {{- with $page.GetTerms "series" }}
   {{- $term := index . 0 }}
-  {{- $pages := $term.Pages.ByWeight }}
+  {{- $chapters := partial "series_chapters.html" $term }}
   {{- $idx := 0 }}
-  {{- range $i, $p := $pages }}
-    {{- if eq $p.RelPermalink $page.RelPermalink }}{{ $idx = add $i 1 }}{{ end }}
+  {{- range $chapters }}
+    {{- if and .page (eq .page.RelPermalink $page.RelPermalink) }}{{ $idx = .n }}{{ end }}
   {{- end }}
   {{- $info = dict
       "term" $term
       "key" ($term.Params.key | default "default")
-      "pages" $pages
+      "pages" $term.Pages.ByWeight
+      "chapters" $chapters
       "index" $idx
-      "total" (len $pages)
+      "total" (len $chapters)
       "shortTitle" (partial "short_title.html" $page)
   }}
 {{- end }}

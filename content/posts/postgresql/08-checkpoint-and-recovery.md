@@ -1,11 +1,12 @@
 ---
-title: "PostgreSQL 인터널 8: 체크포인트와 장애 복구"
+title: "PostgreSQL 인터널 8: 체크포인트와 장애 복구 과정"
 date: 2026-09-23
 draft: true
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "체크포인트", "복구"]
 weight: 8
 summary: "장애가 나도 데이터가 사라지지 않는 이유"
+description: "체크포인트가 하는 일과 장애 후 복구가 진행되는 순서"
 ---
 
 > 이 글은 PostgreSQL 17 기준으로 작성했습니다.

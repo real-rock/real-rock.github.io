@@ -6,6 +6,7 @@ series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "XID", "wraparound", "freeze"]
 weight: 6
 summary: "32비트 트랜잭션 ID가 한 바퀴 돌면 무슨 일이 생기는가"
+description: "왜 생기고 어떻게 막는가"
 ---
 
 > 이 글은 PostgreSQL 17 기준으로 작성했습니다.

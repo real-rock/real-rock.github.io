@@ -7,17 +7,18 @@
       <span class="series-nav-label">시리즈</span>
       <span class="series-nav-title">{{ .Title }}</span>
       <span class="series-nav-progress">{{ $s.index }} / {{ $s.total }}</span>
-      <span class="series-nav-bar" aria-hidden="true"><i style="width: {{ div (mul $s.index 100) $s.total }}%"></i></span>
+      <span class="series-nav-bar" aria-hidden="true"><i style="width: {{ div (mul $s.index 100) (math.Max $s.total 1) }}%"></i></span>
     </summary>
     <ol>
-      {{- range $i, $p := $s.pages }}
-      {{- $current := eq (add $i 1) $s.index }}
-      <li{{ if $current }} class="current"{{ end }}>
-        <span class="n">{{ printf "%02d" (add $i 1) }}</span>
-        {{- if $current }}
-        <span>{{ partial "short_title.html" $p }}</span>
+      {{- range $s.chapters }}
+      {{- $current := eq .n $s.index }}
+      <li class="{{ if $current }}current{{ else if not .page }}planned{{ end }}">
+        <span class="n">{{ printf "%02d" .n }}</span>
+        {{- if or $current (not .page) }}
+        <span>{{ .title }}</span>
+        {{- if not .page }}<span class="chip chip-planned">준비 중</span>{{ end }}
         {{- else }}
-        <a href="{{ $p.RelPermalink }}">{{ partial "short_title.html" $p }}</a>
+        <a href="{{ .page.RelPermalink }}">{{ .title }}</a>
         {{- end }}
       </li>
       {{- end }}

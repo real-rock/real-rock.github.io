@@ -1,0 +1,29 @@
+{{- /*
+  시리즈 페이지(term)를 받아 공개 목차를 반환합니다.
+  _index.md의 chapters가 있으면 그것을 기준으로, n번째 항목을 weight가 n인 글과 연결합니다.
+  반환값: dict n title description summary page(없으면 false) 의 slice
+*/ -}}
+{{- $term := . }}
+{{- $pages := $term.Pages.ByWeight }}
+{{- $out := slice }}
+{{- with $term.Params.chapters }}
+  {{- range $i, $c := . }}
+    {{- $n := add $i 1 }}
+    {{- $page := false }}
+    {{- range first 1 (where $pages "Weight" $n) }}{{ $page = . }}{{ end }}
+    {{- $title := $c.title }}
+    {{- $desc := $c.description }}
+    {{- $summary := "" }}
+    {{- with $page }}
+      {{- $title = partial "short_title.html" . }}
+      {{- $desc = .Description | default $desc }}
+      {{- $summary = .Summary }}
+    {{- end }}
+    {{- $out = $out | append (slice (dict "n" $n "title" $title "description" $desc "summary" $summary "page" $page)) }}
+  {{- end }}
+{{- else }}
+  {{- range $i, $p := $pages }}
+    {{- $out = $out | append (slice (dict "n" (add $i 1) "title" (partial "short_title.html" $p) "description" $p.Description "summary" $p.Summary "page" $p)) }}
+  {{- end }}
+{{- end }}
+{{- return $out }}

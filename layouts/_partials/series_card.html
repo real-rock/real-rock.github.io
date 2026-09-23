@@ -1,19 +1,24 @@
 {{- $t := . }}
-{{- $pages := $t.Pages.ByWeight }}
+{{- $chapters := partial "series_chapters.html" $t }}
+{{- $published := len $t.Pages }}
 <article class="series-card s-{{ $t.Params.key | default "default" }}">
   <div class="series-card-top">
     <span class="series-mark">{{ $t.Params.mark | default (substr $t.Title 0 2) }}</span>
-    <span class="series-count">{{ if $pages }}{{ len $pages }}편{{ else }}연재 예정{{ end }}</span>
+    <span class="series-count">
+      {{- if eq $published 0 }}{{ len $chapters }}편 연재 예정
+      {{- else if eq $published (len $chapters) }}{{ len $chapters }}편
+      {{- else }}{{ $published }} / {{ len $chapters }}편 공개{{ end -}}
+    </span>
   </div>
   <h3 class="series-card-title"><a href="{{ $t.RelPermalink }}">{{ $t.Title }}</a></h3>
   {{- with $t.Description }}<p class="series-card-desc">{{ . }}</p>{{ end }}
-  {{- if $pages }}
+  {{- if $chapters }}
   <ol class="series-peek">
-    {{- range $i, $p := first 4 $pages }}
-    <li><span class="n">{{ printf "%02d" (add $i 1) }}</span>{{ partial "short_title.html" $p }}</li>
+    {{- range first 4 $chapters }}
+    <li{{ if not .page }} class="planned"{{ end }}><span class="n">{{ printf "%02d" .n }}</span>{{ .title }}</li>
     {{- end }}
-    {{- if gt (len $pages) 4 }}
-    <li class="more"><span class="n">··</span>외 {{ sub (len $pages) 4 }}편</li>
+    {{- if gt (len $chapters) 4 }}
+    <li class="more"><span class="n">··</span>외 {{ sub (len $chapters) 4 }}편</li>
     {{- end }}
   </ol>
   {{- else }}

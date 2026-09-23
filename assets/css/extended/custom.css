@@ -560,6 +560,66 @@ code, pre, kbd, .chip, .series-mark, .eyebrow, time,
     color: var(--secondary);
 }
 
+.chapter-body .chapter-topics {
+    margin-top: 4px;
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--content);
+}
+
+/* 아직 공개되지 않은 챕터 */
+.chip-planned {
+    color: var(--secondary);
+    background: var(--muted-bg);
+    border: 1px dashed var(--tertiary);
+}
+
+.chapter.planned .chapter-no {
+    color: var(--secondary);
+    border-style: dashed;
+    border-color: var(--tertiary);
+}
+
+.chapter.planned:hover .chapter-no {
+    color: var(--secondary);
+    background: var(--theme);
+}
+
+.chapter.planned h3 {
+    color: var(--secondary);
+}
+
+.series-peek li.planned {
+    color: var(--secondary);
+}
+
+.series-peek li.planned .n {
+    color: var(--secondary);
+    opacity: 0.7;
+}
+
+.series-nav li.planned {
+    color: var(--secondary);
+    opacity: 0.8;
+}
+
+.series-nav li .chip-planned {
+    margin-inline-start: auto;
+    align-self: center;
+}
+
+.series-intro {
+    margin: -8px 0 28px;
+    padding: 0 4px;
+    font-size: 15.5px;
+    line-height: 1.75;
+    color: var(--secondary);
+}
+
+.series-intro p {
+    margin: 0;
+}
+
 /* ---------- 글 상세 ---------- */
 .post-header {
     margin: 40px 0 28px;

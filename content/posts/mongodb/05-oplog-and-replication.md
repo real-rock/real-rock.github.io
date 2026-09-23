@@ -6,6 +6,7 @@ series: ["MongoDB 인터널"]
 tags: ["MongoDB", "oplog", "복제", "레플리카셋"]
 weight: 5
 summary: "secondary는 primary의 변경을 어떻게 따라가는가"
+description: "oplog 구조, secondary 복제 흐름, 복제 지연"
 ---
 
 > 이 글은 MongoDB 8.0 기준으로 작성했습니다.

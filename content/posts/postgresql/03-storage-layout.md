@@ -6,6 +6,7 @@ series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "스토리지", "페이지", "TOAST"]
 weight: 3
 summary: "테이블은 디스크에 어떤 모양으로 저장되는가"
+description: "페이지 레이아웃, 튜플 구조, TOAST"
 ---
 
 > 이 글은 PostgreSQL 17 기준으로 작성했습니다.

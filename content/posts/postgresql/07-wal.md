@@ -6,6 +6,7 @@ series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "WAL", "LSN"]
 weight: 7
 summary: "모든 변경은 왜 먼저 로그에 쓰이는가"
+description: "LSN, full page writes, WAL 레코드 구조"
 ---
 
 > 이 글은 PostgreSQL 17 기준으로 작성했습니다.

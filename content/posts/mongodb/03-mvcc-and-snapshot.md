@@ -6,6 +6,7 @@ series: ["MongoDB 인터널"]
 tags: ["MongoDB", "MVCC", "스냅샷", "트랜잭션"]
 weight: 3
 summary: "동시에 읽고 쓸 때 MongoDB 내부에서 일어나는 일"
+description: "update chain, 타임스탬프, 스냅샷 격리"
 ---
 
 > 이 글은 MongoDB 8.0 기준으로 작성했습니다.

@@ -1,27 +1,39 @@
 {{- define "main" }}
-{{- $pages := .Pages.ByWeight }}
-<header class="series-hero s-{{ .Params.key | default "default" }}">
+{{- $chapters := partial "series_chapters.html" . }}
+{{- $published := len .Pages }}
+{{- $key := .Params.key | default "default" }}
+<header class="series-hero s-{{ $key }}">
   {{- partial "breadcrumbs.html" . }}
   <span class="series-mark">{{ .Params.mark | default "SERIES" }}</span>
   <h1>{{ .Title }}</h1>
   {{- with .Description }}<p class="series-hero-desc">{{ . }}</p>{{ end }}
   <p class="series-hero-meta">
-    {{- if $pages }}전체 {{ len $pages }}편{{ else }}연재 예정{{ end }}
+    {{- if $chapters }}전체 {{ len $chapters }}편{{ if eq $published 0 }} · 연재 준비 중{{ else if lt $published (len $chapters) }} · {{ $published }}편 공개{{ end }}
+    {{- else }}연재 예정{{ end }}
     {{- with .Params.version }} · {{ . }} 기준{{ end }}
   </p>
 </header>
 
-{{- if $pages }}
-<ol class="chapter-list s-{{ .Params.key | default "default" }}">
-  {{- range $i, $p := $pages }}
-  <li class="chapter">
-    <span class="chapter-no">{{ printf "%02d" (add $i 1) }}</span>
+{{- with .Content }}
+<div class="series-intro">{{ . }}</div>
+{{- end }}
+
+{{- if $chapters }}
+<ol class="chapter-list s-{{ $key }}">
+  {{- range $chapters }}
+  <li class="chapter{{ if not .page }} planned{{ end }}">
+    <span class="chapter-no">{{ printf "%02d" .n }}</span>
     <div class="chapter-body">
       <h3>
-        <a href="{{ $p.RelPermalink }}">{{ partial "short_title.html" $p }}</a>
-        {{- if $p.Draft }}<span class="chip chip-draft">초안</span>{{ end }}
+        {{- with .page }}
+        <a href="{{ .RelPermalink }}">{{ partial "short_title.html" . }}</a>
+        {{- if .Draft }}<span class="chip chip-draft">초안</span>{{ end }}
+        {{- else }}
+        <span>{{ .title }}</span><span class="chip chip-planned">준비 중</span>
+        {{- end }}
       </h3>
-      {{- with $p.Summary }}<p>{{ . | plainify | htmlUnescape | truncate 140 }}</p>{{ end }}
+      {{- with .description }}<p class="chapter-topics">{{ . }}</p>{{ end }}
+      {{- with .summary }}<p>{{ . | plainify | htmlUnescape | truncate 140 }}</p>{{ end }}
     </div>
   </li>
   {{- end }}
