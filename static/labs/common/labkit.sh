@@ -51,28 +51,38 @@ EOF
 
 # ---- 동시에 여러 psql 세션을 유지하는 도구 ----
 # sess_start A        : 세션 A를 백그라운드로 연다 (입력 /tmp/sess_A.in, 출력 /tmp/sess_A.out)
-# sess A "SQL"        : 세션 A에 SQL을 보내고, 그 SQL로 새로 생긴 출력만 기록한다
-# 출력은 psql -e(에코)라서 실행된 SQL도 함께 보인다.
-declare -A SESS_OFF
+# sess A "SQL" [초]   : 세션 A에 SQL을 보내고, 그 뒤로 새로 생긴 출력만 기록한다
+# sess_wait A [초]    : 보내는 것 없이, 앞서 기다리던 명령의 출력이 새로 생겼는지 기록한다
+# 세션 출력에는 결과만 남고, 보낸 SQL은 "[세션 X] $ " 줄로 기록된다.
+# (macOS 기본 bash 3.2는 연관 배열이 없어서 세션별 오프셋을 변수 이름으로 나눈다)
+_sess_flush() {
+  local n=$1 label=$2 var="SESS_OFF_$1" total
+  total=$(docker exec "$CT" bash -c "wc -c < /tmp/sess_$n.out" | tr -d ' ')
+  {
+    printf '%s\n' "$label"
+    docker exec "$CT" bash -c "tail -c +$(( ${!var} + 1 )) /tmp/sess_$n.out | head -c $(( total - ${!var} ))"
+    echo
+  } | log
+  eval "$var=$total"
+}
 sess_start() {
   local n=$1; shift
   docker exec "$CT" bash -c ": > /tmp/sess_$n.in; : > /tmp/sess_$n.out"
-  docker exec -d "$CT" bash -c "tail -n +1 -f /tmp/sess_$n.in | psql -X -e -v ON_ERROR_STOP=0 $* > /tmp/sess_$n.out 2>&1"
-  SESS_OFF[$n]=0
+  docker exec -d "$CT" bash -c "tail -n +1 -f /tmp/sess_$n.in | psql -X $* > /tmp/sess_$n.out 2>&1"
+  eval "SESS_OFF_$n=0"
   sleep 1
-  printf '# 세션 %s 시작: psql -X -e %s\n\n' "$n" "$*" | log
+  printf '# 세션 %s 시작: psql -X %s\n\n' "$n" "$*" | log
 }
 sess() {
   local n=$1 sql=$2 wait=${3:-1}
   printf '%s\n' "$sql" | docker exec -i "$CT" bash -c "cat >> /tmp/sess_$n.in"
   sleep "$wait"
-  local total; total=$(docker exec "$CT" bash -c "wc -c < /tmp/sess_$n.out" | tr -d ' ')
-  {
-    echo "[세션 $n] \$ $sql" | sed '2,$s/^/[세션 '"$n"'] $ /'
-    docker exec "$CT" bash -c "tail -c +$(( ${SESS_OFF[$n]} + 1 )) /tmp/sess_$n.out"
-    echo
-  } | log
-  SESS_OFF[$n]=$total
+  _sess_flush "$n" "$(printf '%s\n' "$sql" | sed "s/^/[세션 $n] \$ /")"
+}
+sess_wait() {
+  local n=$1 wait=${2:-1}
+  sleep "$wait"
+  _sess_flush "$n" "[세션 $n] (앞 명령의 결과를 기다림)"
 }
 sess_end() {
   local n=$1

@@ -1,0 +1,202 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "두 세션의 스냅샷 (실습 5)",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1085,
+   566
+  ],
+  "column_fit": "spread",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "emphasis": {
+     "label": "변경"
+    },
+    "return": {
+     "label": "결과"
+    },
+    "default": {
+     "label": "조회"
+    },
+    "dashed": {
+     "label": "스냅샷 생성"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "before",
+    "label": "커밋 전",
+    "focus": [
+     "a",
+     "c",
+     "procarray",
+     "b",
+     "page"
+    ],
+    "note": "B의 스냅샷에는 진행 중인 A(759)가 xip로 들어 있어서, A가 만든 새 버전 대신 옛 버전을 봅니다."
+   },
+   {
+    "id": "after",
+    "label": "커밋 후",
+    "focus": [
+     "a",
+     "procarray",
+     "b",
+     "page"
+    ],
+    "note": "A가 커밋한 뒤 B가 새 스냅샷을 받으면 새 버전이 보입니다."
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "a",
+   "type": "backend",
+   "label": "세션 A",
+   "sublabel": "xid 759"
+  },
+  {
+   "id": "c",
+   "type": "external",
+   "label": "다른 세션",
+   "sublabel": "xid 760"
+  },
+  {
+   "id": "procarray",
+   "type": "database",
+   "label": "ProcArray",
+   "sublabel": "실행 중 트랜잭션 목록"
+  },
+  {
+   "id": "b",
+   "type": "backend",
+   "label": "세션 B",
+   "sublabel": "READ COMMITTED"
+  },
+  {
+   "id": "page",
+   "type": "database",
+   "label": "acct 페이지",
+   "sublabel": "id=2의 두 버전"
+  }
+ ],
+ "segments": [
+  {
+   "from": 160,
+   "to": 240,
+   "label": "A 진행 중"
+  },
+  {
+   "from": 246,
+   "to": 352,
+   "label": "B의 첫 조회"
+  },
+  {
+   "from": 358,
+   "to": 490,
+   "label": "A 커밋 후"
+  }
+ ],
+ "messages": [
+  {
+   "id": "m1",
+   "from": "a",
+   "to": "procarray",
+   "y": 170,
+   "label": "BEGIN, xid 759 등록",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m2",
+   "from": "a",
+   "to": "page",
+   "y": 198,
+   "label": "UPDATE: 옛 버전 xmax=759, 새 버전 xmin=759",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m3",
+   "from": "c",
+   "to": "procarray",
+   "y": 226,
+   "label": "INSERT 후 커밋 (760)",
+   "variant": "default"
+  },
+  {
+   "id": "m4",
+   "from": "b",
+   "to": "procarray",
+   "y": 254,
+   "label": "스냅샷 요청",
+   "variant": "dashed"
+  },
+  {
+   "id": "m5",
+   "from": "procarray",
+   "to": "b",
+   "y": 282,
+   "label": "759:761:759 (759는 진행 중)",
+   "variant": "return"
+  },
+  {
+   "id": "m6",
+   "from": "b",
+   "to": "page",
+   "y": 310,
+   "label": "id=2 읽기",
+   "variant": "default"
+  },
+  {
+   "id": "m7",
+   "from": "page",
+   "to": "b",
+   "y": 338,
+   "label": "옛 버전 balance 100",
+   "variant": "return"
+  },
+  {
+   "id": "m8",
+   "from": "a",
+   "to": "procarray",
+   "y": 366,
+   "label": "COMMIT, 759 제거",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m9",
+   "from": "b",
+   "to": "procarray",
+   "y": 394,
+   "label": "새 스냅샷 요청",
+   "variant": "dashed"
+  },
+  {
+   "id": "m10",
+   "from": "procarray",
+   "to": "b",
+   "y": 422,
+   "label": "761:761: (진행 중 없음)",
+   "variant": "return"
+  },
+  {
+   "id": "m11",
+   "from": "b",
+   "to": "page",
+   "y": 450,
+   "label": "id=2 다시 읽기",
+   "variant": "default"
+  },
+  {
+   "id": "m12",
+   "from": "page",
+   "to": "b",
+   "y": 478,
+   "label": "새 버전 balance 999",
+   "variant": "return"
+  }
+ ]
+}

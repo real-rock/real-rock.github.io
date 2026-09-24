@@ -1,0 +1,197 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "튜플 하나가 내 스냅샷에서 보이는지 판단하는 과정",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "시작, 결과"
+    },
+    "security": {
+     "label": "xmin 검사"
+    },
+    "messagebus": {
+     "label": "xmax 검사"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "xmin",
+    "label": "누가 만들었나",
+    "focus": [
+     "start",
+     "xmin_running",
+     "xmin_commit",
+     "hidden"
+    ],
+    "note": "만든 트랜잭션이 내 스냅샷 기준으로 아직 진행 중이거나 롤백되었으면 보이지 않습니다."
+   },
+   {
+    "id": "xmax",
+    "label": "누가 지웠나",
+    "focus": [
+     "xmin_commit",
+     "xmax_none",
+     "xmax_running",
+     "shown",
+     "hidden"
+    ],
+    "note": "지운 트랜잭션이 없거나, 잠금만 했거나, 내 스냅샷 기준으로 아직 진행 중이면 여전히 보입니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "xmin",
+   "label": "xmin 검사 (누가 만들었나)"
+  },
+  {
+   "id": "xmax",
+   "label": "xmax 검사 (누가 지웠나)"
+  },
+  {
+   "id": "res",
+   "label": "결과",
+   "variant": "exception"
+  }
+ ],
+ "mainPath": [
+  "start",
+  "xmin_running",
+  "xmin_commit",
+  "xmax_none",
+  "shown"
+ ],
+ "nodes": [
+  {
+   "id": "start",
+   "lane": "xmin",
+   "col": 0,
+   "type": "backend",
+   "label": "튜플 하나 읽음",
+   "sublabel": "xmin, xmax, infomask",
+   "width": 160
+  },
+  {
+   "id": "xmin_running",
+   "lane": "xmin",
+   "col": 1,
+   "type": "security",
+   "label": "xmin 진행 중?",
+   "sublabel": "스냅샷 기준",
+   "width": 160
+  },
+  {
+   "id": "xmin_commit",
+   "lane": "xmin",
+   "col": 2,
+   "type": "security",
+   "label": "xmin 커밋됨?",
+   "sublabel": "hint bit, 없으면 pg_xact",
+   "width": 180
+  },
+  {
+   "id": "hidden",
+   "lane": "res",
+   "col": 2,
+   "type": "backend",
+   "label": "안 보임",
+   "sublabel": "false",
+   "width": 150
+  },
+  {
+   "id": "xmax_none",
+   "lane": "xmax",
+   "col": 3,
+   "type": "messagebus",
+   "label": "xmax 없음, 잠금만?",
+   "sublabel": "HEAP_XMAX_INVALID 등",
+   "width": 180
+  },
+  {
+   "id": "xmax_running",
+   "lane": "xmax",
+   "col": 4,
+   "type": "messagebus",
+   "label": "xmax 진행 중?",
+   "sublabel": "스냅샷 기준, 또는 롤백",
+   "width": 180
+  },
+  {
+   "id": "shown",
+   "lane": "res",
+   "col": 5,
+   "type": "backend",
+   "label": "보임",
+   "sublabel": "true",
+   "width": 150
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "start",
+   "to": "xmin_running",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "xmin_running",
+   "to": "xmin_commit",
+   "label": "아니오",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "xmin_running",
+   "to": "hidden",
+   "label": "예",
+   "role": "branch"
+  },
+  {
+   "id": "e4",
+   "from": "xmin_commit",
+   "to": "xmax_none",
+   "label": "예",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "xmin_commit",
+   "to": "hidden",
+   "label": "아니오 (롤백)",
+   "role": "branch"
+  },
+  {
+   "id": "e6",
+   "from": "xmax_none",
+   "to": "shown",
+   "label": "예",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e7",
+   "from": "xmax_none",
+   "to": "xmax_running",
+   "label": "아니오"
+  },
+  {
+   "id": "e8",
+   "from": "xmax_running",
+   "to": "shown",
+   "label": "예",
+   "role": "branch"
+  },
+  {
+   "id": "e9",
+   "from": "xmax_running",
+   "to": "hidden",
+   "label": "아니오 (지워짐)",
+   "role": "branch"
+  }
+ ]
+}

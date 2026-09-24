@@ -1,0 +1,406 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pglab --hostname pglab pg-internals:rel18-lab sleep infinity
+181f017031b84d5ede97f7a48cf117b51c9008d9904a5190391066612d1f6439
+[exit=0]
+
+$ postgres --version
+$ initdb -D $PGDATA  > /home/postgres/initdb.log 2>&1 && echo "initdb ok"
+postgres (PostgreSQL) 18.6
+initdb ok
+[exit=0]
+
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log start
+$ psql -X -q -c "CREATE EXTENSION pageinspect"
+$ psql -X -q -c "CREATE TABLE acct (id int PRIMARY KEY, balance int)"
+$ psql -X -q -c "INSERT INTO acct VALUES (1, 100), (2, 100)"
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 1. 모든 행에는 xmin과 xmax가 있다
+
+$ psql -X <<'SQL'
+$ SELECT xmin, xmax, cmin, ctid, * FROM acct;
+$ BEGIN;
+$ SELECT pg_current_xact_id() AS my_xid;
+$ INSERT INTO acct VALUES (3, 100);
+$ INSERT INTO acct VALUES (4, 100);
+$ SELECT xmin, cmin, ctid, * FROM acct WHERE id IN (3, 4);
+$ COMMIT;
+$ SQL
+ xmin | xmax | cmin | ctid  | id | balance 
+------+------+------+-------+----+---------
+  754 |    0 |    0 | (0,1) |  1 |     100
+  754 |    0 |    0 | (0,2) |  2 |     100
+(2 rows)
+
+BEGIN
+ my_xid 
+--------
+    755
+(1 row)
+
+INSERT 0 1
+INSERT 0 1
+ xmin | cmin | ctid  | id | balance 
+------+------+-------+----+---------
+  755 |    0 | (0,3) |  3 |     100
+  755 |    1 | (0,4) |  4 |     100
+(2 rows)
+
+COMMIT
+[exit=0]
+
+
+######## 2. UPDATE는 새 버전을 만든다
+
+$ psql -X <<'SQL'
+$ BEGIN;
+$ SELECT pg_current_xact_id() AS my_xid;
+$ UPDATE acct SET balance = 150 WHERE id = 1;
+$ COMMIT;
+$ SELECT xmin, xmax, ctid, * FROM acct WHERE id = 1;
+$ SELECT lp, t_xmin, t_xmax, t_ctid, raw_flags
+$ FROM heap_page_items(get_raw_page('acct', 0)),
+$      LATERAL heap_tuple_infomask_flags(t_infomask, t_infomask2);
+$ SQL
+BEGIN
+ my_xid 
+--------
+    756
+(1 row)
+
+UPDATE 1
+COMMIT
+ xmin | xmax | ctid  | id | balance 
+------+------+-------+----+---------
+  756 |    0 | (0,5) |  1 |     150
+(1 row)
+
+ lp | t_xmin | t_xmax | t_ctid |                              raw_flags                               
+----+--------+--------+--------+----------------------------------------------------------------------
+  1 |    754 |    756 | (0,5)  | {HEAP_XMIN_COMMITTED,HEAP_XMAX_COMMITTED,HEAP_HOT_UPDATED}
+  2 |    754 |      0 | (0,2)  | {HEAP_XMIN_COMMITTED,HEAP_XMAX_INVALID}
+  3 |    755 |      0 | (0,3)  | {HEAP_XMAX_INVALID}
+  4 |    755 |      0 | (0,4)  | {HEAP_XMAX_INVALID}
+  5 |    756 |      0 | (0,5)  | {HEAP_XMIN_COMMITTED,HEAP_XMAX_INVALID,HEAP_UPDATED,HEAP_ONLY_TUPLE}
+(5 rows)
+
+[exit=0]
+
+
+######## 3. DELETE와 ROLLBACK도 튜플을 지우지 않는다
+
+$ psql -X <<'SQL'
+$ DELETE FROM acct WHERE id = 4;
+$ BEGIN;
+$ SELECT pg_current_xact_id() AS rollback_xid \gset
+$ INSERT INTO acct VALUES (5, 100);
+$ ROLLBACK;
+$ SELECT * FROM acct ORDER BY id;
+$ SELECT lp, t_xmin, t_xmax, t_ctid, t_data
+$ FROM heap_page_items(get_raw_page('acct', 0));
+$ SELECT :'rollback_xid' AS xid, pg_xact_status(:'rollback_xid'::xid8) AS status;
+$ SQL
+DELETE 1
+BEGIN
+INSERT 0 1
+ROLLBACK
+ id | balance 
+----+---------
+  1 |     150
+  2 |     100
+  3 |     100
+(3 rows)
+
+ lp | t_xmin | t_xmax | t_ctid |       t_data       
+----+--------+--------+--------+--------------------
+  1 |    754 |    756 | (0,5)  | \x0100000064000000
+  2 |    754 |      0 | (0,2)  | \x0200000064000000
+  3 |    755 |      0 | (0,3)  | \x0300000064000000
+  4 |    755 |    757 | (0,4)  | \x0400000064000000
+  5 |    756 |      0 | (0,5)  | \x0100000096000000
+  6 |    758 |      0 | (0,6)  | \x0500000064000000
+(6 rows)
+
+ xid | status  
+-----+---------
+ 758 | aborted
+(1 row)
+
+[exit=0]
+
+
+######## 4. 커밋 여부는 pg_xact에 2비트로 적힌다
+
+$ ls -l $PGDATA/pg_xact
+$ psql -X -c "SELECT x AS xid, pg_xact_status(x::text::xid8) AS status FROM generate_series(754, 758) x"
+total 8
+-rw------- 1 postgres postgres 8192 Sep 24 03:29 0000
+ xid |  status   
+-----+-----------
+ 754 | committed
+ 755 | committed
+ 756 | committed
+ 757 | committed
+ 758 | aborted
+(5 rows)
+
+[exit=0]
+
+
+######## 5. 스냅샷: 아직 커밋 안 된 트랜잭션은 보이지 않는다
+
+# 세션 A 시작: psql -X 
+
+# 세션 B 시작: psql -X 
+
+[세션 A] $ BEGIN;
+BEGIN
+
+[세션 A] $ SELECT pg_current_xact_id() AS a_xid;
+ a_xid 
+-------
+   759
+(1 row)
+
+
+[세션 A] $ UPDATE acct SET balance = 999 WHERE id = 2;
+UPDATE 1
+
+$ psql -X -c "INSERT INTO acct VALUES (7, 100) RETURNING xmin AS other_xid"
+ other_xid 
+-----------
+       760
+(1 row)
+
+INSERT 0 1
+[exit=0]
+
+[세션 A] $ SELECT pg_current_snapshot() AS a_snapshot, balance FROM acct WHERE id = 2;
+ a_snapshot | balance 
+------------+---------
+ 759:761:   |     999
+(1 row)
+
+
+[세션 B] $ BEGIN;
+BEGIN
+
+[세션 B] $ SELECT pg_current_snapshot() AS b_snapshot, balance FROM acct WHERE id = 2;
+ b_snapshot  | balance 
+-------------+---------
+ 759:761:759 |     100
+(1 row)
+
+
+[세션 A] $ COMMIT;
+COMMIT
+
+[세션 B] $ SELECT pg_current_snapshot() AS b_snapshot, balance FROM acct WHERE id = 2;
+ b_snapshot | balance 
+------------+---------
+ 761:761:   |     999
+(1 row)
+
+
+[세션 B] $ COMMIT;
+COMMIT
+
+
+######## 6. READ COMMITTED와 REPEATABLE READ
+
+[세션 B] $ BEGIN ISOLATION LEVEL REPEATABLE READ;
+BEGIN
+
+[세션 B] $ SELECT pg_current_snapshot() AS b_snapshot, sum(balance) FROM acct;
+ b_snapshot | sum  
+------------+------
+ 761:761:   | 1349
+(1 row)
+
+
+[세션 A] $ UPDATE acct SET balance = balance + 1000 WHERE id = 3;
+UPDATE 1
+
+[세션 B] $ SELECT pg_current_snapshot() AS b_snapshot, sum(balance) FROM acct;
+ b_snapshot | sum  
+------------+------
+ 761:761:   | 1349
+(1 row)
+
+
+[세션 B] $ COMMIT;
+COMMIT
+
+[세션 B] $ SELECT pg_current_snapshot() AS b_snapshot, sum(balance) FROM acct;
+ b_snapshot | sum  
+------------+------
+ 762:762:   | 2349
+(1 row)
+
+
+
+######## 7. 같은 행을 동시에 고치면: READ COMMITTED
+
+[세션 A] $ BEGIN;
+BEGIN
+
+[세션 A] $ UPDATE acct SET balance = balance + 10 WHERE id = 1 RETURNING balance;
+ balance 
+---------
+     160
+(1 row)
+
+UPDATE 1
+
+[세션 B] $ BEGIN;
+BEGIN
+
+[세션 B] $ UPDATE acct SET balance = balance + 1 WHERE id = 1 RETURNING balance;
+
+$ psql -X <<'SQL'
+$ SELECT pid, state, wait_event_type, wait_event, left(query, 60) AS query
+$ FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid() ORDER BY pid;
+$ SELECT locktype, transactionid, mode, granted, pid FROM pg_locks WHERE locktype = 'transactionid' ORDER BY granted DESC, pid;
+$ SQL
+ pid |        state        | wait_event_type |  wait_event   |                            query                             
+-----+---------------------+-----------------+---------------+--------------------------------------------------------------
+ 100 | idle in transaction | Client          | ClientRead    | UPDATE acct SET balance = balance + 10 WHERE id = 1 RETURNIN
+ 115 | active              | Lock            | transactionid | UPDATE acct SET balance = balance + 1 WHERE id = 1 RETURNING
+(2 rows)
+
+   locktype    | transactionid |     mode      | granted | pid 
+---------------+---------------+---------------+---------+-----
+ transactionid |           762 | ExclusiveLock | t       | 100
+ transactionid |           763 | ExclusiveLock | t       | 115
+ transactionid |           762 | ShareLock     | f       | 115
+(3 rows)
+
+[exit=0]
+
+[세션 A] $ COMMIT;
+COMMIT
+
+[세션 B] (앞 명령의 결과를 기다림)
+ balance 
+---------
+     161
+(1 row)
+
+UPDATE 1
+
+[세션 B] $ COMMIT;
+COMMIT
+
+
+######## 8. 같은 행을 동시에 고치면: REPEATABLE READ
+
+[세션 A] $ BEGIN;
+BEGIN
+
+[세션 A] $ UPDATE acct SET balance = balance + 10 WHERE id = 1 RETURNING balance;
+ balance 
+---------
+     171
+(1 row)
+
+UPDATE 1
+
+[세션 B] $ BEGIN ISOLATION LEVEL REPEATABLE READ;
+BEGIN
+
+[세션 B] $ SELECT balance FROM acct WHERE id = 1;
+ balance 
+---------
+     161
+(1 row)
+
+
+[세션 B] $ UPDATE acct SET balance = balance + 1 WHERE id = 1 RETURNING balance;
+
+[세션 A] $ COMMIT;
+COMMIT
+
+[세션 B] (앞 명령의 결과를 기다림)
+ERROR:  could not serialize access due to concurrent update
+
+[세션 B] $ ROLLBACK;
+ROLLBACK
+
+
+######## 9. SELECT FOR UPDATE도 xmax에 적힌다
+
+$ psql -X <<'SQL'
+$ BEGIN;
+$ SELECT pg_current_xact_id() AS locker_xid;
+$ SELECT * FROM acct WHERE id = 3 FOR UPDATE;
+$ SELECT xmin, xmax, * FROM acct WHERE id = 3;
+$ SELECT lp, t_xmax, raw_flags
+$ FROM heap_page_items(get_raw_page('acct', 0)),
+$      LATERAL heap_tuple_infomask_flags(t_infomask, t_infomask2)
+$ WHERE t_ctid = (SELECT ctid FROM acct WHERE id = 3);
+$ COMMIT;
+$ SQL
+BEGIN
+ locker_xid 
+------------
+        766
+(1 row)
+
+ id | balance 
+----+---------
+  3 |    1100
+(1 row)
+
+ xmin | xmax | id | balance 
+------+------+----+---------
+  761 |  766 |  3 |    1100
+(1 row)
+
+ lp | t_xmax |                                                  raw_flags                                                   
+----+--------+--------------------------------------------------------------------------------------------------------------
+  3 |    761 | {HEAP_XMIN_COMMITTED,HEAP_XMAX_COMMITTED,HEAP_HOT_UPDATED}
+  9 |    766 | {HEAP_XMAX_EXCL_LOCK,HEAP_XMAX_LOCK_ONLY,HEAP_XMIN_COMMITTED,HEAP_UPDATED,HEAP_KEYS_UPDATED,HEAP_ONLY_TUPLE}
+(2 rows)
+
+COMMIT
+[exit=0]
+
+
+######## 10. hint bit: 커밋 결과를 처음 확인한 쪽이 적어 둔다
+
+$ psql -X <<'SQL'
+$ INSERT INTO acct VALUES (6, 100);
+$ SELECT lp, t_xmin, raw_flags
+$ FROM heap_page_items(get_raw_page('acct', 0)),
+$      LATERAL heap_tuple_infomask_flags(t_infomask, t_infomask2)
+$ WHERE t_data = (SELECT t_data FROM heap_page_items(get_raw_page('acct', 0)) ORDER BY lp DESC LIMIT 1);
+$ SELECT * FROM acct WHERE id = 6;
+$ SELECT lp, t_xmin, raw_flags
+$ FROM heap_page_items(get_raw_page('acct', 0)),
+$      LATERAL heap_tuple_infomask_flags(t_infomask, t_infomask2)
+$ WHERE t_data = (SELECT t_data FROM heap_page_items(get_raw_page('acct', 0)) ORDER BY lp DESC LIMIT 1);
+$ SQL
+INSERT 0 1
+ lp | t_xmin |      raw_flags      
+----+--------+---------------------
+ 13 |    767 | {HEAP_XMAX_INVALID}
+(1 row)
+
+ id | balance 
+----+---------
+  6 |     100
+(1 row)
+
+ lp | t_xmin |                raw_flags                
+----+--------+-----------------------------------------
+ 13 |    767 | {HEAP_XMIN_COMMITTED,HEAP_XMAX_INVALID}
+(1 row)
+
+[exit=0]
+
+done
