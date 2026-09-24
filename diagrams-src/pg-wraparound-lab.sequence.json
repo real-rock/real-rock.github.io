@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "오래된 트랜잭션 하나가 wraparound 정지까지 가는 과정 (실습 5-8)",
+    "quality_profile": "showcase",
+    "viewBox": [1085, 566],
+    "column_fit": "spread",
+    "legend": { "mode": "auto", "entries": { "emphasis": { "label": "원인과 해결" }, "security": { "label": "경고, 오류" }, "default": { "label": "요청" }, "return": { "label": "결과" }, "dashed": { "label": "freeze 시도" } } },
+    "views": [
+      { "id": "blocked", "label": "freeze가 막힘", "focus": ["a", "av", "catalog"], "note": "세션 A의 xid보다 오래된 쪽으로는 freeze를 진행할 수 없어 datfrozenxid가 멈춥니다." },
+      { "id": "limits", "label": "경고와 정지", "focus": ["app", "catalog"], "note": "xid가 한계에 다가가면 경고, 300만 개 남으면 새 xid를 주지 않습니다." }
+    ]
+  },
+  "participants": [
+    { "id": "a", "type": "external", "label": "세션 A", "sublabel": "BEGIN 후 방치" },
+    { "id": "av", "type": "backend", "label": "autovacuum", "sublabel": "wraparound 방지" },
+    { "id": "catalog", "type": "database", "label": "pg_database", "sublabel": "datfrozenxid" },
+    { "id": "app", "type": "frontend", "label": "애플리케이션", "sublabel": "INSERT" }
+  ],
+  "segments": [
+    { "from": 160, "to": 240, "label": "막힘" },
+    { "from": 246, "to": 380, "label": "한계 접근" },
+    { "from": 386, "to": 490, "label": "복구" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "a", "to": "catalog", "y": 170, "label": "xid 210000772를 받고 멈춤", "variant": "emphasis" },
+    { "id": "m2", "from": "av", "to": "catalog", "y": 198, "label": "freeze 시도", "variant": "dashed" },
+    { "id": "m3", "from": "catalog", "to": "av", "y": 226, "label": "210000772에서 멈춤", "variant": "return" },
+    { "id": "m4", "from": "app", "to": "catalog", "y": 254, "label": "xid 약 21억 개 소모", "variant": "default" },
+    { "id": "m5", "from": "catalog", "to": "app", "y": 282, "label": "WARNING: 39998999개 남음", "variant": "security" },
+    { "id": "m6", "from": "app", "to": "catalog", "y": 310, "label": "계속 소모", "variant": "default" },
+    { "id": "m7", "from": "catalog", "to": "app", "y": 338, "label": "ERROR: 새 xid 발급 거부", "variant": "security" },
+    { "id": "m8", "from": "app", "to": "catalog", "y": 366, "label": "SELECT는 가능", "variant": "return" },
+    { "id": "m9", "from": "a", "to": "catalog", "y": 394, "label": "ROLLBACK", "variant": "emphasis" },
+    { "id": "m10", "from": "av", "to": "catalog", "y": 422, "label": "freeze 진행", "variant": "dashed" },
+    { "id": "m11", "from": "catalog", "to": "av", "y": 450, "label": "datfrozenxid 전진", "variant": "return" },
+    { "id": "m12", "from": "app", "to": "catalog", "y": 478, "label": "INSERT 다시 성공", "variant": "emphasis" }
+  ]
+}

@@ -1,0 +1,148 @@
+{
+ "schema_version": 1,
+ "diagram_type": "lifecycle",
+ "meta": {
+  "title": "테이블의 xid age가 커질 때 차례로 작동하는 방어선",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1030,
+   566
+  ],
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "start": {
+     "label": "정상"
+    },
+    "active": {
+     "label": "VACUUM이 대응"
+    },
+    "waiting": {
+     "label": "경고"
+    },
+    "failure": {
+     "label": "쓰기 정지"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "vacuum",
+    "label": "VACUUM의 대응",
+    "focus": [
+     "normal",
+     "aggressive",
+     "forced",
+     "failsafe"
+    ],
+    "note": "age가 커질수록 VACUUM이 더 적극적으로, 끝내는 다른 일을 미루고 freeze만 합니다."
+   },
+   {
+    "id": "limit",
+    "label": "마지막 방어선",
+    "focus": [
+     "failsafe",
+     "warn",
+     "stop",
+     "normal"
+    ],
+    "note": "그래도 freeze가 막혀 있으면 경고를 내고, 마지막에는 새 xid 발급을 거부합니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "main",
+   "label": "age (가장 오래된 datfrozenxid 기준)"
+  },
+  {
+   "id": "stopband",
+   "label": "쓰기 정지"
+  },
+  {
+   "id": "terminal",
+   "label": "끝"
+  }
+ ],
+ "states": [
+  {
+   "id": "normal",
+   "type": "start",
+   "label": "정상: 보통 VACUUM",
+   "sublabel": "age 1.5억 미만",
+   "lane": "main",
+   "col": 0,
+   "step": "01"
+  },
+  {
+   "id": "aggressive",
+   "type": "active",
+   "label": "aggressive VACUUM",
+   "sublabel": "age 1.5억 이상",
+   "lane": "main",
+   "col": 1,
+   "step": "02"
+  },
+  {
+   "id": "forced",
+   "type": "active",
+   "label": "강제 autovacuum",
+   "sublabel": "age 2억 이상",
+   "lane": "main",
+   "col": 2,
+   "step": "03"
+  },
+  {
+   "id": "failsafe",
+   "type": "active",
+   "label": "failsafe",
+   "sublabel": "age 16억 이상",
+   "lane": "main",
+   "col": 3,
+   "step": "04"
+  },
+  {
+   "id": "warn",
+   "type": "waiting",
+   "label": "WARNING",
+   "sublabel": "한계까지 4000만",
+   "lane": "main",
+   "col": 4,
+   "step": "05"
+  },
+  {
+   "id": "stop",
+   "type": "failure",
+   "label": "새 xid 발급 거부",
+   "sublabel": "한계까지 300만",
+   "lane": "stopband",
+   "col": 2
+  }
+ ],
+ "transitions": [
+  {
+   "id": "t-stop",
+   "from": "warn",
+   "to": "stop",
+   "label": "freeze가 계속 막히면",
+   "variant": "security",
+   "route": "straight",
+   "fromSide": "bottom",
+   "toSide": "top",
+   "labelAt": [
+    710,
+    202
+   ]
+  },
+  {
+   "id": "t-recover",
+   "from": "stop",
+   "to": "normal",
+   "label": "원인 제거 + VACUUM",
+   "variant": "emphasis",
+   "fromSide": "left",
+   "toSide": "bottom",
+   "route": "auto"
+  }
+ ]
+}

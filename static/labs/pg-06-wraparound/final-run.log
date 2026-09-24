@@ -1,0 +1,256 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pglab --hostname pglab pg-internals:rel18-lab sleep infinity
+c9db99ab70d5eff859e76c1b525214b0a262b5129f7767c902f0d4487797d15c
+[exit=0]
+
+$ postgres --version
+$ initdb -D $PGDATA  > /home/postgres/initdb.log 2>&1 && echo "initdb ok"
+postgres (PostgreSQL) 18.6
+initdb ok
+[exit=0]
+
+$ cat >> $PGDATA/postgresql.conf <<'CONF'
+$ autovacuum_naptime = 1s
+$ log_autovacuum_min_duration = 0
+$ log_line_prefix = '%m [%p] %b '
+$ CONF
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log start
+$ psql -X -q -c "CREATE EXTENSION xid_wraparound" -c "CREATE EXTENSION pageinspect"
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 1. 트랜잭션 ID와 age
+
+$ psql -X <<'SQL'
+$ SELECT pg_current_xact_id() AS next_xid;
+$ SELECT datname, datfrozenxid, age(datfrozenxid) FROM pg_database ORDER BY datname;
+$ SQL
+$ pg_controldata $PGDATA | grep -E "NextXID|oldestXID"
+ next_xid 
+----------
+      754
+(1 row)
+
+  datname  | datfrozenxid | age 
+-----------+--------------+-----
+ postgres  |          744 |  11
+ template0 |          744 |  11
+ template1 |          744 |  11
+(3 rows)
+
+Latest checkpoint's NextXID:          0:752
+Latest checkpoint's oldestXID:        744
+Latest checkpoint's oldestXID's DB:   1
+[exit=0]
+
+
+######## 2. freeze: 튜플에 '아주 오래전에 커밋됨' 표시하기
+
+$ psql -X <<'SQL'
+$ CREATE TABLE f (id int) WITH (autovacuum_enabled = off);
+$ INSERT INTO f SELECT generate_series(1, 3);
+$ SELECT relfrozenxid, age(relfrozenxid) FROM pg_class WHERE relname = 'f';
+$ SELECT lp, t_xmin, raw_flags, combined_flags
+$ FROM heap_page_items(get_raw_page('f', 0)), LATERAL heap_tuple_infomask_flags(t_infomask, t_infomask2);
+$ VACUUM (FREEZE) f;
+$ SELECT lp, t_xmin, raw_flags, combined_flags
+$ FROM heap_page_items(get_raw_page('f', 0)), LATERAL heap_tuple_infomask_flags(t_infomask, t_infomask2);
+$ SELECT relfrozenxid, age(relfrozenxid) FROM pg_class WHERE relname = 'f';
+$ SELECT xmin, * FROM f;
+$ SQL
+CREATE TABLE
+INSERT 0 3
+ relfrozenxid | age 
+--------------+-----
+          755 |   2
+(1 row)
+
+ lp | t_xmin |      raw_flags      | combined_flags 
+----+--------+---------------------+----------------
+  1 |    756 | {HEAP_XMAX_INVALID} | {}
+  2 |    756 | {HEAP_XMAX_INVALID} | {}
+  3 |    756 | {HEAP_XMAX_INVALID} | {}
+(3 rows)
+
+VACUUM
+ lp | t_xmin |                         raw_flags                         |   combined_flags   
+----+--------+-----------------------------------------------------------+--------------------
+  1 |    756 | {HEAP_XMIN_COMMITTED,HEAP_XMIN_INVALID,HEAP_XMAX_INVALID} | {HEAP_XMIN_FROZEN}
+  2 |    756 | {HEAP_XMIN_COMMITTED,HEAP_XMIN_INVALID,HEAP_XMAX_INVALID} | {HEAP_XMIN_FROZEN}
+  3 |    756 | {HEAP_XMIN_COMMITTED,HEAP_XMIN_INVALID,HEAP_XMAX_INVALID} | {HEAP_XMIN_FROZEN}
+(3 rows)
+
+ relfrozenxid | age 
+--------------+-----
+          757 |   0
+(1 row)
+
+ xmin | id 
+------+----
+  756 |  1
+  756 |  2
+  756 |  3
+(3 rows)
+
+[exit=0]
+
+
+######## 3. xid를 쓰면 age가 늘어난다
+
+$ psql -X -q -c "CREATE TABLE noav (id int) WITH (autovacuum_enabled = off)" -c "INSERT INTO noav VALUES (1)"
+$ psql -X -c "SELECT consume_xids(150000000)"
+$ psql -X -c "SELECT relname, age(relfrozenxid) FROM pg_class WHERE relname IN ('f', 'noav') ORDER BY 1"
+NOTICE:  consumed 10000050 / 150000000 XIDs, latest 0:10000809
+NOTICE:  consumed 20000859 / 150000000 XIDs, latest 0:20001618
+NOTICE:  consumed 30001668 / 150000000 XIDs, latest 0:30002427
+NOTICE:  consumed 40002477 / 150000000 XIDs, latest 0:40003236
+NOTICE:  consumed 50003209 / 150000000 XIDs, latest 0:50003968
+NOTICE:  consumed 60003276 / 150000000 XIDs, latest 0:60004035
+NOTICE:  consumed 70003977 / 150000000 XIDs, latest 0:70004736
+NOTICE:  consumed 80004075 / 150000000 XIDs, latest 0:80004834
+NOTICE:  consumed 90004745 / 150000000 XIDs, latest 0:90005504
+NOTICE:  consumed 100004874 / 150000000 XIDs, latest 0:100005633
+NOTICE:  consumed 110005513 / 150000000 XIDs, latest 0:110006272
+NOTICE:  consumed 120005673 / 150000000 XIDs, latest 0:120006432
+NOTICE:  consumed 130006281 / 150000000 XIDs, latest 0:130007040
+NOTICE:  consumed 140006472 / 150000000 XIDs, latest 0:140007231
+ consume_xids 
+--------------
+    150000759
+(1 row)
+
+ relname |    age    
+---------+-----------
+ f       | 150000003
+ noav    | 150000003
+(2 rows)
+
+[exit=0]
+
+
+######## 4. autovacuum을 꺼도 wraparound 방지 VACUUM은 돈다
+
+$ psql -X -c "SELECT consume_xids(60000000)"
+$ sleep 8
+$ psql -X -c "SELECT relname, age(relfrozenxid) FROM pg_class WHERE relname IN ('f', 'noav') ORDER BY 1"
+$ grep -E 'to prevent wraparound of table "postgres.public.(f|noav)"' /home/postgres/server.log | cut -c1-160
+NOTICE:  consumed 10000718 / 60000000 XIDs, latest 0:160001478
+NOTICE:  consumed 20001527 / 60000000 XIDs, latest 0:170002287
+NOTICE:  consumed 30002056 / 60000000 XIDs, latest 0:180002816
+NOTICE:  consumed 40002326 / 60000000 XIDs, latest 0:190003086
+NOTICE:  consumed 50002824 / 60000000 XIDs, latest 0:200003584
+ consume_xids 
+--------------
+    210000760
+(1 row)
+
+ relname |   age    
+---------+----------
+ f       | 60000011
+ noav    | 60000011
+(2 rows)
+
+2026-09-24 03:37:36.768 UTC [89] autovacuum worker LOG:  automatic aggressive vacuum to prevent wraparound of table "postgres.public.f": index scans: 0
+2026-09-24 03:37:36.770 UTC [89] autovacuum worker LOG:  automatic aggressive vacuum to prevent wraparound of table "postgres.public.noav": index scans: 0
+[exit=0]
+
+
+######## 5. 오래된 트랜잭션이 freeze를 막으면
+
+# 세션 A 시작: psql -X 
+
+[세션 A] $ BEGIN;
+BEGIN
+
+[세션 A] $ SELECT pg_current_xact_id() AS old_xid;
+  old_xid  
+-----------
+ 210000772
+(1 row)
+
+
+$ vacuumdb --all --quiet
+$ sleep 3
+$ psql -X <<'SQL'
+$ SELECT datname, datfrozenxid, age(datfrozenxid) FROM pg_database ORDER BY datname;
+$ SELECT min(datfrozenxid::text::bigint) AS oldest_datfrozenxid,
+$        min(datfrozenxid::text::bigint) + 2147483647 AS wrap_limit,
+$        min(datfrozenxid::text::bigint) + 2147483647 - 40000000 AS warn_limit,
+$        min(datfrozenxid::text::bigint) + 2147483647 - 3000000 AS stop_limit
+$ FROM pg_database;
+$ SQL
+  datname  | datfrozenxid | age 
+-----------+--------------+-----
+ postgres  |    210000772 |   1
+ template0 |    210000772 |   1
+ template1 |    210000772 |   1
+(3 rows)
+
+ oldest_datfrozenxid | wrap_limit | warn_limit | stop_limit 
+---------------------+------------+------------+------------
+           210000772 | 2357484419 | 2317484419 | 2354484419
+(1 row)
+
+[exit=0]
+
+
+######## 6. 경고 단계: 4000만 개 남았을 때
+
+$ W=$(psql -X -At -c "SELECT min(datfrozenxid::text::bigint) + 2147483647 - 40000000 + 1000 FROM pg_database")
+$ psql -X -q -c "SELECT consume_xids_until('$W'::xid8)" > /dev/null 2>&1
+$ psql -X -c "INSERT INTO noav VALUES (2)"
+WARNING:  database "postgres" must be vacuumed within 39998999 transactions
+HINT:  To avoid transaction ID assignment failures, execute a database-wide VACUUM in that database.
+You might also need to commit or roll back old prepared transactions, or drop stale replication slots.
+INSERT 0 1
+[exit=0]
+
+
+######## 7. 정지 단계: 300만 개 남았을 때
+
+$ S=$(psql -X -At -c "SELECT min(datfrozenxid::text::bigint) + 2147483647 - 3000000 + 1000 FROM pg_database")
+$ psql -X -q -c "SELECT consume_xids_until('$S'::xid8)" 2>&1 | tail -3
+$ psql -X -c "INSERT INTO noav VALUES (3)"
+$ psql -X -c "SELECT count(*) FROM noav"
+ERROR:  database is not accepting commands that assign new transaction IDs to avoid wraparound data loss in database "postgres"
+HINT:  Execute a database-wide VACUUM in that database.
+You might also need to commit or roll back old prepared transactions, or drop stale replication slots.
+ERROR:  database is not accepting commands that assign new transaction IDs to avoid wraparound data loss in database "postgres"
+HINT:  Execute a database-wide VACUUM in that database.
+You might also need to commit or roll back old prepared transactions, or drop stale replication slots.
+ count 
+-------
+     2
+(1 row)
+
+[exit=0]
+
+
+######## 8. 원인을 없애고 VACUUM으로 복구
+
+[세션 A] $ ROLLBACK;
+ROLLBACK
+
+$ sleep 15
+$ psql -X -c "SELECT datname, age(datfrozenxid) FROM pg_database ORDER BY datname"
+$ psql -X -c "INSERT INTO noav VALUES (4)"
+$ grep -cE 'to prevent wraparound' /home/postgres/server.log
+$ grep -E 'bypassing nonessential maintenance' /home/postgres/server.log | head -2 | cut -c1-200
+  datname  |   age    
+-----------+----------
+ postgres  | 36998999
+ template0 | 36998997
+ template1 | 36998997
+(3 rows)
+
+INSERT 0 1
+2499
+2026-09-24 03:37:55.403 UTC [227] autovacuum worker WARNING:  bypassing nonessential maintenance of table "postgres.pg_catalog.pg_partitioned_table" as a failsafe after 0 index scans
+2026-09-24 03:37:55.403 UTC [227] autovacuum worker WARNING:  bypassing nonessential maintenance of table "postgres.pg_catalog.pg_range" as a failsafe after 0 index scans
+[exit=0]
+
+done
