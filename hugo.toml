@@ -1,4 +1,4 @@
-baseURL = "https://example.github.io/"   # 배포 시 GitHub Actions가 자동으로 덮어씁니다
+baseURL = "https://jinlog.dev/"
 languageCode = "ko-kr"
 defaultContentLanguage = "ko"
 hasCJKLanguage = true
