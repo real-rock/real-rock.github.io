@@ -1,0 +1,188 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "backend가 페이지 하나를 읽는 과정",
+  "quality_profile": "showcase",
+  "views": [
+   {
+    "id": "hit",
+    "label": "캐시 hit",
+    "focus": [
+     "req",
+     "lookup",
+     "hit",
+     "use"
+    ],
+    "note": "원하는 블록이 이미 shared buffers에 있으면 pin하고 usage count만 올립니다."
+   },
+   {
+    "id": "miss",
+    "label": "캐시 miss",
+    "focus": [
+     "lookup",
+     "sweep",
+     "flush",
+     "load",
+     "use"
+    ],
+    "note": "없으면 먼저 한 번도 안 쓴 칸(freelist)을 쓰고, 없을 때 clock sweep으로 비울 칸을 고릅니다. 고른 칸이 dirty면 WAL을 먼저 flush하고 옛 페이지를 씁니다."
+   }
+  ],
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "backend 동작"
+    },
+    "database": {
+     "label": "shared buffers 조작"
+    },
+    "security": {
+     "label": "빈 버퍼 확보"
+    },
+    "messagebus": {
+     "label": "디스크 I/O"
+    }
+   }
+  }
+ },
+ "lanes": [
+  {
+   "id": "be",
+   "label": "backend"
+  },
+  {
+   "id": "sb",
+   "label": "shared buffers"
+  },
+  {
+   "id": "evict",
+   "label": "miss 처리",
+   "variant": "exception"
+  }
+ ],
+ "mainPath": [
+  "req",
+  "lookup",
+  "hit",
+  "use"
+ ],
+ "nodes": [
+  {
+   "id": "req",
+   "lane": "be",
+   "col": 0,
+   "type": "backend",
+   "label": "블록 요청",
+   "sublabel": "ReadBuffer",
+   "width": 150
+  },
+  {
+   "id": "lookup",
+   "lane": "sb",
+   "col": 1,
+   "type": "database",
+   "label": "매핑 해시 조회",
+   "sublabel": "BufTableLookup",
+   "width": 150
+  },
+  {
+   "id": "hit",
+   "lane": "sb",
+   "col": 3,
+   "type": "database",
+   "label": "pin, usage +1",
+   "sublabel": "PinBuffer, 최대 5",
+   "width": 150
+  },
+  {
+   "id": "use",
+   "lane": "be",
+   "col": 5,
+   "type": "backend",
+   "label": "페이지 사용",
+   "sublabel": "읽기 또는 수정",
+   "width": 150
+  },
+  {
+   "id": "sweep",
+   "lane": "evict",
+   "col": 2,
+   "type": "security",
+   "label": "빈 칸 찾기",
+   "sublabel": "freelist, 없으면 clock sweep",
+   "width": 200
+  },
+  {
+   "id": "flush",
+   "lane": "evict",
+   "col": 3,
+   "type": "security",
+   "label": "dirty면 먼저 쓰기",
+   "sublabel": "WAL flush 후 write",
+   "width": 150
+  },
+  {
+   "id": "load",
+   "lane": "evict",
+   "col": 4,
+   "type": "messagebus",
+   "label": "데이터 파일 읽기",
+   "sublabel": "io worker (PG18)",
+   "width": 150
+  }
+ ],
+ "edges": [
+  {
+   "id": "e-req",
+   "from": "req",
+   "to": "lookup",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e-hit",
+   "from": "lookup",
+   "to": "hit",
+   "label": "있음",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e-use",
+   "from": "hit",
+   "to": "use",
+   "variant": "emphasis",
+   "fromSide": "right",
+   "toSide": "left"
+  },
+  {
+   "id": "e-miss",
+   "from": "lookup",
+   "to": "sweep",
+   "label": "없음",
+   "variant": "security",
+   "role": "branch"
+  },
+  {
+   "id": "e-victim",
+   "from": "sweep",
+   "to": "flush",
+   "label": "고른 버퍼"
+  },
+  {
+   "id": "e-load",
+   "from": "flush",
+   "to": "load",
+   "label": "태그 교체"
+  },
+  {
+   "id": "e-loaded",
+   "from": "load",
+   "to": "use",
+   "label": "pin 후 반환",
+   "role": "return",
+   "fromSide": "right",
+   "toSide": "bottom"
+  }
+ ]
+}

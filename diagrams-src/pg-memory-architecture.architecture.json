@@ -1,0 +1,342 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "PostgreSQL 18 메모리 구조",
+  "quality_profile": "standard",
+  "viewBox": [1320, 700],
+  "repository": {
+   "url": "https://github.com/postgres/postgres",
+   "provider": "github",
+   "link_mode": "web",
+   "revision": "39a0db101105eab3f4044d11c609c58b9459ea16"
+  },
+  "views": [
+   {
+    "id": "buffer-pool",
+    "label": "버퍼 풀",
+    "focus": [
+     "backend",
+     "mapping",
+     "descs",
+     "blocks",
+     "datafiles"
+    ],
+    "note": "블록 번호로 매핑 해시를 찾아 buffer id를 얻고, descriptor가 가리키는 8kB 칸을 씁니다."
+   },
+   {
+    "id": "writers",
+    "label": "디스크로 내보내기",
+    "focus": [
+     "blocks",
+     "ckpt",
+     "datafiles",
+     "walbuf",
+     "walwriter",
+     "walfiles"
+    ],
+    "note": "dirty 페이지와 WAL은 백그라운드 프로세스가 디스크로 내보냅니다."
+   },
+   {
+    "id": "local",
+    "label": "backend 개인 메모리",
+    "focus": [
+     "ctx",
+     "backend",
+     "tempbuf",
+     "workmem",
+     "tempfiles"
+    ],
+    "note": "work_mem과 temp_buffers는 backend마다 따로 잡히고, work_mem을 넘으면 임시 파일로 갑니다."
+   }
+  ],
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "frontend": {
+     "label": "backend 개인 메모리"
+    },
+    "backend": {
+     "label": "프로세스"
+    },
+    "database": {
+     "label": "공유 메모리"
+    },
+    "external": {
+     "label": "디스크"
+    }
+   }
+  }
+ },
+ "components": [
+  {
+   "id": "ctx",
+   "type": "frontend",
+   "label": "메모리 컨텍스트",
+   "sublabel": "캐시, 파싱, 실행 상태",
+   "pos": [40, 110],
+   "size": [150, 68],
+   "sources": [
+    {
+     "path": "src/backend/utils/mmgr/README",
+     "line": 1,
+     "label": "mmgr README"
+    }
+   ]
+  },
+  {
+   "id": "backend",
+   "type": "backend",
+   "label": "client backend",
+   "sublabel": "접속 하나당 하나",
+   "pos": [40, 250],
+   "size": [150, 68]
+  },
+  {
+   "id": "tempbuf",
+   "type": "frontend",
+   "label": "temp_buffers",
+   "sublabel": "임시 테이블 전용",
+   "tag": "8MB",
+   "pos": [40, 390],
+   "size": [150, 68],
+   "sources": [
+    {
+     "path": "src/backend/storage/buffer/localbuf.c",
+     "line": 1,
+     "label": "localbuf.c"
+    }
+   ]
+  },
+  {
+   "id": "workmem",
+   "type": "frontend",
+   "label": "work_mem",
+   "sublabel": "정렬, 해시 테이블",
+   "tag": "4MB",
+   "pos": [40, 530],
+   "size": [150, 68],
+   "sources": [
+    {
+     "path": "src/backend/utils/sort/tuplesort.c",
+     "line": 1,
+     "label": "tuplesort.c"
+    }
+   ]
+  },
+  {
+   "id": "mapping",
+   "type": "database",
+   "label": "버퍼 매핑 해시",
+   "sublabel": "블록 태그 → buffer id",
+   "pos": [330, 110],
+   "size": [180, 68],
+   "sources": [
+    {
+     "path": "src/backend/storage/buffer/buf_table.c",
+     "line": 1,
+     "label": "buf_table.c"
+    }
+   ]
+  },
+  {
+   "id": "descs",
+   "type": "database",
+   "label": "Buffer Descriptors",
+   "sublabel": "태그, pin, usage, dirty",
+   "tag": "1MB",
+   "pos": [570, 110],
+   "size": [180, 68],
+   "sources": [
+    {
+     "path": "src/include/storage/buf_internals.h",
+     "line": 258,
+     "label": "BufferDesc"
+    }
+   ]
+  },
+  {
+   "id": "blocks",
+   "type": "database",
+   "label": "Buffer Blocks (shared_buffers)",
+   "sublabel": "8kB 페이지 16384칸",
+   "tag": "128MB",
+   "pos": [330, 250],
+   "size": [420, 76]
+  },
+  {
+   "id": "walbuf",
+   "type": "database",
+   "label": "WAL buffers",
+   "sublabel": "WAL 레코드를 모아 두는 곳",
+   "tag": "4MB",
+   "pos": [330, 390],
+   "size": [420, 68]
+  },
+  {
+   "id": "locks",
+   "type": "database",
+   "label": "락 테이블, PGPROC, AIO 핸들 등",
+   "sublabel": "그 밖의 공유 구조",
+   "pos": [330, 530],
+   "size": [420, 68]
+  },
+  {
+   "id": "ckpt",
+   "type": "backend",
+   "label": "checkpointer, bgwriter",
+   "sublabel": "dirty 페이지 쓰기",
+   "pos": [840, 110],
+   "size": [180, 68]
+  },
+  {
+   "id": "walwriter",
+   "type": "backend",
+   "label": "walwriter",
+   "sublabel": "WAL buffers flush",
+   "pos": [840, 390],
+   "size": [180, 68]
+  },
+  {
+   "id": "datafiles",
+   "type": "external",
+   "label": "데이터 파일",
+   "sublabel": "$PGDATA/base",
+   "pos": [1110, 110],
+   "size": [160, 68]
+  },
+  {
+   "id": "walfiles",
+   "type": "external",
+   "label": "WAL 파일",
+   "sublabel": "$PGDATA/pg_wal",
+   "pos": [1110, 390],
+   "size": [160, 68]
+  },
+  {
+   "id": "tempfiles",
+   "type": "external",
+   "label": "임시 파일",
+   "sublabel": "base/pgsql_tmp",
+   "pos": [1110, 530],
+   "size": [160, 68]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "backend 개인 메모리 (프로세스마다)",
+   "wraps": [
+    "ctx",
+    "backend",
+    "tempbuf",
+    "workmem"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "공유 메모리 (모든 프로세스가 같이 씀)",
+   "wraps": [
+    "mapping",
+    "descs",
+    "blocks",
+    "walbuf",
+    "locks"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "디스크",
+   "wraps": [
+    "datafiles",
+    "walfiles",
+    "tempfiles"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "c-lookup",
+   "from": "backend",
+   "to": "mapping",
+   "label": "블록 찾기",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c-bufid",
+   "from": "mapping",
+   "to": "descs",
+   "label": "buffer id"
+  },
+  {
+   "id": "c-slot",
+   "from": "descs",
+   "to": "blocks",
+   "label": "칸 위치",
+   "fromSide": "bottom",
+   "toSide": "top"
+  },
+  {
+   "id": "c-rw",
+   "from": "backend",
+   "to": "blocks",
+   "label": "페이지 읽기/쓰기",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c-wal",
+   "from": "backend",
+   "to": "walbuf",
+   "label": "WAL 기록"
+  },
+  {
+   "id": "c-dirty",
+   "from": "blocks",
+   "to": "ckpt",
+   "label": "dirty 페이지"
+  },
+  {
+   "id": "c-ckpt",
+   "from": "ckpt",
+   "to": "datafiles",
+   "label": "write, fsync"
+  },
+  {
+   "id": "c-read",
+   "from": "datafiles",
+   "to": "blocks",
+   "label": "읽기 (io worker)",
+   "variant": "dashed",
+   "fromSide": "bottom",
+   "toSide": "right",
+   "via": [
+    [1190, 288]
+   ]
+  },
+  {
+   "id": "c-walw",
+   "from": "walbuf",
+   "to": "walwriter",
+   "label": "flush 요청"
+  },
+  {
+   "id": "c-walfile",
+   "from": "walwriter",
+   "to": "walfiles",
+   "label": "write, fsync"
+  },
+  {
+   "id": "c-spill",
+   "from": "workmem",
+   "to": "tempfiles",
+   "label": "넘치면 임시 파일로",
+   "variant": "dashed",
+   "fromSide": "bottom",
+   "toSide": "bottom",
+   "via": [
+    [115, 650],
+    [1190, 650]
+   ]
+  }
+ ]
+}
