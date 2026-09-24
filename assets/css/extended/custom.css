@@ -27,7 +27,7 @@
     --gap: 40px;
     --ease: cubic-bezier(0.22, 0.8, 0.24, 1);
 
-    --font: "Wanted Sans Variable", "Wanted Sans", "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+    --font: "Wanted Sans Variable", "Wanted Sans", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
     --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
     /* PaperMod 변수 연결 */
@@ -1162,11 +1162,6 @@ a.ch-title:hover {
 #searchResults .focus,
 #searchResults li:hover {
     transform: none;
-}
-
-/* 소개처럼 연재가 아닌 단일 페이지의 PaperMod 머리 */
-.post-single .post-header {
-    padding: 56px 0 24px;
 }
 
 /* ---------- 반응형 ---------- */

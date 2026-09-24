@@ -28,7 +28,7 @@ DB 인터널 노트의 화면 규칙입니다. 값은 모두 `assets/css/extende
 
 ## 서체
 
-- 본문과 제목은 Wanted Sans이고, 한글 보조로 Pretendard를 씁니다. 코드는 JetBrains Mono입니다.
+- 본문과 제목은 Wanted Sans(한글 포함)이고, 코드는 JetBrains Mono입니다.
 - 세리프는 쓰지 않습니다. 강조는 같은 서체의 굵기로만 합니다.
 
 | 역할 | 크기 | 굵기 | 자간 |

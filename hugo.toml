@@ -21,16 +21,7 @@ enableEmoji = true
   author = "Jin"
   description = "PostgreSQL과 MongoDB의 내부 구조를 운영 관점에서 풀어 쓰는 블로그"
   defaultTheme = "dark"      # 기본 다크, 헤더 버튼으로 라이트 전환
-  ShowReadingTime = true
-  ShowToc = true
-  TocOpen = false
   ShowCodeCopyButtons = true
-  ShowPostNavLinks = true
-  ShowBreadCrumbs = true
-  ShowWordCount = false
-  ShowShareButtons = false
-  ShowLastMod = true
-  DateFormat = "2006-01-02"
 
   [params.homeInfoParams]
     Title = "DB 인터널 노트"
