@@ -9,7 +9,6 @@ summary: "MongoDB는 여러 실행 계획 중 하나를 어떻게 고르는가"
 description: "인덱스 구조, 후보 계획 경쟁, plan cache"
 ---
 
-> 이 글은 MongoDB 8.0 기준으로 작성했습니다.
 
 ## 개요
 

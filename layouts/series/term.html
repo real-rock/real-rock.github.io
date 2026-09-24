@@ -1,44 +1,18 @@
 {{- define "main" }}
 {{- $chapters := partial "series_chapters.html" . }}
 {{- $published := len .Pages }}
-{{- $key := .Params.key | default "default" }}
-<header class="series-hero s-{{ $key }}">
-  {{- partial "breadcrumbs.html" . }}
-  <span class="series-mark">{{ .Params.mark | default "SERIES" }}</span>
+<header class="page-head">
+  <a class="page-back" href="{{ "series/" | relURL }}">시리즈</a>
   <h1>{{ .Title }}</h1>
-  {{- with .Description }}<p class="series-hero-desc">{{ . }}</p>{{ end }}
-  <p class="series-hero-meta">
-    {{- if $chapters }}전체 {{ len $chapters }}편{{ if eq $published 0 }} · 연재 준비 중{{ else if lt $published (len $chapters) }} · {{ $published }}편 공개{{ end }}
-    {{- else }}연재 예정{{ end }}
-    {{- with .Params.version }} · {{ . }} 기준{{ end }}
+  {{- with .Description }}<p>{{ . }}</p>{{ end }}
+  <p class="page-meta">
+    <span>전체 {{ len $chapters }}편</span>
+    <span>{{ if eq $published 0 }}연재 준비 중{{ else }}{{ $published }}편 공개{{ end }}</span>
+    {{- with .Params.version }}<span>{{ . }} 기준</span>{{ end }}
   </p>
 </header>
-
-{{- with .Content }}
-<div class="series-intro">{{ . }}</div>
-{{- end }}
-
-{{- if $chapters }}
-<ol class="chapter-list s-{{ $key }}">
-  {{- range $chapters }}
-  <li class="chapter{{ if not .page }} planned{{ end }}">
-    <span class="chapter-no">{{ printf "%02d" .n }}</span>
-    <div class="chapter-body">
-      <h3>
-        {{- with .page }}
-        <a href="{{ .RelPermalink }}">{{ partial "short_title.html" . }}</a>
-        {{- if .Draft }}<span class="chip chip-draft">초안</span>{{ end }}
-        {{- else }}
-        <span>{{ .title }}</span><span class="chip chip-planned">준비 중</span>
-        {{- end }}
-      </h3>
-      {{- with .description }}<p class="chapter-topics">{{ . }}</p>{{ end }}
-      {{- with .summary }}<p>{{ . | plainify | htmlUnescape | truncate 140 }}</p>{{ end }}
-    </div>
-  </li>
-  {{- end }}
-</ol>
-{{- else }}
-<p class="series-soon">첫 글을 준비하고 있습니다.</p>
-{{- end }}
+<div class="series-page">
+  {{- with .Content }}<div class="series-intro">{{ . }}</div>{{ end }}
+  {{ partial "series_block.html" (dict "term" . "detail" true "hideTitle" true) }}
+</div>
 {{- end }}

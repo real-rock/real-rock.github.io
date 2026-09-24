@@ -9,7 +9,6 @@ summary: "shared buffers, work_mem, WAL buffers는 어디에 어떻게 쓰이는
 description: "shared buffers, work_mem, WAL buffers"
 ---
 
-> 이 글은 PostgreSQL 17 기준으로 작성했습니다.
 
 ## 개요
 

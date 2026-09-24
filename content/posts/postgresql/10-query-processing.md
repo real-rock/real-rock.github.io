@@ -9,7 +9,6 @@ summary: "SQL 한 줄이 결과가 되기까지"
 description: "파서, 플래너, 실행기와 통계 정보"
 ---
 
-> 이 글은 PostgreSQL 17 기준으로 작성했습니다.
 
 ## 개요
 

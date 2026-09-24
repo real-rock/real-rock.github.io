@@ -1,75 +1,98 @@
 {{- define "main" }}
 {{- $s := partial "series_info.html" . }}
+{{- $toc := findRE "<li" .TableOfContents 1 }}
+<article class="post-layout{{ if $s.term }} has-series{{ end }}{{ if $toc }} has-toc{{ end }}">
+  {{- with $s.term }}
+  <aside class="rail rail-series" id="rail-series" aria-label="연재 목차">
+    <div class="rail-head">
+      <div>
+        <a class="rail-title" href="{{ .RelPermalink }}">{{ .Title }}</a>
+        {{- if $s.index }}<p class="rail-count">{{ $s.total }}편 중 {{ $s.index }}편</p>{{ end }}
+      </div>
+      <button class="rail-btn" type="button" data-rail-toggle aria-controls="rail-series" aria-expanded="true" title="연재 목차 접기">
+        <i class="ph ph-sidebar-simple" aria-hidden="true"></i><span class="sr-only">연재 목차 접기</span>
+      </button>
+    </div>
+    <ol class="rail-list">
+      {{- range $s.chapters }}
+      <li>
+        {{- if eq .n $s.index }}
+        <a class="is-current" href="{{ .page.RelPermalink }}" aria-current="page"><span>{{ .n }}</span>{{ .title }}</a>
+        {{- else if .page }}
+        <a href="{{ .page.RelPermalink }}"><span>{{ .n }}</span>{{ .title }}</a>
+        {{- else }}
+        <span class="is-planned"><span>{{ .n }}</span>{{ .title }}</span>
+        {{- end }}
+      </li>
+      {{- end }}
+    </ol>
+    {{- range (sort (site.GetPage "/series").Pages "Params.order") }}
+    {{- if ne .RelPermalink $s.term.RelPermalink }}
+    <a class="rail-other" href="{{ .RelPermalink }}">{{ .Title }} 시리즈</a>
+    {{- end }}
+    {{- end }}
+  </aside>
+  {{- end }}
 
-<article class="post-single{{ with $s.key }} s-{{ . }}{{ end }}">
-  <header class="post-header">
-    {{ partial "breadcrumbs.html" . }}
+  <div class="post-main">
     {{- with $s.term }}
-    <a class="post-series-badge" href="{{ .RelPermalink }}">
-      <span class="series-mark">{{ .Params.mark | default "SERIES" }}</span>
-      {{ .Title }}{{ with $s.index }} · {{ printf "%02d" . }}{{ end }}
-    </a>
+    <button class="rail-btn rail-reopen" type="button" data-rail-toggle aria-controls="rail-series" aria-expanded="true" title="연재 목차 펴기">
+      <i class="ph ph-sidebar-simple" aria-hidden="true"></i><span class="sr-only">연재 목차 펴기</span>
+    </button>
+    <details class="m-box m-series">
+      <summary>{{ .Title }}{{ if $s.index }} {{ $s.total }}편 중 {{ $s.index }}편{{ end }}</summary>
+      <ol>
+        {{- range $s.chapters }}
+        <li{{ if eq .n $s.index }} class="is-current"{{ end }}>
+          {{- if and .page (ne .n $s.index) }}<a href="{{ .page.RelPermalink }}">{{ .n }}. {{ .title }}</a>{{ else }}{{ .n }}. {{ .title }}{{ end -}}
+        </li>
+        {{- end }}
+      </ol>
+    </details>
     {{- end }}
-    <h1 class="post-title entry-hint-parent">
-      {{ $s.shortTitle | default .Title }}
-      {{- if .Draft }}
-      <span class="entry-hint" title="Draft">
-        <svg xmlns="http://www.w3.org/2000/svg" height="35" viewBox="0 -960 960 960" fill="currentColor">
-          <path
-            d="M160-410v-60h300v60H160Zm0-165v-60h470v60H160Zm0-165v-60h470v60H160Zm360 580v-123l221-220q9-9 20-13t22-4q12 0 23 4.5t20 13.5l37 37q9 9 13 20t4 22q0 11-4.5 22.5T862.09-380L643-160H520Zm300-263-37-37 37 37ZM580-220h38l121-122-18-19-19-18-122 121v38Zm141-141-19-18 37 37-18-19Z" />
-        </svg>
-      </span>
-      {{- end }}
-    </h1>
-    {{- if .Description }}
-    <div class="post-description">
-      {{ .Description }}
-    </div>
-    {{- end }}
-    {{- if not (.Param "hideMeta") }}
-    <div class="post-meta">
-      {{- partial "post_meta.html" . -}}
-      {{- partial "translation_list.html" . -}}
-      {{- partial "edit_post.html" . -}}
-      {{- partial "post_canonical.html" . -}}
-    </div>
-    {{- end }}
-  </header>
-  {{- $isHidden := (.Param "cover.hiddenInSingle") | default (.Param "cover.hidden") | default false }}
-  {{- partial "cover.html" (dict "cxt" . "IsSingle" true "isHidden" $isHidden) }}
-  {{- partial "series_nav.html" . }}
-  {{- if (.Param "ShowToc") }}
-  {{- partial "toc.html" . }}
-  {{- end }}
 
-  {{- if .Content }}
-  <div class="post-content md-content">
-    {{- if not (.Param "disableAnchoredHeadings") }}
-    {{- partial "anchored_headings.html" .Content -}}
-    {{- else }}{{ .Content }}{{ end }}
+    <header class="post-head">
+      {{- with $s.term }}<a class="post-series" href="{{ .RelPermalink }}">{{ .Title }}{{ with $s.index }} {{ . }}편{{ end }}</a>{{ end }}
+      <h1>{{ $s.shortTitle | default .Title }}</h1>
+      {{- with .Description }}<p class="lede">{{ . }}</p>{{ end }}
+      {{- if eq .Type "posts" }}
+      <p class="post-meta">
+        <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006년 1월 2일" }}</time>
+        <span>{{ .ReadingTime }}분 분량</span>
+        {{- if .Draft }}<span>초안</span>{{ end }}
+      </p>
+      {{- end }}
+    </header>
+
+    {{- if $toc }}
+    <details class="m-box m-toc">
+      <summary>이 글의 목차</summary>
+      {{ .TableOfContents }}
+    </details>
+    {{- end }}
+
+    {{- if .Content }}
+    <div class="post-content md-content">
+      {{- partial "anchored_headings.html" .Content -}}
+    </div>
+    {{- end }}
+
+    <footer class="post-foot">
+      {{- with .GetTerms "tags" }}
+      <ul class="post-tags">
+        {{- range . }}<li><a href="{{ .RelPermalink }}">#{{ .LinkTitle }}</a></li>{{ end }}
+      </ul>
+      {{- end }}
+      {{- partial "post_nav_links.html" . }}
+    </footer>
   </div>
-  {{- end }}
 
-  {{- partial "extend_post_content.html" . }}
-
-  <footer class="post-footer">
-    {{- $tags := .Language.Params.Taxonomies.tag | default "tags" }}
-    <ul class="post-tags">
-      {{- range ($.GetTerms $tags) }}
-      <li><a href="{{ .Permalink }}">{{ .LinkTitle }}</a></li>
-      {{- end }}
-    </ul>
-    {{- if (.Param "ShowPostNavLinks") }}
-    {{- partial "post_nav_links.html" . }}
-    {{- end }}
-    {{- if (and site.Params.ShowShareButtons (ne .Params.disableShare true)) }}
-    {{- partial "share_icons.html" . -}}
-    {{- end }}
-  </footer>
-
-  {{- if (.Param "comments") }}
-  {{- partial "comments.html" . }}
+  {{- if $toc }}
+  <aside class="rail rail-toc" aria-label="이 글의 목차">
+    <p class="rail-label">이 글의 목차</p>
+    {{ .TableOfContents }}
+  </aside>
   {{- end }}
 </article>
-
-{{- end }}{{/* end main */}}
+{{- if (.Param "comments") }}{{ partial "comments.html" . }}{{ end }}
+{{- end }}

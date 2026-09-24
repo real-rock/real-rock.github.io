@@ -1,0 +1,41 @@
+<script>
+(function () {
+  var root = document.documentElement;
+
+  /* 연재 목차 접기/펴기 */
+  var buttons = document.querySelectorAll("[data-rail-toggle]");
+  var rail = document.getElementById("rail-series");
+  function sync() {
+    var off = root.dataset.rail === "off";
+    buttons.forEach(function (b) { b.setAttribute("aria-expanded", String(!off)); });
+    if (rail) rail.inert = off;
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () {
+      root.classList.add("rail-anim");
+      var off = root.dataset.rail !== "off";
+      if (off) root.dataset.rail = "off"; else delete root.dataset.rail;
+      try { localStorage.setItem("rail-series", off ? "off" : "on"); } catch (e) {}
+      sync();
+      var next = off ? document.querySelector(".rail-reopen") : rail && rail.querySelector("[data-rail-toggle]");
+      if (next) next.focus({ preventScroll: true });
+    });
+  });
+  sync();
+
+  /* 이 글의 목차: 지금 읽는 소제목 표시 */
+  var links = [].slice.call(document.querySelectorAll(".rail-toc a[href^='#']"));
+  if (!links.length || !("IntersectionObserver" in window)) return;
+  var byId = {};
+  links.forEach(function (a) { byId[decodeURIComponent(a.hash.slice(1))] = a; });
+  var heads = [].slice.call(document.querySelectorAll(".post-content h2[id], .post-content h3[id]")).filter(function (h) { return byId[h.id]; });
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      links.forEach(function (a) { a.classList.remove("is-current"); });
+      byId[e.target.id].classList.add("is-current");
+    });
+  }, { rootMargin: "0px 0px -70% 0px" });
+  heads.forEach(function (h) { io.observe(h); });
+})();
+</script>

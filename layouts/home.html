@@ -3,40 +3,23 @@
 {{- $series := sort (site.GetPage "/series").Pages "Params.order" }}
 {{- $recent := (where site.RegularPages "Type" "in" site.Params.mainSections).ByDate.Reverse }}
 
-<section class="hero">
-  <p class="eyebrow">Database Internals · Field Notes</p>
-  <h1 class="hero-title">{{ $info.Title | default site.Title }}</h1>
-  {{- with $info.Content }}
-  <p class="hero-lead">{{ . | markdownify }}</p>
-  {{- end }}
-  <div class="hero-actions">
-    <a class="btn btn-primary" href="{{ "series/" | relURL }}">시리즈 둘러보기</a>
-    <a class="btn" href="{{ "about/" | relURL }}">블로그 소개</a>
-  </div>
+<section class="intro">
+  <h1>{{ $info.Title | default site.Title }}</h1>
+  <p>{{ $info.Content | default site.Params.description | markdownify }}</p>
 </section>
 
-{{- if $series }}
-<section class="home-section">
-  <div class="section-head">
-    <h2>시리즈</h2>
-    <a href="{{ "series/" | relURL }}">전체 보기</a>
-  </div>
-  <div class="series-grid">
-    {{- range $series }}{{ partial "series_card.html" . }}{{ end }}
-  </div>
+{{- with $series }}
+<section class="series-pair" aria-label="연재">
+  {{- range . }}{{ partial "series_block.html" (dict "term" . "limit" 5) }}{{ end }}
 </section>
 {{- end }}
 
-{{- if $recent }}
-<section class="home-section">
-  <div class="section-head">
-    <h2>최근 글</h2>
-    <a href="{{ "posts/" | relURL }}">모든 글</a>
-  </div>
-  <div class="post-list">
-    {{- range first 6 $recent }}{{ partial "post_row.html" . }}{{ end }}
+{{- with $recent }}
+<section class="split">
+  <h2>최근 글</h2>
+  <div class="rows">
+    {{- range first 6 . }}{{ partial "post_row.html" (dict "page" .) }}{{ end }}
   </div>
 </section>
 {{- end }}
-
 {{- end }}

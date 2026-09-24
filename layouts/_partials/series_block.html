@@ -1,0 +1,38 @@
+{{- /*
+  시리즈 목차 블록. 인자: dict
+    "term"      시리즈 페이지
+    "limit"     앞에서부터 몇 편만 보일지 (0이면 전체)
+    "detail"    true면 각 편의 주제까지 표시
+    "hideTitle" true면 시리즈 제목(h2)을 숨김 (시리즈 페이지 본문용)
+*/ -}}
+{{- $t := .term }}
+{{- $limit := .limit | default 0 }}
+{{- $detail := .detail | default false }}
+{{- $chapters := partial "series_chapters.html" $t }}
+<div class="series-block">
+  {{- if not .hideTitle }}
+  <h2><a href="{{ $t.RelPermalink }}">{{ $t.Title }}</a></h2>
+  {{- with $t.Description }}<p class="series-desc">{{ . }}</p>{{ end }}
+  {{- end }}
+  <ol class="chapters{{ if $detail }} is-detail{{ end }}">
+    {{- range $i, $c := $chapters }}
+    {{- if or (eq $limit 0) (lt $i $limit) }}
+    <li{{ if not $c.page }} class="is-planned"{{ end }}>
+      <span class="ch-n">{{ $c.n }}</span>
+      <span class="ch-body">
+        {{- with $c.page }}
+        <a class="ch-title" href="{{ .RelPermalink }}">{{ $c.title }}</a>
+        {{- if .Draft }}<span class="ch-state">초안</span>{{ end }}
+        {{- else }}
+        <span class="ch-title">{{ $c.title }}</span><span class="ch-state">준비 중</span>
+        {{- end }}
+        {{- if $detail }}{{ with $c.description }}<span class="ch-desc">{{ . }}</span>{{ end }}{{ end }}
+      </span>
+    </li>
+    {{- end }}
+    {{- end }}
+  </ol>
+  {{- if and (gt $limit 0) (gt (len $chapters) $limit) }}
+  <a class="series-all" href="{{ $t.RelPermalink }}">{{ len $chapters }}편 전체 보기</a>
+  {{- end }}
+</div>

@@ -20,7 +20,7 @@ enableEmoji = true
 [params]
   author = "Jin"
   description = "PostgreSQL과 MongoDB의 내부 구조를 운영 관점에서 풀어 쓰는 블로그"
-  defaultTheme = "auto"
+  defaultTheme = "dark"      # 기본 다크, 헤더 버튼으로 라이트 전환
   ShowReadingTime = true
   ShowToc = true
   TocOpen = false
@@ -64,5 +64,5 @@ enableEmoji = true
   [markup.goldmark.renderer]
     unsafe = true
   [markup.highlight]
-    style = "github"
+    noClasses = false   # 색은 assets/css/extended/custom.css의 .chroma 규칙에서 지정
     lineNos = false

@@ -9,7 +9,6 @@ summary: "primary가 죽으면 누가, 어떻게 새 primary가 되는가"
 description: "Raft 기반 선출, 투표 조건, priority와 failover"
 ---
 
-> 이 글은 MongoDB 8.0 기준으로 작성했습니다.
 
 ## 개요
 

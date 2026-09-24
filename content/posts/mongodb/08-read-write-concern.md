@@ -9,7 +9,6 @@ summary: "MongoDB는 무엇을 언제까지 보장하는가"
 description: "write concern, read concern, 읽기 일관성의 범위"
 ---
 
-> 이 글은 MongoDB 8.0 기준으로 작성했습니다.
 
 ## 개요
 

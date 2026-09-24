@@ -9,7 +9,6 @@ summary: "postmaster와 backend, 백그라운드 프로세스가 각각 무슨 �
 description: "postmaster, backend, 백그라운드 프로세스들의 역할"
 ---
 
-> 이 글은 PostgreSQL 17 기준으로 작성했습니다.
 
 ## 개요
 

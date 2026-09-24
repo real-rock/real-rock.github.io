@@ -3,8 +3,10 @@
 {{- $prev := false }}
 {{- $next := false }}
 {{- if $s.index }}
-  {{- if gt $s.index 1 }}{{ $prev = index $s.pages (sub $s.index 2) }}{{ end }}
-  {{- if lt $s.index $s.total }}{{ $next = index $s.pages $s.index }}{{ end }}
+  {{- range $s.chapters }}
+    {{- if and .page (eq .n (sub $s.index 1)) }}{{ $prev = .page }}{{ end }}
+    {{- if and .page (eq .n (add $s.index 1)) }}{{ $next = .page }}{{ end }}
+  {{- end }}
 {{- else }}
   {{- $pages := where site.RegularPages "Type" "in" site.Params.mainSections }}
   {{- if in $pages . }}
@@ -13,18 +15,12 @@
   {{- end }}
 {{- end }}
 {{- if or $prev $next }}
-<nav class="paginav{{ with $s.key }} s-{{ . }}{{ end }}">
+<nav class="post-nav" aria-label="이전 글과 다음 글">
   {{- with $prev }}
-  <a class="prev" href="{{ .RelPermalink }}">
-    <span class="title">← 이전 글</span>
-    <span>{{ partial "short_title.html" . }}</span>
-  </a>
+  <a class="prev" href="{{ .RelPermalink }}"><small>이전 글</small><b>{{ partial "short_title.html" . }}</b></a>
   {{- end }}
   {{- with $next }}
-  <a class="next" href="{{ .RelPermalink }}">
-    <span class="title">다음 글 →</span>
-    <span>{{ partial "short_title.html" . }}</span>
-  </a>
+  <a class="next" href="{{ .RelPermalink }}"><small>다음 글</small><b>{{ partial "short_title.html" . }}</b></a>
   {{- end }}
 </nav>
 {{- end }}

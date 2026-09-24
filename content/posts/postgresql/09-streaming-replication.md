@@ -9,7 +9,6 @@ summary: "standby는 primary의 변경을 어떻게 따라가는가"
 description: "WAL 전송, standby 재생, replication slot"
 ---
 
-> 이 글은 PostgreSQL 17 기준으로 작성했습니다.
 
 ## 개요
 

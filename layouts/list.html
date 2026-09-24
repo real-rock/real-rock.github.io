@@ -1,28 +1,18 @@
-{{- /* 글 목록(/posts/)과 태그별 목록(/tags/xxx/)에 쓰입니다 */ -}}
+{{- /* 글 목록(/posts/)과 태그별 목록(/tags/xxx/) */ -}}
 {{- define "main" }}
-<header class="page-header">
-  {{- partial "breadcrumbs.html" . }}
+<header class="page-head">
   <h1>{{ .Title }}</h1>
-  {{- with .Description }}
-  <div class="post-description">{{ . | markdownify }}</div>
-  {{- end }}
+  {{- with .Description }}<p>{{ . | markdownify }}</p>{{ end }}
 </header>
-
-{{- with .Content }}
-<div class="post-content md-content">{{ . }}</div>
-{{- end }}
-
+{{- with .Content }}<div class="post-content md-content">{{ . }}</div>{{ end }}
 {{- $paginator := .Paginate .RegularPages.ByDate.Reverse }}
-<div class="post-list">
-  {{- range $paginator.Pages }}{{ partial "post_row.html" . }}{{ end }}
+<div class="rows rows-wide">
+  {{- range $paginator.Pages }}{{ partial "post_row.html" (dict "page" . "summary" true) }}{{ end }}
 </div>
-
 {{- if gt $paginator.TotalPages 1 }}
-<footer class="page-footer">
-  <nav class="pagination">
-    {{- with $paginator.Prev }}<a class="prev" href="{{ .URL }}">← 이전 페이지</a>{{ end }}
-    {{- with $paginator.Next }}<a class="next" href="{{ .URL }}">다음 페이지 →</a>{{ end }}
-  </nav>
-</footer>
+<nav class="pager" aria-label="페이지">
+  {{- with $paginator.Prev }}<a href="{{ .URL }}">이전 페이지</a>{{ end }}
+  {{- with $paginator.Next }}<a href="{{ .URL }}">다음 페이지</a>{{ end }}
+</nav>
 {{- end }}
 {{- end }}

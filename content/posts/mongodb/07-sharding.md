@@ -9,7 +9,6 @@ summary: "MongoDB는 데이터를 여러 샤드에 어떻게 나누는가"
 description: "mongos, config server, chunk와 balancer"
 ---
 
-> 이 글은 MongoDB 8.0 기준으로 작성했습니다.
 
 ## 개요
 

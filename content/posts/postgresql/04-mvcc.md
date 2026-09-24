@@ -9,7 +9,6 @@ summary: "PostgreSQL은 어떻게 읽기와 쓰기를 서로 막지 않는가"
 description: "xmin/xmax, 스냅샷, 튜플 가시성 판단"
 ---
 
-> 이 글은 PostgreSQL 17 기준으로 작성했습니다.
 
 ## 개요
 
