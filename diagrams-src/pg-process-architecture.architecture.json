@@ -1,0 +1,368 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "PostgreSQL 18 프로세스 구조",
+    "quality_profile": "standard",
+    "viewBox": [1370, 740],
+    "repository": {
+      "url": "https://github.com/postgres/postgres",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "39a0db101105eab3f4044d11c609c58b9459ea16"
+    },
+    "views": [
+      {
+        "id": "connect",
+        "label": "연결 처리",
+        "focus": [
+          "client",
+          "postmaster",
+          "backend",
+          "shmem"
+        ],
+        "note": "postmaster는 accept와 fork만 하고, 쿼리는 fork된 backend가 직접 처리합니다."
+      },
+      {
+        "id": "write-path",
+        "label": "디스크 쓰기 담당",
+        "focus": [
+          "shmem",
+          "bgwriter",
+          "checkpointer",
+          "walwriter",
+          "datafiles",
+          "walfiles"
+        ],
+        "note": "backend가 바꾼 페이지와 WAL을 디스크로 내보내는 일은 백그라운드 프로세스가 나눠 맡습니다."
+      },
+      {
+        "id": "aio",
+        "label": "PG18 비동기 I/O",
+        "focus": [
+          "backend",
+          "shmem",
+          "ioworker",
+          "datafiles"
+        ],
+        "note": "io_method=worker(기본값)에서는 backend가 공유 메모리의 큐에 읽기 요청을 넣고 io worker가 실제 read를 합니다."
+      },
+      {
+        "id": "maintenance",
+        "label": "유지보수와 복제",
+        "focus": [
+          "postmaster",
+          "avlauncher",
+          "avworker",
+          "walsender",
+          "replica",
+          "walfiles",
+          "archiver",
+          "archive"
+        ],
+        "note": "autovacuum worker도 postmaster가 fork합니다. launcher는 요청만 보냅니다."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "클라이언트",
+      "sublabel": "psql, 애플리케이션",
+      "pos": [20, 270],
+      "size": [140, 68]
+    },
+    {
+      "id": "replica",
+      "type": "external",
+      "label": "Standby",
+      "sublabel": "pg_receivewal 등",
+      "pos": [20, 640],
+      "size": [140, 68]
+    },
+    {
+      "id": "postmaster",
+      "type": "backend",
+      "label": "postmaster",
+      "sublabel": "accept, fork, 자식 감시",
+      "pos": [220, 270],
+      "size": [160, 68],
+      "sources": [
+        {
+          "path": "src/backend/postmaster/postmaster.c",
+          "line": 1652,
+          "label": "ServerLoop"
+        }
+      ]
+    },
+    {
+      "id": "backend",
+      "type": "backend",
+      "label": "client backend ×N",
+      "sublabel": "연결 1개 = 프로세스 1개",
+      "pos": [440, 270],
+      "size": [170, 68],
+      "sources": [
+        {
+          "path": "src/backend/tcop/postgres.c",
+          "line": 4520,
+          "label": "PostgresMain"
+        }
+      ]
+    },
+    {
+      "id": "walsender",
+      "type": "backend",
+      "label": "walsender",
+      "sublabel": "복제 연결용 backend",
+      "pos": [440, 640],
+      "size": [170, 68],
+      "sources": [
+        {
+          "path": "src/backend/tcop/backend_startup.c",
+          "line": 869,
+          "label": "B_WAL_SENDER"
+        }
+      ]
+    },
+    {
+      "id": "avlauncher",
+      "type": "backend",
+      "label": "autovacuum launcher",
+      "sublabel": "청소할 DB를 고름",
+      "pos": [220, 490],
+      "size": [160, 68]
+    },
+    {
+      "id": "avworker",
+      "type": "backend",
+      "label": "autovacuum worker",
+      "sublabel": "필요할 때만 생김",
+      "pos": [440, 490],
+      "size": [170, 68]
+    },
+    {
+      "id": "shmem",
+      "type": "database",
+      "label": "공유 메모리",
+      "sublabel": "shared buffers, WAL buffers, 락 등",
+      "tag": "150MB",
+      "pos": [670, 255],
+      "size": [190, 98]
+    },
+    {
+      "id": "ioworker",
+      "type": "backend",
+      "label": "io worker ×3",
+      "sublabel": "PG18 신규, 실제 read 수행",
+      "pos": [680, 20],
+      "size": [170, 68],
+      "sources": [
+        {
+          "path": "src/backend/storage/aio/method_worker.c",
+          "line": 1,
+          "label": "method_worker.c"
+        }
+      ]
+    },
+    {
+      "id": "bgwriter",
+      "type": "backend",
+      "label": "background writer",
+      "sublabel": "dirty 페이지를 조금씩",
+      "pos": [930, 120],
+      "size": [170, 68]
+    },
+    {
+      "id": "checkpointer",
+      "type": "backend",
+      "label": "checkpointer",
+      "sublabel": "주기적으로 모두 flush",
+      "pos": [930, 270],
+      "size": [170, 68]
+    },
+    {
+      "id": "walwriter",
+      "type": "backend",
+      "label": "walwriter",
+      "sublabel": "WAL buffers를 flush",
+      "pos": [930, 390],
+      "size": [170, 68]
+    },
+    {
+      "id": "datafiles",
+      "type": "database",
+      "label": "데이터 파일",
+      "sublabel": "$PGDATA/base",
+      "pos": [1180, 195],
+      "size": [160, 68]
+    },
+    {
+      "id": "walfiles",
+      "type": "database",
+      "label": "WAL 파일",
+      "sublabel": "$PGDATA/pg_wal",
+      "pos": [1180, 490],
+      "size": [160, 68]
+    },
+    {
+      "id": "archiver",
+      "type": "backend",
+      "label": "archiver",
+      "sublabel": "archive_mode=on일 때",
+      "pos": [1180, 640],
+      "size": [160, 68]
+    },
+    {
+      "id": "archive",
+      "type": "external",
+      "label": "WAL 보관소",
+      "sublabel": "archive_command 대상",
+      "pos": [930, 640],
+      "size": [170, 68]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c-connect",
+      "from": "client",
+      "to": "postmaster",
+      "label": "접속 요청",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-fork",
+      "from": "postmaster",
+      "to": "backend",
+      "label": "fork()",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-query",
+      "from": "client",
+      "to": "backend",
+      "label": "이후 쿼리는 backend와 직접",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [90, 215],
+        [525, 215]
+      ]
+    },
+    {
+      "id": "c-shmem",
+      "from": "backend",
+      "to": "shmem",
+      "label": "읽기/쓰기"
+    },
+    {
+      "id": "c-aio",
+      "from": "shmem",
+      "to": "ioworker",
+      "label": "I/O 요청",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": -44
+    },
+    {
+      "id": "c-ioread",
+      "from": "ioworker",
+      "to": "datafiles",
+      "label": "pread",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [1260, 54]
+      ]
+    },
+    {
+      "id": "c-bgw",
+      "from": "shmem",
+      "to": "bgwriter",
+      "label": "dirty 페이지",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "c-bgw-write",
+      "from": "bgwriter",
+      "to": "datafiles",
+      "label": "write"
+    },
+    {
+      "id": "c-ckpt",
+      "from": "shmem",
+      "to": "checkpointer",
+      "label": "모든 dirty"
+    },
+    {
+      "id": "c-ckpt-write",
+      "from": "checkpointer",
+      "to": "datafiles",
+      "label": "write + fsync"
+    },
+    {
+      "id": "c-walw",
+      "from": "shmem",
+      "to": "walwriter",
+      "label": "WAL"
+    },
+    {
+      "id": "c-walfile",
+      "from": "walwriter",
+      "to": "walfiles",
+      "label": "write + fsync",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "c-walread",
+      "from": "walfiles",
+      "to": "walsender",
+      "label": "WAL 읽기",
+      "fromSide": "left",
+      "toSide": "right",
+      "via": [
+        [640, 524],
+        [640, 674]
+      ]
+    },
+    {
+      "id": "c-repl",
+      "from": "walsender",
+      "to": "replica",
+      "label": "WAL 스트리밍",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-avreq",
+      "from": "avlauncher",
+      "to": "postmaster",
+      "label": "worker 요청",
+      "variant": "dashed"
+    },
+    {
+      "id": "c-avfork",
+      "from": "postmaster",
+      "to": "avworker",
+      "label": "fork()"
+    },
+    {
+      "id": "c-arch",
+      "from": "walfiles",
+      "to": "archiver",
+      "label": "다 쓴 세그먼트",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1260, 599]
+    },
+    {
+      "id": "c-archive",
+      "from": "archiver",
+      "to": "archive",
+      "label": "복사"
+    }
+  ]
+}

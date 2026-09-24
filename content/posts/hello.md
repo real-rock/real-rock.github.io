@@ -11,7 +11,7 @@ description: "PostgreSQL 인터널과 MongoDB 인터널, 두 연재를 소개합
 
 ## 두 연재
 
-[PostgreSQL 인터널](/series/postgresql-인터널/)은 10편입니다. 프로세스와 메모리 구조에서 시작해 데이터 저장 구조, MVCC, VACUUM, WAL, 복제, 쿼리 처리까지 이어집니다. PostgreSQL 17을 기준으로 씁니다.
+[PostgreSQL 인터널](/series/postgresql-인터널/)은 10편입니다. 프로세스와 메모리 구조에서 시작해 데이터 저장 구조, MVCC, VACUUM, WAL, 복제, 쿼리 처리까지 이어집니다. PostgreSQL 18을 기준으로 씁니다.
 
 [MongoDB 인터널](/series/mongodb-인터널/)은 8편입니다. WiredTiger 스토리지 엔진에서 시작해 체크포인트와 저널, MVCC, 인덱스와 쿼리 플래너, 복제와 선출, 샤딩, Read/Write Concern까지 다룹니다. MongoDB 8.0을 기준으로 씁니다.
 

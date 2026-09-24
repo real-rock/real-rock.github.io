@@ -1044,6 +1044,25 @@ a.ch-title:hover {
     font-family: var(--font);
 }
 
+/* archify 다이어그램: static/diagrams/*.html을 iframe으로 넣고, 새 창 링크를 함께 둡니다 */
+.post-content figure.diagram {
+    margin: 28px 0;
+}
+
+.post-content figure.diagram iframe {
+    display: block;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-2);
+}
+
+.post-content figure.diagram figcaption {
+    margin-top: 10px;
+    color: var(--tx-2);
+    font-size: 14.5px;
+}
+
 /* ---------- 글 꼬리 ---------- */
 .post-foot {
     margin-top: 56px;

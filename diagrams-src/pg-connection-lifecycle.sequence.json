@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "접속 하나가 처리되는 순서",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1085,
+      548
+    ],
+    "column_fit": "spread",
+    "views": [
+      {
+        "id": "accept",
+        "label": "accept와 fork",
+        "focus": [
+          "client",
+          "postmaster",
+          "backend"
+        ],
+        "note": "postmaster는 소켓을 받자마자 fork하고, 인증은 자식 프로세스가 합니다."
+      },
+      {
+        "id": "init",
+        "label": "인증과 초기화",
+        "focus": [
+          "client",
+          "backend",
+          "shmem"
+        ],
+        "note": "PGPROC 슬롯을 얻지 못하면 여기서 too many clients로 거절됩니다."
+      },
+      {
+        "id": "exit",
+        "label": "종료와 회수",
+        "focus": [
+          "client",
+          "backend",
+          "postmaster"
+        ],
+        "note": "backend가 끝나면 postmaster가 SIGCHLD로 알고 슬롯을 정리합니다."
+      }
+    ],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "emphasis": {
+          "label": "주요 요청"
+        },
+        "return": {
+          "label": "응답"
+        },
+        "security": {
+          "label": "인증"
+        },
+        "dashed": {
+          "label": "시그널"
+        },
+        "default": {
+          "label": "일반 메시지"
+        }
+      }
+    }
+  },
+  "participants": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "클라이언트",
+      "sublabel": "psql"
+    },
+    {
+      "id": "postmaster",
+      "type": "backend",
+      "label": "postmaster",
+      "sublabel": "ServerLoop"
+    },
+    {
+      "id": "backend",
+      "type": "backend",
+      "label": "client backend",
+      "sublabel": "fork된 자식"
+    },
+    {
+      "id": "shmem",
+      "type": "database",
+      "label": "공유 메모리",
+      "sublabel": "PGPROC, 버퍼"
+    }
+  ],
+  "segments": [
+    {
+      "from": 162,
+      "to": 208,
+      "label": "accept, fork"
+    },
+    {
+      "from": 216,
+      "to": 344,
+      "label": "인증과 초기화"
+    },
+    {
+      "from": 350,
+      "to": 420,
+      "label": "쿼리 처리"
+    },
+    {
+      "from": 426,
+      "to": 476,
+      "label": "종료"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m-connect",
+      "from": "client",
+      "to": "postmaster",
+      "y": 172,
+      "label": "TCP/Unix 소켓 접속",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m-fork",
+      "from": "postmaster",
+      "to": "backend",
+      "y": 196,
+      "label": "fork() 후 소켓 넘김",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m-startup",
+      "from": "client",
+      "to": "backend",
+      "y": 226,
+      "label": "StartupMessage (user, database)"
+    },
+    {
+      "id": "m-authreq",
+      "from": "backend",
+      "to": "client",
+      "y": 254,
+      "label": "pg_hba.conf 확인 후 인증 요청",
+      "variant": "security"
+    },
+    {
+      "id": "m-authresp",
+      "from": "client",
+      "to": "backend",
+      "y": 282,
+      "label": "비밀번호 등 응답",
+      "variant": "security"
+    },
+    {
+      "id": "m-pgproc",
+      "from": "backend",
+      "to": "shmem",
+      "y": 306,
+      "label": "InitProcess: PGPROC 슬롯 확보 (없으면 FATAL)"
+    },
+    {
+      "id": "m-ready",
+      "from": "backend",
+      "to": "client",
+      "y": 332,
+      "label": "AuthenticationOk, ReadyForQuery",
+      "variant": "return"
+    },
+    {
+      "id": "m-query",
+      "from": "client",
+      "to": "backend",
+      "y": 360,
+      "label": "Query: SELECT ...",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m-buffer",
+      "from": "backend",
+      "to": "shmem",
+      "y": 384,
+      "label": "shared buffers 읽기/쓰기"
+    },
+    {
+      "id": "m-result",
+      "from": "backend",
+      "to": "client",
+      "y": 408,
+      "label": "DataRow, ReadyForQuery",
+      "variant": "return"
+    },
+    {
+      "id": "m-terminate",
+      "from": "client",
+      "to": "backend",
+      "y": 436,
+      "label": "Terminate"
+    },
+    {
+      "id": "m-sigchld",
+      "from": "backend",
+      "to": "postmaster",
+      "y": 464,
+      "label": "프로세스 종료 (SIGCHLD)",
+      "variant": "dashed"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "postmaster",
+      "from": 167,
+      "to": 202
+    },
+    {
+      "participant": "backend",
+      "from": 191,
+      "to": 470
+    },
+    {
+      "participant": "shmem",
+      "from": 299,
+      "to": 313
+    },
+    {
+      "participant": "shmem",
+      "from": 377,
+      "to": 391
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{{- /*
+  archify로 만든 다이어그램(static/diagrams/*.html)을 본문에 넣습니다.
+  사용: {{< diagram src="/diagrams/x.html" title="제목" height="560" caption="설명" >}}
+*/ -}}
+{{- $src := .Get "src" | relURL -}}
+<figure class="diagram">
+  <iframe src="{{ $src }}" title="{{ .Get "title" }}" height="{{ .Get "height" | default "560" }}" loading="lazy"></iframe>
+  <figcaption>{{ with .Get "caption" }}{{ . }} {{ end }}<a href="{{ $src }}" target="_blank" rel="noopener">새 창에서 크게 보기</a></figcaption>
+</figure>

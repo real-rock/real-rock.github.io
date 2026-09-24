@@ -20,7 +20,7 @@ PostgreSQL과 MongoDB가 내부에서 어떻게 동작하는지, 그리고 그 �
 
 ## Operating Context
 - 한국어 글, 기술 용어는 영어 원문 유지.
-- 두 연재: PostgreSQL 인터널(10편, PostgreSQL 17 기준), MongoDB 인터널(8편, MongoDB 8.0 기준). 뒤의 개념이 앞의 개념 위에 쌓이는 순서.
+- 두 연재: PostgreSQL 인터널(10편, PostgreSQL 18 기준, REL_18_STABLE 소스), MongoDB 인터널(8편, MongoDB 8.0 기준). 뒤의 개념이 앞의 개념 위에 쌓이는 순서.
 - 글 템플릿: 개요 → 동작 원리 → 직접 확인해 보기 → 운영에서는 이렇게 나타납니다 → 정리 → 참고 자료.
 - 본문에는 긴 코드/쿼리 출력(psql, explain, 로그), Mermaid 다이어그램, 표, 긴 설명 글이 모두 들어간다.
 

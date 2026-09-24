@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "backend 하나가 죽었을 때 postmaster의 상태 변화",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "boot",
+        "label": "기동",
+        "focus": [
+          "init",
+          "startup",
+          "run"
+        ],
+        "note": "startup 프로세스가 WAL을 재생하고 끝나야 PM_RUN이 됩니다."
+      },
+      {
+        "id": "crash",
+        "label": "크래시와 재시작",
+        "focus": [
+          "run",
+          "waitbackends",
+          "sigkill",
+          "nochildren",
+          "startup"
+        ],
+        "note": "비정상 종료가 하나라도 있으면 모든 자식을 내리고 공유 메모리를 새로 만듭니다."
+      },
+      {
+        "id": "giveup",
+        "label": "재시작하지 않는 경우",
+        "focus": [
+          "nochildren",
+          "exit"
+        ],
+        "note": "restart_after_crash=off이거나 startup 자체가 실패하면 postmaster도 종료합니다."
+      }
+    ],
+    "viewBox": [
+      1030,
+      566
+    ],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "start": {
+          "label": "시작"
+        },
+        "active": {
+          "label": "진행 중"
+        },
+        "waiting": {
+          "label": "대기, 강제 조치"
+        },
+        "decision": {
+          "label": "분기"
+        },
+        "failure": {
+          "label": "비정상, 종료"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "PMState"
+    },
+    {
+      "id": "recovery",
+      "label": "응답 없는 자식"
+    },
+    {
+      "id": "giveup",
+      "label": "재시작 포기"
+    }
+  ],
+  "states": [
+    {
+      "id": "init",
+      "type": "start",
+      "label": "PM_INIT",
+      "sublabel": "postmaster 시작",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "startup",
+      "type": "active",
+      "label": "PM_STARTUP",
+      "sublabel": "startup이 WAL redo",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "run",
+      "type": "active",
+      "label": "PM_RUN",
+      "sublabel": "정상 운영, 접속 받음",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "waitbackends",
+      "type": "failure",
+      "label": "PM_WAIT_BACKENDS",
+      "sublabel": "자식 전부에 SIGQUIT",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    },
+    {
+      "id": "nochildren",
+      "type": "decision",
+      "label": "PM_NO_CHILDREN",
+      "sublabel": "자식이 모두 종료됨",
+      "lane": "main",
+      "col": 4,
+      "step": "05"
+    },
+    {
+      "id": "sigkill",
+      "type": "waiting",
+      "label": "SIGKILL",
+      "sublabel": "5초 지나도 남은 자식",
+      "lane": "recovery",
+      "col": 1
+    },
+    {
+      "id": "exit",
+      "type": "failure",
+      "label": "postmaster 종료",
+      "sublabel": "ExitPostmaster(1)",
+      "lane": "giveup",
+      "col": 2
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t-reinit",
+      "from": "nochildren",
+      "to": "startup",
+      "label": "공유 메모리 재생성",
+      "variant": "emphasis",
+      "route": "top-channel"
+    },
+    {
+      "id": "t-exit",
+      "from": "nochildren",
+      "to": "exit",
+      "label": "restart_after_crash=off",
+      "variant": "dashed",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        710,
+        202
+      ]
+    },
+    {
+      "id": "t-slow",
+      "from": "waitbackends",
+      "to": "sigkill",
+      "label": "5초 경과",
+      "variant": "security",
+      "route": "straight",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        556,
+        202
+      ]
+    },
+    {
+      "id": "t-killed",
+      "from": "sigkill",
+      "to": "nochildren",
+      "label": "강제 종료",
+      "variant": "dashed"
+    }
+  ]
+}

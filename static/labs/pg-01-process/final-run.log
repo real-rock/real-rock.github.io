@@ -1,0 +1,556 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pglab --hostname pglab pg-internals:rel18 sleep infinity
+c799db96799db48cf177ebe53dc240cc0320725a740350f138c7db6f4e682e71
+[exit=0]
+
+$ postgres --version
+$ initdb -D $PGDATA > /home/postgres/initdb.log 2>&1 && echo "initdb ok"
+postgres (PostgreSQL) 18.6
+initdb ok
+[exit=0]
+
+
+######## 1. 서버 시작 직후의 프로세스 트리
+
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log start
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
+    PID    PPID CMD
+     37       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+     38      37  \_ postgres: io worker 0
+     39      37  \_ postgres: io worker 1
+     40      37  \_ postgres: io worker 2
+     41      37  \_ postgres: checkpointer 
+     42      37  \_ postgres: background writer 
+     44      37  \_ postgres: walwriter 
+     45      37  \_ postgres: autovacuum launcher 
+     46      37  \_ postgres: logical replication launcher 
+[exit=0]
+
+$ head -1 $PGDATA/postmaster.pid
+$ cat /home/postgres/server.log
+37
+2026-09-24 01:41:45.623 UTC [37] LOG:  starting PostgreSQL 18.6 on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit
+2026-09-24 01:41:45.623 UTC [37] LOG:  listening on IPv6 address "::1", port 5432
+2026-09-24 01:41:45.623 UTC [37] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-09-24 01:41:45.624 UTC [37] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-24 01:41:45.625 UTC [43] LOG:  database system was shut down at 2026-09-24 01:41:45 UTC
+2026-09-24 01:41:45.626 UTC [37] LOG:  database system is ready to accept connections
+[exit=0]
+
+
+######## 2. pg_stat_activity의 backend_type
+
+$ psql -X -c "SELECT pid, backend_type FROM pg_stat_activity ORDER BY pid"
+ pid |         backend_type         
+-----+------------------------------
+  38 | io worker
+  39 | io worker
+  40 | io worker
+  41 | checkpointer
+  42 | background writer
+  44 | walwriter
+  45 | autovacuum launcher
+  46 | logical replication launcher
+  70 | client backend
+(9 rows)
+
+[exit=0]
+
+
+######## 3. 접속할 때마다 backend가 하나씩 생긴다
+
+$ psql -X -q <<'SQL'
+$ ALTER SYSTEM SET log_line_prefix = '%m [%p] %b ';
+$ ALTER SYSTEM SET log_connections = 'receipt,authentication,authorization,setup_durations';
+$ ALTER SYSTEM SET log_disconnections = on;
+$ SELECT pg_reload_conf();
+$ SQL
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+[exit=0]
+
+$ docker exec -d pglab bash -c 'sleep 3600 | psql -X -q -h 127.0.0.1'
+[exit=0]
+
+$ docker exec -d pglab bash -c 'sleep 3600 | psql -X -q'
+[exit=0]
+
+$ docker exec -d pglab bash -c 'psql -X -c "SELECT pg_sleep(3600)"'
+[exit=0]
+
+$ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
+    PID    PPID CMD
+     37       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+     38      37  \_ postgres: io worker 0
+     39      37  \_ postgres: io worker 1
+     40      37  \_ postgres: io worker 2
+     41      37  \_ postgres: checkpointer 
+     42      37  \_ postgres: background writer 
+     44      37  \_ postgres: walwriter 
+     45      37  \_ postgres: autovacuum launcher 
+     46      37  \_ postgres: logical replication launcher 
+     87      37  \_ postgres: postgres postgres 127.0.0.1(53408) idle
+     96      37  \_ postgres: postgres postgres [local] idle
+    103      37  \_ postgres: postgres postgres [local] SELECT
+[exit=0]
+
+$ psql -X -c "SELECT pid, backend_type, client_addr, state, query FROM pg_stat_activity WHERE backend_type = 'client backend' ORDER BY pid"
+ pid |  backend_type  | client_addr | state  |                                                            query                                                             
+-----+----------------+-------------+--------+------------------------------------------------------------------------------------------------------------------------------
+  87 | client backend | 127.0.0.1   | idle   | 
+  96 | client backend |             | idle   | 
+ 103 | client backend |             | active | SELECT pg_sleep(3600)
+ 119 | client backend |             | active | SELECT pid, backend_type, client_addr, state, query FROM pg_stat_activity WHERE backend_type = 'client backend' ORDER BY pid
+(4 rows)
+
+[exit=0]
+
+$ grep -E 'connection (received|authenticated|authorized|ready)' /home/postgres/server.log | head -8
+2026-09-24 01:41:46.064 UTC [87] not initialized LOG:  connection received: host=127.0.0.1 port=53408
+2026-09-24 01:41:46.064 UTC [87] client backend LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:119)
+2026-09-24 01:41:46.064 UTC [87] client backend LOG:  connection authorized: user=postgres database=postgres application_name=psql
+2026-09-24 01:41:46.065 UTC [87] client backend LOG:  connection ready: setup total=1.032 ms, fork=0.146 ms, authentication=0.083 ms
+2026-09-24 01:41:46.113 UTC [96] not initialized LOG:  connection received: host=[local]
+2026-09-24 01:41:46.113 UTC [96] client backend LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:117)
+2026-09-24 01:41:46.113 UTC [96] client backend LOG:  connection authorized: user=postgres database=postgres application_name=psql
+2026-09-24 01:41:46.113 UTC [96] client backend LOG:  connection ready: setup total=1.047 ms, fork=0.140 ms, authentication=0.083 ms
+[exit=0]
+
+
+######## 4. io worker 수를 재시작 없이 바꾸기
+
+$ psql -X -c "SHOW io_method" -c "SHOW io_workers"
+ io_method 
+-----------
+ worker
+(1 row)
+
+ io_workers 
+------------
+ 3
+(1 row)
+
+[exit=0]
+
+$ psql -X -q -c "ALTER SYSTEM SET io_workers = 5" -c "SELECT pg_reload_conf()"
+$ sleep 1
+$ ps -u postgres -o pid,ppid,cmd | grep 'io worker' | grep -v grep
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+     38      37 postgres: io worker 0
+     39      37 postgres: io worker 1
+     40      37 postgres: io worker 2
+    145      37 postgres: io worker 3
+    146      37 postgres: io worker 4
+[exit=0]
+
+$ psql -X -q -c "ALTER SYSTEM RESET io_workers" -c "SELECT pg_reload_conf()"
+$ sleep 1
+$ ps -u postgres -o pid,ppid,cmd | grep 'io worker' | grep -v grep
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+     38      37 postgres: io worker 0
+     39      37 postgres: io worker 1
+     40      37 postgres: io worker 2
+[exit=0]
+
+
+######## 5. autovacuum launcher가 worker를 요청하는 모습
+
+$ psql -X -q <<'SQL'
+$ ALTER SYSTEM SET autovacuum_naptime = '1s';
+$ ALTER SYSTEM SET log_autovacuum_min_duration = 0;
+$ SELECT pg_reload_conf();
+$ CREATE TABLE av_test AS SELECT g AS id, 0 AS v FROM generate_series(1, 200000) g;
+$ UPDATE av_test SET v = 1;
+$ SQL
+$ for i in $(seq 1 40); do
+$   ps -u postgres -o pid,ppid,cmd | grep 'autovacuum worker' | grep -v grep && break
+$   sleep 0.25
+$ done
+$ sleep 3
+$ grep -E 'autovacuum worker LOG:  automatic (vacuum|analyze) of table "postgres.public.av_test"' /home/postgres/server.log | cut -c1-120
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+    213      37 postgres: autovacuum worker postgres
+2026-09-24 01:41:51.298 UTC [179] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+2026-09-24 01:41:51.352 UTC [179] autovacuum worker LOG:  automatic analyze of table "postgres.public.av_test"
+2026-09-24 01:41:52.291 UTC [197] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+2026-09-24 01:41:53.289 UTC [213] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+2026-09-24 01:41:54.297 UTC [217] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+2026-09-24 01:41:55.285 UTC [219] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+[exit=0]
+
+$ psql -X -q -c "ALTER SYSTEM RESET autovacuum_naptime" -c "ALTER SYSTEM RESET log_autovacuum_min_duration" -c "SELECT pg_reload_conf()"
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+[exit=0]
+
+
+######## 6. max_connections를 넘으면: 먼저 fork하고 나중에 거절한다
+
+$ docker exec pglab pkill -f 'sleep 3600'
+[exit=0]
+
+$ psql -X -q -c "ALTER SYSTEM SET max_connections = 5" -c "ALTER SYSTEM SET superuser_reserved_connections = 0"
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ for i in 1 2 3 4 5; do docker exec -d pglab bash -c 'sleep 3600 | psql -X -q'; done
+$ psql -X -c "SELECT 1"
+psql: error: connection to server on socket "/tmp/.s.PGSQL.5432" failed: FATAL:  sorry, too many clients already
+[exit=2]
+
+$ grep -B1 'too many clients' /home/postgres/server.log
+2026-09-24 01:41:58.942 UTC [309] not initialized LOG:  connection received: host=[local]
+2026-09-24 01:41:58.942 UTC [309] client backend FATAL:  sorry, too many clients already
+[exit=0]
+
+$ docker exec pglab pkill -f 'sleep 3600'
+[exit=0]
+
+$ psql -X -q -c "ALTER SYSTEM RESET max_connections" -c "ALTER SYSTEM RESET superuser_reserved_connections"
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 7. 정상 종료(pg_terminate_backend)와 비정상 종료(kill -9)
+
+$ docker exec -d pglab bash -c 'sleep 3600 | psql -X -q'
+[exit=0]
+
+$ docker exec -d pglab bash -c 'sleep 3600 | psql -X -q'
+[exit=0]
+
+$ docker exec -d pglab bash -c 'psql -X -c "SELECT pg_sleep(3600)" > /home/postgres/neighbor.out 2>&1'
+[exit=0]
+
+$ psql -X -q -c "CREATE TABLE t AS SELECT generate_series(1, 1000) AS id"
+$ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
+    PID    PPID CMD
+    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    333     332  \_ postgres: io worker 0
+    334     332  \_ postgres: io worker 1
+    335     332  \_ postgres: io worker 2
+    336     332  \_ postgres: checkpointer 
+    337     332  \_ postgres: background writer 
+    339     332  \_ postgres: walwriter 
+    340     332  \_ postgres: autovacuum launcher 
+    341     332  \_ postgres: logical replication launcher 
+    350     332  \_ postgres: postgres postgres [local] idle
+    359     332  \_ postgres: postgres postgres [local] idle
+    367     332  \_ postgres: postgres postgres [local] SELECT
+[exit=0]
+
+$ VICTIM=$(pgrep -f 'postgres: postgres postgres \[local\] idle' | head -1)
+$ echo "pg_terminate_backend($VICTIM)"
+$ psql -X -c "SELECT pg_terminate_backend($VICTIM)"
+$ sleep 1
+$ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
+$ grep "\[$VICTIM\]" /home/postgres/server.log | tail -2
+pg_terminate_backend(350)
+ pg_terminate_backend 
+----------------------
+ t
+(1 row)
+
+    PID    PPID CMD
+    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    333     332  \_ postgres: io worker 0
+    334     332  \_ postgres: io worker 1
+    335     332  \_ postgres: io worker 2
+    336     332  \_ postgres: checkpointer 
+    337     332  \_ postgres: background writer 
+    339     332  \_ postgres: walwriter 
+    340     332  \_ postgres: autovacuum launcher 
+    341     332  \_ postgres: logical replication launcher 
+    359     332  \_ postgres: postgres postgres [local] idle
+    367     332  \_ postgres: postgres postgres [local] SELECT
+2026-09-24 01:42:01.680 UTC [350] client backend FATAL:  terminating connection due to administrator command
+2026-09-24 01:42:01.680 UTC [350] client backend LOG:  disconnection: session time: 0:00:02.272 user=postgres database=postgres host=[local]
+[exit=0]
+
+$ VICTIM=$(pgrep -f 'postgres: postgres postgres \[local\] idle' | head -1)
+$ echo "kill -9 $VICTIM"
+$ kill -9 $VICTIM
+$ sleep 2
+$ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
+kill -9 359
+    PID    PPID CMD
+    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    404     332  \_ postgres: io worker 0
+    405     332  \_ postgres: io worker 1
+    406     332  \_ postgres: io worker 2
+    408     332  \_ postgres: checkpointer 
+    409     332  \_ postgres: background writer 
+    410     332  \_ postgres: walwriter 
+    411     332  \_ postgres: autovacuum launcher 
+    412     332  \_ postgres: logical replication launcher 
+[exit=0]
+
+$ sed -n '/terminated by signal 9/,$p' /home/postgres/server.log
+2026-09-24 01:42:02.788 UTC [332] postmaster LOG:  client backend (PID 359) was terminated by signal 9: Killed
+2026-09-24 01:42:02.788 UTC [332] postmaster LOG:  terminating any other active server processes
+2026-09-24 01:42:02.789 UTC [332] postmaster LOG:  all server processes terminated; reinitializing
+2026-09-24 01:42:02.798 UTC [407] startup LOG:  database system was interrupted; last known up at 2026-09-24 01:41:59 UTC
+2026-09-24 01:42:02.828 UTC [407] startup LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-24 01:42:02.829 UTC [407] startup LOG:  redo starts at 0/3F9F888
+2026-09-24 01:42:02.832 UTC [407] startup LOG:  invalid record length at 0/3FC6978: expected at least 24, got 0
+2026-09-24 01:42:02.832 UTC [407] startup LOG:  redo done at 0/3FC67E0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-09-24 01:42:02.834 UTC [408] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-09-24 01:42:02.838 UTC [408] checkpointer LOG:  checkpoint complete: wrote 22 buffers (0.1%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.003 s, total=0.005 s; sync files=20, longest=0.001 s, average=0.001 s; distance=156 kB, estimate=156 kB; lsn=0/3FC6978, redo lsn=0/3FC6978
+2026-09-24 01:42:02.838 UTC [332] postmaster LOG:  database system is ready to accept connections
+[exit=0]
+
+$ cat /home/postgres/neighbor.out
+WARNING:  terminating connection because of crash of another server process
+DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
+[exit=0]
+
+$ psql -X -c "SELECT count(*) FROM t"
+ count 
+-------
+  1000
+(1 row)
+
+[exit=0]
+
+
+######## 8. 일반 backend가 walsender로 바뀌는 경우
+
+$ docker exec pglab pkill -f 'sleep 3600'
+[exit=0]
+
+$ docker exec -d pglab bash -c 'mkdir -p /home/postgres/wal && pg_receivewal -D /home/postgres/wal'
+[exit=0]
+
+$ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
+$ ps -o pid,ppid,cmd -C pg_receivewal
+    PID    PPID CMD
+    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    404     332  \_ postgres: io worker 0
+    405     332  \_ postgres: io worker 1
+    406     332  \_ postgres: io worker 2
+    408     332  \_ postgres: checkpointer 
+    409     332  \_ postgres: background writer 
+    410     332  \_ postgres: walwriter 
+    411     332  \_ postgres: autovacuum launcher 
+    412     332  \_ postgres: logical replication launcher 
+    450     332  \_ postgres: walsender postgres [local] streaming 0/3FD1BB8
+    PID    PPID CMD
+    443       0 pg_receivewal -D /home/postgres/wal
+[exit=0]
+
+$ WS=$(pgrep -f 'postgres: walsender')
+$ grep "\[$WS\]" /home/postgres/server.log
+$ psql -X -c "SELECT pid, backend_type, application_name, state FROM pg_stat_activity WHERE backend_type = 'walsender'"
+2026-09-24 01:42:05.115 UTC [450] not initialized LOG:  connection received: host=[local]
+2026-09-24 01:42:05.115 UTC [450] walsender LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:124)
+2026-09-24 01:42:05.115 UTC [450] walsender LOG:  replication connection authorized: user=postgres application_name=pg_receivewal
+2026-09-24 01:42:05.115 UTC [450] walsender LOG:  connection ready: setup total=0.710 ms, fork=0.107 ms, authentication=0.112 ms
+ pid | backend_type | application_name | state  
+-----+--------------+------------------+--------
+ 450 | walsender    | pg_receivewal    | active
+(1 row)
+
+[exit=0]
+
+$ docker exec pglab pkill pg_receivewal
+[exit=0]
+
+
+######## 9. 공유 메모리는 모든 프로세스에 같은 주소로 붙어 있다
+
+$ psql -X -c "SHOW shared_buffers" -c "SHOW shared_memory_size" -c "SHOW shared_memory_type"
+ shared_buffers 
+----------------
+ 128MB
+(1 row)
+
+ shared_memory_size 
+--------------------
+ 150MB
+(1 row)
+
+ shared_memory_type 
+--------------------
+ mmap
+(1 row)
+
+[exit=0]
+
+$ psql -X -q -c "CREATE TABLE big AS SELECT g AS id, repeat('x', 100) AS pad FROM generate_series(1, 150000) g"
+$ psql -X -c "SELECT pg_size_pretty(pg_relation_size('big'))"
+ pg_size_pretty 
+----------------
+ 21 MB
+(1 row)
+
+[exit=0]
+
+$ docker exec -d pglab bash -c '(echo "SELECT count(*) FROM big;"; sleep 3600) | psql -X -q > /dev/null'
+[exit=0]
+
+$ docker exec -d pglab bash -c 'sleep 3600 | psql -X -q'
+[exit=0]
+
+$ PM=$(head -1 $PGDATA/postmaster.pid)
+$ for p in $PM $(pgrep -f 'postgres: postgres postgres \[local\] idle'); do
+$   echo "== PID $p  $(ps -o cmd= -p $p)"
+$   grep ' rw-s ' /proc/$p/maps | awk '{print "   ", $1, $6, $7}'
+$ done
+== PID 332  /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    ffff7cb27000-ffff860d9000 /dev/zero (deleted)
+    ffff88938000-ffff88940000 /dev/shm/PostgreSQL.2214466610 
+    ffff889a9000-ffff889aa000 /SYSV000fb191 (deleted)
+== PID 502  postgres: postgres postgres [local] idle
+    ffff7c994000-ffff7c9c5000 /dev/shm/PostgreSQL.3907697562 
+    ffff7ca06000-ffff7cb06000 /dev/shm/PostgreSQL.2641106026 
+    ffff7cb27000-ffff860d9000 /dev/zero (deleted)
+    ffff88938000-ffff88940000 /dev/shm/PostgreSQL.2214466610 
+    ffff889a9000-ffff889aa000 /SYSV000fb191 (deleted)
+== PID 512  postgres: postgres postgres [local] idle
+    ffff7ca06000-ffff7cb06000 /dev/shm/PostgreSQL.2641106026 
+    ffff7cb27000-ffff860d9000 /dev/zero (deleted)
+    ffff88938000-ffff88940000 /dev/shm/PostgreSQL.2214466610 
+    ffff889a9000-ffff889aa000 /SYSV000fb191 (deleted)
+[exit=0]
+
+$ PM=$(head -1 $PGDATA/postmaster.pid)
+$ for p in $PM $(pgrep -f 'postgres: postgres postgres \[local\] idle'); do
+$   echo "== PID $p  $(ps -o cmd= -p $p)"
+$   grep -E '^(VmRSS|RssAnon|RssShmem)' /proc/$p/status
+$ done
+== PID 332  /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+VmRSS:	   22792 kB
+RssAnon:	     956 kB
+RssShmem:	   13372 kB
+== PID 502  postgres: postgres postgres [local] idle
+VmRSS:	   34768 kB
+RssAnon:	    2028 kB
+RssShmem:	   24640 kB
+== PID 512  postgres: postgres postgres [local] idle
+VmRSS:	   11684 kB
+RssAnon:	    1776 kB
+RssShmem:	    3472 kB
+[exit=0]
+
+
+######## 10. 설정에 따라 생기는 프로세스: logger, archiver
+
+$ docker exec pglab pkill -f 'sleep 3600'
+[exit=0]
+
+$ mkdir -p /home/postgres/archive
+$ psql -X -q <<'SQL'
+$ ALTER SYSTEM SET logging_collector = on;
+$ ALTER SYSTEM SET archive_mode = on;
+$ ALTER SYSTEM SET archive_command = 'cp %p /home/postgres/archive/%f';
+$ SQL
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log restart -m fast
+$ sleep 1
+$ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+    PID    PPID CMD
+    560       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    561     560  \_ postgres: logger 
+    562     560  \_ postgres: io worker 0
+    563     560  \_ postgres: io worker 1
+    564     560  \_ postgres: io worker 2
+    565     560  \_ postgres: checkpointer 
+    566     560  \_ postgres: background writer 
+    568     560  \_ postgres: walwriter 
+    569     560  \_ postgres: autovacuum launcher 
+    570     560  \_ postgres: archiver 
+    571     560  \_ postgres: logical replication launcher 
+[exit=0]
+
+$ psql -X -c "SELECT pid, backend_type FROM pg_stat_activity ORDER BY pid"
+ pid |         backend_type         
+-----+------------------------------
+ 562 | io worker
+ 563 | io worker
+ 564 | io worker
+ 565 | checkpointer
+ 566 | background writer
+ 568 | walwriter
+ 569 | autovacuum launcher
+ 570 | archiver
+ 571 | logical replication launcher
+ 582 | client backend
+(10 rows)
+
+[exit=0]
+
+
+######## 11. postmaster가 죽으면
+
+$ PM=$(head -1 $PGDATA/postmaster.pid)
+$ echo "kill -9 $PM (postmaster)"
+$ kill -9 $PM
+$ sleep 2
+$ ps -u postgres -o pid,ppid,stat,cmd | grep -v -e 'ps -u' -e 'sleep infinity'
+kill -9 560 (postmaster)
+    PID    PPID STAT CMD
+    583       0 Ss   bash -s
+[exit=0]
+
+$ psql -X -c "SELECT 1"
+psql: error: connection to server on socket "/tmp/.s.PGSQL.5432" failed: Connection refused
+	Is the server running locally and accepting connections on that socket?
+[exit=2]
+
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log start
+$ sleep 1
+$ tail -n 8 $PGDATA/log/$(ls -t $PGDATA/log | head -1)
+pg_ctl: another server might be running; trying to start server anyway
+waiting for server to start.... done
+server started
+2026-09-24 01:42:13.447 UTC [609] postmaster LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-24 01:42:13.449 UTC [616] startup LOG:  database system was interrupted; last known up at 2026-09-24 01:42:10 UTC
+2026-09-24 01:42:13.473 UTC [616] startup LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-24 01:42:13.475 UTC [616] startup LOG:  unexpected pageaddr 0/26EC000 in WAL segment 000000010000000000000005, LSN 0/56EC000, offset 7258112
+2026-09-24 01:42:13.475 UTC [616] startup LOG:  redo is not required
+2026-09-24 01:42:13.476 UTC [614] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-09-24 01:42:13.478 UTC [614] checkpointer LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.003 s; sync files=2, longest=0.001 s, average=0.001 s; distance=0 kB, estimate=0 kB; lsn=0/56EC048, redo lsn=0/56EC048
+2026-09-24 01:42:13.478 UTC [609] postmaster LOG:  database system is ready to accept connections
+[exit=0]
+
+done

@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널"
 description: "PostgreSQL이 내부에서 어떻게 동작하는지, 프로세스 구조부터 복제와 쿼리 처리까지 순서대로 살펴봅니다."
-version: "PostgreSQL 17"   # 시리즈 페이지에 "PostgreSQL 17 기준"으로 표시
+version: "PostgreSQL 18"   # 시리즈 페이지에 "PostgreSQL 18 기준"으로 표시
 order: 1                   # 홈과 시리즈 목록에서의 순서
 # 공개 목차. n번째 항목은 같은 시리즈에서 weight가 n인 글과 연결됩니다.
 # 글이 공개되기 전에는 '준비 중'으로 표시됩니다.
