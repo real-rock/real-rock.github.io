@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "비정상 종료 뒤 재시작: 장애 복구가 진행되는 순서",
+    "quality_profile": "showcase",
+    "viewBox": [1085, 640],
+    "column_fit": "spread",
+    "legend": { "mode": "auto", "entries": { "emphasis": { "label": "복구의 핵심 단계" }, "default": { "label": "읽기, 적용" }, "return": { "label": "결과" }, "dashed": { "label": "마무리" } } },
+    "views": [
+      { "id": "find", "label": "시작점 찾기", "focus": ["postmaster", "startup", "control", "wal"], "note": "pg_control의 상태가 정상 종료가 아니면 복구를 시작합니다. 마지막 체크포인트 레코드를 읽어 REDO 위치를 얻습니다." },
+      { "id": "redo", "label": "WAL 재생", "focus": ["startup", "wal", "pages"], "note": "REDO 위치부터 레코드를 차례로 읽어 적용합니다. 페이지 이미지가 있으면 통째로 덮고, 없으면 페이지 LSN과 비교해 이미 반영된 변경은 건너뜁니다." },
+      { "id": "end", "label": "마무리", "focus": ["startup", "ckpt", "control", "postmaster"], "note": "더 읽을 레코드가 없으면 재생을 멈추고, 체크포인트를 한 번 한 뒤 접속을 받습니다." }
+    ]
+  },
+  "participants": [
+    { "id": "postmaster", "type": "backend", "label": "postmaster", "sublabel": "재시작" },
+    { "id": "startup", "type": "backend", "label": "startup", "sublabel": "StartupXLOG" },
+    { "id": "control", "type": "database", "label": "pg_control", "sublabel": "global/" },
+    { "id": "wal", "type": "database", "label": "WAL 파일", "sublabel": "pg_wal" },
+    { "id": "pages", "type": "database", "label": "데이터 페이지", "sublabel": "버퍼, 데이터 파일" },
+    { "id": "ckpt", "type": "backend", "label": "checkpointer", "sublabel": "end-of-recovery" }
+  ],
+  "segments": [
+    { "from": 160, "to": 256, "label": "시작점" },
+    { "from": 262, "to": 384, "label": "재생" },
+    { "from": 390, "to": 510, "label": "마무리" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "postmaster", "to": "startup", "y": 172, "label": "startup 프로세스 시작", "variant": "default" },
+    { "id": "m2", "from": "startup", "to": "control", "y": 200, "label": "상태 in production: 비정상 종료", "variant": "emphasis" },
+    { "id": "m3", "from": "startup", "to": "wal", "y": 228, "label": "체크포인트 레코드에서 REDO 위치", "variant": "default" },
+    { "id": "m4", "from": "startup", "to": "wal", "y": 274, "label": "REDO부터 레코드를 차례로 읽기", "variant": "emphasis" },
+    { "id": "m5", "from": "startup", "to": "pages", "y": 302, "label": "이미지가 있으면 페이지를 통째로 복원", "variant": "default" },
+    { "id": "m6", "from": "startup", "to": "pages", "y": 330, "label": "페이지 LSN이 작을 때만 레코드 적용", "variant": "default" },
+    { "id": "m7", "from": "wal", "to": "startup", "y": 362, "label": "invalid record: WAL 끝", "variant": "return" },
+    { "id": "m8", "from": "startup", "to": "ckpt", "y": 402, "label": "end-of-recovery 체크포인트 요청", "variant": "emphasis" },
+    { "id": "m9", "from": "ckpt", "to": "pages", "y": 430, "label": "복구한 페이지를 디스크로", "variant": "dashed" },
+    { "id": "m10", "from": "ckpt", "to": "control", "y": 458, "label": "새 체크포인트 위치 기록", "variant": "dashed" },
+    { "id": "m11", "from": "startup", "to": "postmaster", "y": 490, "label": "복구 완료: 접속 허용", "variant": "return" }
+  ]
+}

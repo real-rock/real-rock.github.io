@@ -1,0 +1,182 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "체크포인트 한 번이 하는 일 (CreateCheckPoint)",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "security": {
+     "label": "시작 조건"
+    },
+    "backend": {
+     "label": "checkpointer 작업"
+    },
+    "database": {
+     "label": "디스크에 반영"
+    },
+    "messagebus": {
+     "label": "WAL 기록"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "start",
+    "label": "시작점 표시",
+    "focus": [
+     "trig",
+     "redo"
+    ],
+    "note": "먼저 CHECKPOINT_REDO 레코드를 넣습니다. 이 위치가 이번 체크포인트의 REDO 위치이고, 이후 페이지의 첫 수정은 다시 페이지 이미지를 남깁니다."
+   },
+   {
+    "id": "write",
+    "label": "쓰기",
+    "focus": [
+     "bufsync",
+     "fsync"
+    ],
+    "note": "REDO 이전에 바뀐 dirty 페이지를 모두 씁니다. 시간, WAL 기준 체크포인트는 checkpoint_completion_target에 맞춰 쓰기를 나눕니다."
+   },
+   {
+    "id": "finish",
+    "label": "마무리",
+    "focus": [
+     "ckrec",
+     "ctl",
+     "recycle"
+    ],
+    "note": "CHECKPOINT_ONLINE 레코드를 flush하고 pg_control에 위치를 적은 뒤, REDO 이전의 WAL 세그먼트를 지우거나 재활용합니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "trigger",
+   "label": "요청",
+   "variant": "exception"
+  },
+  {
+   "id": "ckpt",
+   "label": "checkpointer"
+  },
+  {
+   "id": "disk",
+   "label": "디스크"
+  }
+ ],
+ "mainPath": [
+  "trig",
+  "redo",
+  "bufsync",
+  "fsync",
+  "ckrec",
+  "ctl",
+  "recycle"
+ ],
+ "nodes": [
+  {
+   "id": "trig",
+   "lane": "trigger",
+   "col": 0,
+   "type": "security",
+   "label": "체크포인트 시작",
+   "sublabel": "time, wal, 명령",
+   "width": 150
+  },
+  {
+   "id": "redo",
+   "lane": "ckpt",
+   "col": 1,
+   "type": "messagebus",
+   "label": "CHECKPOINT_REDO",
+   "sublabel": "REDO 위치 확정",
+   "width": 160
+  },
+  {
+   "id": "bufsync",
+   "lane": "disk",
+   "col": 2,
+   "type": "database",
+   "label": "SLRU, dirty 버퍼 쓰기",
+   "sublabel": "CheckPointGuts, 분산",
+   "width": 180
+  },
+  {
+   "id": "fsync",
+   "lane": "disk",
+   "col": 3,
+   "type": "database",
+   "label": "fsync",
+   "sublabel": "ProcessSyncRequests",
+   "width": 160
+  },
+  {
+   "id": "ckrec",
+   "lane": "ckpt",
+   "col": 4,
+   "type": "messagebus",
+   "label": "CHECKPOINT_ONLINE",
+   "sublabel": "REDO 위치 담아 flush",
+   "width": 170
+  },
+  {
+   "id": "ctl",
+   "lane": "disk",
+   "col": 5,
+   "type": "database",
+   "label": "pg_control 갱신",
+   "sublabel": "Latest checkpoint",
+   "width": 160
+  },
+  {
+   "id": "recycle",
+   "lane": "ckpt",
+   "col": 5,
+   "type": "backend",
+   "label": "옛 WAL 정리",
+   "sublabel": "삭제 또는 재활용",
+   "width": 150
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "trig",
+   "to": "redo",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "redo",
+   "to": "bufsync",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "bufsync",
+   "to": "fsync",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "fsync",
+   "to": "ckrec",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e6",
+   "from": "ckrec",
+   "to": "ctl",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e7",
+   "from": "ctl",
+   "to": "recycle",
+   "variant": "emphasis"
+  }
+ ]
+}
