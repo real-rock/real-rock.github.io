@@ -1,0 +1,391 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "스트리밍 복제: WAL이 primary에서 standby로 가는 길",
+  "quality_profile": "standard",
+  "viewBox": [
+   1240,
+   660
+  ],
+  "repository": {
+   "url": "https://github.com/postgres/postgres",
+   "provider": "github",
+   "link_mode": "web",
+   "revision": "39a0db101105eab3f4044d11c609c58b9459ea16"
+  },
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "프로세스"
+    },
+    "database": {
+     "label": "WAL, 데이터"
+    },
+    "security": {
+     "label": "복제 상태 관리"
+    },
+    "frontend": {
+     "label": "standby 쿼리"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "ship",
+    "label": "전송",
+    "focus": [
+     "walbuf",
+     "pgwal",
+     "walsender",
+     "walreceiver",
+     "spgwal"
+    ],
+    "note": "walsender가 WAL을 WAL buffers(없으면 pg_wal 파일)에서 읽어 보내고, walreceiver가 받아 standby의 pg_wal에 쓰고 fsync합니다."
+   },
+   {
+    "id": "replay",
+    "label": "재생",
+    "focus": [
+     "spgwal",
+     "startup",
+     "sdata",
+     "squery"
+    ],
+    "note": "standby의 startup 프로세스가 받은 WAL을 계속 재생합니다. 재생이 읽기 쿼리가 보는 행을 지워야 하면 충돌이 생깁니다."
+   },
+   {
+    "id": "feedback",
+    "label": "보고",
+    "focus": [
+     "walreceiver",
+     "walsender",
+     "slot",
+     "syncrep",
+     "backend"
+    ],
+    "note": "walreceiver가 같은 연결로 write, flush, apply 위치를 보고하면 walsender가 slot의 restart_lsn을 올리고, 동기 복제로 기다리는 커밋을 깨웁니다."
+   }
+  ]
+ },
+ "components": [
+  {
+   "id": "backend",
+   "type": "backend",
+   "label": "backend",
+   "sublabel": "INSERT, COMMIT",
+   "pos": [
+    50,
+    100
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "walbuf",
+   "type": "database",
+   "label": "WAL buffers",
+   "sublabel": "공유 메모리",
+   "pos": [
+    50,
+    290
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "pgwal",
+   "type": "database",
+   "label": "pg_wal (primary)",
+   "sublabel": "WAL 세그먼트 파일",
+   "pos": [
+    50,
+    480
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "syncrep",
+   "type": "security",
+   "label": "동기 복제 대기열",
+   "sublabel": "SyncRepWaitForLSN",
+   "pos": [
+    340,
+    100
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/backend/replication/syncrep.c",
+     "line": 148,
+     "label": "SyncRepWaitForLSN"
+    }
+   ]
+  },
+  {
+   "id": "slot",
+   "type": "security",
+   "label": "replication slot",
+   "sublabel": "restart_lsn 이후 WAL 보존",
+   "pos": [
+    340,
+    290
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/backend/replication/slot.c",
+     "line": 1227,
+     "label": "ReplicationSlotsComputeRequiredLSN"
+    }
+   ]
+  },
+  {
+   "id": "walsender",
+   "type": "backend",
+   "label": "walsender",
+   "sublabel": "XLogSendPhysical",
+   "pos": [
+    340,
+    480
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/backend/replication/walsender.c",
+     "line": 3140,
+     "label": "XLogSendPhysical"
+    }
+   ]
+  },
+  {
+   "id": "walreceiver",
+   "type": "backend",
+   "label": "walreceiver",
+   "sublabel": "write, fsync, 위치 보고",
+   "pos": [
+    690,
+    480
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/backend/replication/walreceiver.c",
+     "line": 976,
+     "label": "XLogWalRcvWrite"
+    }
+   ]
+  },
+  {
+   "id": "squery",
+   "type": "frontend",
+   "label": "읽기 전용 쿼리",
+   "sublabel": "hot standby",
+   "pos": [
+    690,
+    100
+   ],
+   "size": [
+    210,
+    72
+   ]
+  },
+  {
+   "id": "spgwal",
+   "type": "database",
+   "label": "pg_wal (standby)",
+   "sublabel": "받은 WAL",
+   "pos": [
+    990,
+    480
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "startup",
+   "type": "backend",
+   "label": "startup",
+   "sublabel": "WAL 재생",
+   "pos": [
+    990,
+    290
+   ],
+   "size": [
+    200,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/backend/access/transam/xlogrecovery.c",
+     "line": 1686,
+     "label": "PerformWalRecovery"
+    }
+   ]
+  },
+  {
+   "id": "sdata",
+   "type": "database",
+   "label": "데이터 페이지",
+   "sublabel": "primary와 같은 내용",
+   "pos": [
+    990,
+    100
+   ],
+   "size": [
+    200,
+    72
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "primary (포트 5432)",
+   "wraps": [
+    "backend",
+    "walbuf",
+    "pgwal",
+    "syncrep",
+    "slot",
+    "walsender"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "standby (포트 5433)",
+   "wraps": [
+    "walreceiver",
+    "squery",
+    "spgwal",
+    "startup",
+    "sdata"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "c1",
+   "from": "backend",
+   "to": "walbuf",
+   "label": "WAL 레코드",
+   "labelAt": [
+    150,
+    231
+   ]
+  },
+  {
+   "id": "c2",
+   "from": "walbuf",
+   "to": "pgwal",
+   "label": "write, fsync",
+   "labelAt": [
+    150,
+    421
+   ]
+  },
+  {
+   "id": "c3",
+   "from": "pgwal",
+   "to": "walsender",
+   "label": "없으면 파일에서"
+  },
+  {
+   "id": "c4",
+   "from": "walsender",
+   "to": "walreceiver",
+   "label": "WAL 전송 / 위치 보고",
+   "variant": "emphasis",
+   "labelAt": [
+    630,
+    572
+   ]
+  },
+  {
+   "id": "c5",
+   "from": "walreceiver",
+   "to": "spgwal",
+   "label": "write, fsync",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c6",
+   "from": "spgwal",
+   "to": "startup",
+   "label": "읽기"
+  },
+  {
+   "id": "c7",
+   "from": "startup",
+   "to": "sdata",
+   "label": "재생",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c8",
+   "from": "squery",
+   "to": "sdata",
+   "label": "읽기"
+  },
+  {
+   "id": "c11",
+   "from": "backend",
+   "to": "syncrep",
+   "label": "커밋 대기"
+  },
+  {
+   "id": "c9",
+   "from": "walsender",
+   "to": "slot",
+   "label": "restart_lsn 갱신",
+   "variant": "dashed",
+   "labelAt": [
+    598,
+    556
+   ]
+  },
+  {
+   "id": "c10",
+   "from": "walsender",
+   "to": "syncrep",
+   "label": "대기 해제",
+   "variant": "dashed",
+   "fromSide": "right",
+   "toSide": "right",
+   "labelAt": [
+    610,
+    231
+   ]
+  },
+  {
+   "id": "c12",
+   "from": "walbuf",
+   "to": "walsender",
+   "label": "버퍼에서 읽기",
+   "fromSide": "right",
+   "toSide": "top"
+  }
+ ]
+}

@@ -1,0 +1,228 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "동기 복제에서 COMMIT 한 번이 기다리는 것",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1085,
+   640
+  ],
+  "column_fit": "spread",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "emphasis": {
+     "label": "커밋 경로"
+    },
+    "default": {
+     "label": "전송, 기록"
+    },
+    "return": {
+     "label": "응답, 보고"
+    },
+    "dashed": {
+     "label": "나중에 (재생)"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "local",
+    "label": "로컬 flush",
+    "focus": [
+     "client",
+     "backend",
+     "pwal"
+    ],
+    "note": "비동기 복제와 똑같이 먼저 primary의 WAL을 flush합니다. 이 순간 커밋은 이미 기록되어 되돌릴 수 없지만, 대기가 끝나기 전까지 다른 세션에는 보이지 않습니다."
+   },
+   {
+    "id": "remote",
+    "label": "standby 확인",
+    "focus": [
+     "backend",
+     "syncq",
+     "walsender",
+     "walreceiver",
+     "swal"
+    ],
+    "note": "backend는 SyncRep 대기열에서 기다리고, walsender가 standby의 flush 보고를 받으면 대기열의 backend를 깨웁니다."
+   },
+   {
+    "id": "apply",
+    "label": "재생",
+    "focus": [
+     "swal",
+     "startup"
+    ],
+    "note": "기본값 synchronous_commit = on은 standby의 flush까지만 기다립니다. 재생까지 기다리려면 remote_apply를 씁니다."
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "client",
+   "type": "external",
+   "label": "클라이언트",
+   "sublabel": "psql"
+  },
+  {
+   "id": "backend",
+   "type": "backend",
+   "label": "backend",
+   "sublabel": "primary"
+  },
+  {
+   "id": "syncq",
+   "type": "security",
+   "label": "SyncRep 대기열",
+   "sublabel": "공유 메모리"
+  },
+  {
+   "id": "pwal",
+   "type": "database",
+   "label": "WAL",
+   "sublabel": "primary"
+  },
+  {
+   "id": "walsender",
+   "type": "backend",
+   "label": "walsender",
+   "sublabel": "primary"
+  },
+  {
+   "id": "walreceiver",
+   "type": "backend",
+   "label": "walreceiver",
+   "sublabel": "standby"
+  },
+  {
+   "id": "swal",
+   "type": "database",
+   "label": "WAL 파일",
+   "sublabel": "standby"
+  },
+  {
+   "id": "startup",
+   "type": "backend",
+   "label": "startup",
+   "sublabel": "standby 재생"
+  }
+ ],
+ "segments": [
+  {
+   "from": 160,
+   "to": 240,
+   "label": "로컬"
+  },
+  {
+   "from": 246,
+   "to": 470,
+   "label": "standby"
+  },
+  {
+   "from": 476,
+   "to": 520,
+   "label": "재생"
+  }
+ ],
+ "messages": [
+  {
+   "id": "m1",
+   "from": "client",
+   "to": "backend",
+   "y": 172,
+   "label": "COMMIT",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m2",
+   "from": "backend",
+   "to": "pwal",
+   "y": 200,
+   "label": "커밋 레코드 flush",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m3",
+   "from": "backend",
+   "to": "walsender",
+   "y": 228,
+   "label": "flush가 walsender를 깨움",
+   "variant": "default"
+  },
+  {
+   "id": "m4",
+   "from": "backend",
+   "to": "syncq",
+   "y": 260,
+   "label": "대기열에 들어가 대기",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m5",
+   "from": "pwal",
+   "to": "walsender",
+   "y": 288,
+   "label": "WAL 읽기",
+   "variant": "default"
+  },
+  {
+   "id": "m6",
+   "from": "walsender",
+   "to": "walreceiver",
+   "y": 316,
+   "label": "WAL 전송",
+   "variant": "default"
+  },
+  {
+   "id": "m7",
+   "from": "walreceiver",
+   "to": "swal",
+   "y": 344,
+   "label": "write + fsync",
+   "variant": "default"
+  },
+  {
+   "id": "m8",
+   "from": "walreceiver",
+   "to": "walsender",
+   "y": 372,
+   "label": "flush 위치 보고",
+   "variant": "return"
+  },
+  {
+   "id": "m9",
+   "from": "walsender",
+   "to": "syncq",
+   "y": 400,
+   "label": "대기 해제",
+   "variant": "return"
+  },
+  {
+   "id": "m10",
+   "from": "syncq",
+   "to": "backend",
+   "y": 428,
+   "label": "backend 깨움",
+   "variant": "return"
+  },
+  {
+   "id": "m11",
+   "from": "backend",
+   "to": "client",
+   "y": 456,
+   "label": "COMMIT 완료",
+   "variant": "return"
+  },
+  {
+   "id": "m12",
+   "from": "swal",
+   "to": "startup",
+   "y": 500,
+   "label": "재생 (remote_apply면 여기까지 대기)",
+   "variant": "dashed"
+  }
+ ]
+}
