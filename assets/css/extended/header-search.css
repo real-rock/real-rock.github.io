@@ -1,0 +1,174 @@
+/* ---------- 헤더 검색창 ----------
+   메뉴 오른쪽 끝의 밑줄형 입력창. 입력하는 동안 아래에 결과 목록을 펼친다.
+   동작은 assets/js/header-search.js */
+
+.header-nav {
+    align-items: center;
+}
+
+.logo {
+    margin-right: auto;
+}
+
+.hsearch {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 200px;
+    height: 34px;
+    line-height: normal;
+    border-bottom: 1px solid var(--tx-3);
+    transition: border-color 150ms;
+}
+
+.hsearch:focus-within {
+    border-bottom-color: var(--ac);
+}
+
+.hsearch > .ph {
+    flex: none;
+    font-size: 16px;
+    color: var(--tx-3);
+}
+
+.hsearch input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    font: inherit;
+    font-size: 14.5px;
+    color: var(--tx);
+    background: transparent;
+    border: 0;
+    outline: 0;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.hsearch input::placeholder {
+    color: var(--tx-3);
+}
+
+.hsearch input::-webkit-search-cancel-button {
+    display: none;
+}
+
+.hsearch-key {
+    flex: none;
+    font-family: var(--font-code);
+    font-size: 12px;
+    color: var(--tx-3);
+}
+
+.hsearch:focus-within .hsearch-key {
+    display: none;
+}
+
+/* 결과 목록 */
+.hsearch-drop {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 20;
+    width: min(420px, calc(100vw - var(--gap) * 2));
+    max-height: min(70vh, 480px);
+    overflow-y: auto;
+    padding: 6px 0;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.hsearch-drop[hidden] {
+    display: none;
+}
+
+.hsearch-drop a {
+    display: block;
+    padding: 10px 16px;
+    color: var(--tx);
+    text-decoration: none;
+    box-shadow: none;
+}
+
+.hsearch-drop a + a {
+    border-top: 1px solid var(--line);
+}
+
+.hsearch-drop a:hover,
+.hsearch-drop a.is-active {
+    background: var(--bg-2);
+}
+
+.hsearch-drop a:hover b,
+.hsearch-drop a.is-active b,
+.hsearch-drop a.hsearch-more:hover,
+.hsearch-drop a.hsearch-more.is-active {
+    color: var(--ac);
+}
+
+.hsearch-drop b {
+    display: block;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.45;
+}
+
+.hsearch-drop mark {
+    padding: 0;
+    color: inherit;
+    background: none;
+    text-decoration: underline;
+    text-decoration-color: var(--ac);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+}
+
+.hsearch-drop small {
+    display: block;
+    margin-top: 2px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--tx-3);
+}
+
+.hsearch-drop .hsearch-more {
+    font-size: 13.5px;
+    color: var(--tx-2);
+}
+
+.hsearch-empty {
+    margin: 0;
+    padding: 10px 16px;
+    font-size: 14px;
+    color: var(--tx-3);
+}
+
+/* 좁은 화면: 메뉴 아래 한 줄을 모두 차지 */
+@media (max-width: 760px) {
+    .hsearch {
+        order: 3;
+        width: 100%;
+        height: 36px;
+        margin-bottom: 14px;
+    }
+
+    .hsearch-key {
+        display: none;
+    }
+
+    .hsearch-drop {
+        left: 0;
+        right: 0;
+        width: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hsearch {
+        transition: none;
+    }
+}

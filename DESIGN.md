@@ -55,6 +55,7 @@ DB 인터널 노트의 화면 규칙입니다. 값은 모두 `assets/css/extende
 
 | 요소 | 파일 | 규칙 |
 |---|---|---|
+| 헤더 검색창 | `_partials/header.html`, `js/header-search.js`, `css/extended/header-search.css` | 메뉴 오른쪽 끝의 밑줄형 입력창(200px, 포커스 시 밑줄 강조색). 입력 중 결과 최대 5개, 고른 항목은 제목이 강조색, 일치 부분은 강조색 밑줄. `/` 키로 포커스, 검색 페이지에서는 숨김. 760px 이하에서는 메뉴 아래 한 줄 전체 |
 | 연재 목차 블록 | `_partials/series_block.html` | 번호는 강조색, 준비 중은 `--tx-3`와 "준비 중" 글자. `limit`(홈 5편), `detail`(주제 표시), `hideTitle` |
 | 글 목록 행 | `_partials/post_row.html` | 제목 + 오른쪽 날짜. 목록 페이지에서만 요약 표시 |
 | 글 3단 배치 | `single.html` | 연재 글이면 `has-series`, 소제목이 있으면 `has-toc` |
