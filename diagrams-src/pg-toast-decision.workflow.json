@@ -1,0 +1,185 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "행 하나를 저장할 때 TOAST가 결정되는 과정",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "힙 튜플 처리"
+    },
+    "security": {
+     "label": "크기 판단"
+    },
+    "messagebus": {
+     "label": "압축"
+    },
+    "database": {
+     "label": "TOAST 테이블"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "inline",
+    "label": "그대로 저장",
+    "focus": [
+     "row",
+     "check",
+     "inline"
+    ],
+    "note": "튜플이 2032바이트 이하이면 아무것도 하지 않고 힙 페이지에 넣습니다."
+   },
+   {
+    "id": "toast",
+    "label": "압축과 외부 저장",
+    "focus": [
+     "check",
+     "compress",
+     "recheck",
+     "external",
+     "pointer"
+    ],
+    "note": "넘으면 EXTENDED 값을 먼저 압축하고, 그래도 크면 큰 값부터 TOAST 테이블로 옮기고 18바이트 포인터만 남깁니다. MAIN 값은 마지막 수단으로만 옮깁니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "heap",
+   "label": "힙 테이블"
+  },
+  {
+   "id": "decide",
+   "label": "크기 판단",
+   "variant": "exception"
+  },
+  {
+   "id": "toast",
+   "label": "TOAST"
+  }
+ ],
+ "mainPath": [
+  "row",
+  "check",
+  "compress",
+  "recheck",
+  "external",
+  "pointer"
+ ],
+ "nodes": [
+  {
+   "id": "row",
+   "lane": "heap",
+   "col": 0,
+   "type": "backend",
+   "label": "행 저장 요청",
+   "sublabel": "INSERT, UPDATE",
+   "width": 150
+  },
+  {
+   "id": "check",
+   "lane": "decide",
+   "col": 1,
+   "type": "security",
+   "label": "튜플 > 2032바이트?",
+   "sublabel": "TOAST_TUPLE_THRESHOLD",
+   "width": 170
+  },
+  {
+   "id": "inline",
+   "lane": "heap",
+   "col": 2,
+   "type": "backend",
+   "label": "힙 페이지에 저장",
+   "sublabel": "원본 또는 압축본",
+   "width": 150
+  },
+  {
+   "id": "compress",
+   "lane": "toast",
+   "col": 2,
+   "type": "messagebus",
+   "label": "EXTENDED 값 압축",
+   "sublabel": "큰 값부터, 줄어들 때만",
+   "width": 170
+  },
+  {
+   "id": "recheck",
+   "lane": "decide",
+   "col": 3,
+   "type": "security",
+   "label": "아직 2032 초과?",
+   "sublabel": "TOAST_TUPLE_TARGET",
+   "width": 170
+  },
+  {
+   "id": "external",
+   "lane": "toast",
+   "col": 4,
+   "type": "database",
+   "label": "TOAST 테이블로 이동",
+   "sublabel": "EXTENDED, EXTERNAL 먼저",
+   "width": 170
+  },
+  {
+   "id": "pointer",
+   "lane": "heap",
+   "col": 5,
+   "type": "backend",
+   "label": "포인터만 남김",
+   "sublabel": "18바이트 TOAST 포인터",
+   "width": 170
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "row",
+   "to": "check",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "check",
+   "to": "inline",
+   "label": "아니오",
+   "role": "branch"
+  },
+  {
+   "id": "e3",
+   "from": "check",
+   "to": "compress",
+   "label": "예",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "compress",
+   "to": "recheck",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "recheck",
+   "to": "external",
+   "label": "예",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e6",
+   "from": "external",
+   "to": "pointer",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e7",
+   "from": "recheck",
+   "to": "inline",
+   "label": "아니오 (압축본 저장)",
+   "role": "branch"
+  }
+ ]
+}

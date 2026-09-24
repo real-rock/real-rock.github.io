@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "8kB 힙 페이지 한 장 (실습의 fruit 테이블 블록 0)",
+    "quality_profile": "standard",
+    "viewBox": [1120, 640],
+    "repository": {
+      "url": "https://github.com/postgres/postgres",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "39a0db101105eab3f4044d11c609c58b9459ea16"
+    },
+    "legend": { "mode": "auto", "entries": { "security": { "label": "페이지 헤더" }, "frontend": { "label": "line pointer (4바이트)" }, "database": { "label": "튜플" }, "external": { "label": "빈 공간" } } },
+    "views": [
+      { "id": "header", "label": "페이지 헤더", "focus": ["header", "free"], "note": "pd_lower와 pd_upper 사이가 빈 공간입니다. 새 행을 넣으면 lower는 4바이트 늘고 upper는 튜플 크기만큼 줄어듭니다." },
+      { "id": "pointers", "label": "line pointer와 튜플", "focus": ["lp1", "lp2", "lp3", "t1", "t2", "t3"], "note": "행의 주소(ctid)는 (블록, line pointer 번호)입니다. 튜플이 페이지 안에서 옮겨져도 line pointer만 고치면 됩니다." }
+    ]
+  },
+  "components": [
+    { "id": "header", "type": "security", "label": "PageHeaderData (0-23)", "sublabel": "pd_lsn 0/17E5C60, pd_checksum, pd_lower 36, pd_upper 8072, pd_special 8192", "pos": [40, 70], "size": [1040, 64],
+      "sources": [{ "path": "src/include/storage/bufpage.h", "line": 159, "end_line": 172, "label": "PageHeaderData" }] },
+    { "id": "lp1", "type": "frontend", "label": "lp 1 (24-27)", "sublabel": "lp_off 8152, lp_len 34", "pos": [40, 200], "size": [260, 60],
+      "sources": [{ "path": "src/include/storage/itemid.h", "line": 25, "end_line": 30, "label": "ItemIdData" }] },
+    { "id": "lp2", "type": "frontend", "label": "lp 2 (28-31)", "sublabel": "lp_off 8112, lp_len 35", "pos": [40, 290], "size": [260, 60] },
+    { "id": "lp3", "type": "frontend", "label": "lp 3 (32-35)", "sublabel": "lp_off 8072, lp_len 35", "pos": [40, 380], "size": [260, 60] },
+    { "id": "t1", "type": "database", "label": "튜플 1 (8152-8185): 1, 'apple'", "sublabel": "헤더 24바이트 + 데이터 10바이트", "pos": [700, 200], "size": [380, 60],
+      "sources": [{ "path": "src/include/access/htup_details.h", "line": 153, "end_line": 181, "label": "HeapTupleHeaderData" }] },
+    { "id": "t2", "type": "database", "label": "튜플 2 (8112-8146): 2, 'banana'", "sublabel": "헤더 24바이트 + 데이터 11바이트", "pos": [700, 290], "size": [380, 60] },
+    { "id": "t3", "type": "database", "label": "튜플 3 (8072-8106): 3, 'cherry'", "sublabel": "헤더 24바이트 + 데이터 11바이트", "pos": [700, 380], "size": [380, 60] },
+    { "id": "free", "type": "external", "label": "빈 공간 (36-8071, 8036바이트)", "sublabel": "새 line pointer는 앞에서, 새 튜플은 뒤에서부터 채움", "pos": [40, 500], "size": [1040, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "line pointer 배열: 앞에서 뒤로 자람", "wraps": ["lp1", "lp2", "lp3"] },
+    { "kind": "region", "label": "튜플: 페이지 끝에서 앞으로 자람", "wraps": ["t1", "t2", "t3"] }
+  ],
+  "connections": [
+    { "id": "c1", "from": "lp1", "to": "t1", "label": "offset 8152", "variant": "emphasis" },
+    { "id": "c2", "from": "lp2", "to": "t2", "label": "offset 8112", "variant": "emphasis" },
+    { "id": "c3", "from": "lp3", "to": "t3", "label": "offset 8072", "variant": "emphasis" }
+  ]
+}
