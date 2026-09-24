@@ -19,7 +19,7 @@ description: "postmaster, backend, 백그라운드 프로세스들의 역할"
 - 클라이언트가 접속하면 내부에서 어떤 순서로 무슨 일이 일어나는가
 - backend 하나가 죽었는데 왜 모든 접속이 끊기는가
 
-DB 내부를 처음 보는 개발자도 따라올 수 있도록, 용어가 처음 나올 때마다 뜻을 풀어 쓰겠습니다.
+DB 내부를 처음 보는 개발자도 따라올 수 있도록 용어가 처음 나올 때마다 뜻을 풀어 쓰겠습니다.
 
 > **기준 버전**: 이 연재는 PostgreSQL 18을 기준으로 합니다. 정확히는 `REL_18_STABLE` 브랜치의 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16)(18.6 개발 버전)입니다. 본문의 소스 링크는 모두 이 커밋에 고정했고, 실습 결과는 이 소스를 Docker 안에서 그대로 빌드해 실행한 출력입니다.
 
@@ -121,7 +121,7 @@ postmaster에게 일을 시키는 방법은 유닉스 시그널입니다. 시그
 
 `max_connections` 제한이 실제로 걸리는 곳도 여기입니다. postmaster가 fork 전에 확인하는 자식 슬롯은 [`2 × (max_connections + max_wal_senders)`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/pmchild.c#L100)개로 넉넉하게 잡혀 있습니다. 인증 도중에 실패하거나 먼저 나가는 세션이 있기 때문입니다. 정확한 제한은 PGPROC 자리가 모자랄 때 [`sorry, too many clients already`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/lmgr/proc.c#L457)로 걸립니다. 그래서 **거절될 접속도 일단 fork는 됩니다.** 실습 6에서 확인합니다.
 
-**3. 쿼리 처리.** 준비가 끝나면 backend는 [`PostgresMain()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4188)의 [메인 루프](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4520)에 들어갑니다. 클라이언트에 "준비됐다(ReadyForQuery)"를 보내고, 다음 명령을 기다리고, 받은 쿼리를 파싱, 계획, 실행하고, 결과를 돌려주는 일을 반복합니다. 쿼리 처리 과정은 [10편](/posts/postgresql/10-query-processing/)에서 다룹니다.
+**3. 쿼리 처리.** 준비가 끝나면 backend는 [`PostgresMain()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4188)의 [메인 루프](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4520)에 들어갑니다. 클라이언트에 "준비됐다(ReadyForQuery)"를 보내고 다음 명령을 기다렸다가, 받은 쿼리를 파싱, 계획, 실행해 결과를 돌려주는 일을 반복합니다. 쿼리 처리 과정은 [10편](/posts/postgresql/10-query-processing/)에서 다룹니다.
 
 **4. 종료.** 클라이언트가 Terminate 메시지를 보내거나 연결이 끊기면 backend 프로세스가 끝납니다. 운영체제는 부모인 postmaster에게 `SIGCHLD`를 보내고, postmaster는 [`CleanupBackend()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L2565)에서 슬롯을 돌려받습니다.
 
@@ -206,7 +206,7 @@ PostgreSQL을 운영하다 보면 "쿼리 하나가 죽었는데 모든 접속�
 - [lab.sh](/labs/pg-01-process/lab.sh): 아래 실습 전체를 새 컨테이너에서 처음부터 끝까지 실행하는 스크립트
 - [final-run.log](/labs/pg-01-process/final-run.log): 이 글에 실린 출력의 원본 로그
 
-먼저 postgres 소스 저장소에서 기준 커밋을 확인하고, 추적 중인 파일만 tar로 묶습니다. 소스가 없다면 `git clone --branch REL_18_STABLE https://github.com/postgres/postgres.git`으로 받은 뒤 같은 커밋을 체크아웃하면 됩니다.
+먼저 postgres 소스 저장소에서 기준 커밋을 확인하고 추적 중인 파일만 tar로 묶습니다. 소스가 없다면 `git clone --branch REL_18_STABLE https://github.com/postgres/postgres.git`으로 받은 뒤 같은 커밋을 체크아웃하면 됩니다.
 
 ```bash
 git rev-parse --abbrev-ref HEAD
@@ -272,7 +272,7 @@ initdb ok
 
 ### 실습 1. 서버를 띄우면 생기는 프로세스
 
-서버를 시작하고, 아무도 접속하지 않은 상태에서 postmaster와 그 자식들을 봅니다. `ps -p $PM --ppid $PM`은 postmaster 자신과 postmaster를 부모로 둔 프로세스만 보여 줍니다.
+서버를 시작하고 아무도 접속하지 않은 상태에서 postmaster와 그 자식들을 봅니다. `ps -p $PM --ppid $PM`은 postmaster 자신과 postmaster를 부모로 둔 프로세스만 보여 줍니다.
 
 ```bash
 pg_ctl -D $PGDATA -l /home/postgres/server.log start
@@ -322,7 +322,7 @@ cat /home/postgres/server.log
 
 - **모든 프로세스의 부모(PPID)가 37번 postmaster입니다.** 백그라운드 프로세스든 뭐든 fork는 postmaster만 합니다.
 - **PID 번호가 기동 순서입니다.** io worker(38-40) → checkpointer(41) → background writer(42) 순서로, `PostmasterMain()`의 코드 순서와 같습니다.
-- **43번이 비어 있습니다.** 로그를 보면 `database system was shut down at ...`을 남긴 프로세스가 43번입니다. 이것이 startup 프로세스입니다. 이번에는 정상 종료 후의 기동이라 WAL 재생할 것이 없어 바로 끝났고, 그 뒤에 walwriter(44), autovacuum launcher(45)가 떴습니다. startup이 끝나야 PM_RUN이 되고, 그때 walwriter를 띄우는 소스 조건과 정확히 맞습니다.
+- **43번이 비어 있습니다.** 로그를 보면 `database system was shut down at ...`을 남긴 프로세스가 43번입니다. 이것이 startup 프로세스입니다. 이번에는 정상 종료 후의 기동이라 재생할 WAL이 없어 바로 끝났고, 그 뒤에 walwriter(44), autovacuum launcher(45)가 떴습니다. startup이 끝나 PM_RUN이 된 뒤에 walwriter를 띄운다는 소스 조건과 정확히 맞습니다.
 
 ### 실습 2. pg_stat_activity로 역할 확인
 
@@ -440,10 +440,10 @@ grep -E 'connection (received|authenticated|authorized|ready)' /home/postgres/se
 [exit=0]
 ```
 
-로그가 sequence 그림의 순서를 그대로 보여 줍니다.
+로그가 접속 순서 그림의 흐름을 그대로 보여 줍니다.
 
 - `connection received`를 남긴 것은 postmaster가 아니라 **이미 fork된 87번 프로세스**입니다. 그런데 backend 타입이 `not initialized`로 찍혀 있습니다. fork 직후에는 아직 자기가 일반 backend인지 walsender인지 모르는 상태이기 때문입니다. StartupMessage를 읽은 뒤에야 `client backend`로 정해집니다.
-- `setup total=1.032 ms` 가운데 `fork=0.146 ms`입니다. 로컬에서 `trust` 인증을 쓴 조건이라 짧지만, 이 1ms 남짓은 매 접속마다 드는 비용입니다.
+- `setup total=1.032 ms` 가운데 `fork=0.146 ms`입니다. 로컬에서 `trust` 인증을 쓴 조건이라 짧지만, 이 1ms 남짓은 접속할 때마다 드는 비용입니다.
 
 ### 실습 4. io worker 수를 재시작 없이 바꾸기
 
@@ -698,7 +698,7 @@ sed -n '/terminated by signal 9/,$p' /home/postgres/server.log
 [exit=0]
 ```
 
-lifecycle 그림의 상태 변화가 로그 한 줄 한 줄에 대응합니다.
+크래시 재시작 그림의 상태 변화가 로그 한 줄 한 줄에 대응합니다.
 
 | 로그 | 상태 |
 |---|---|
@@ -959,7 +959,7 @@ psql -X -c "SELECT pid, backend_type FROM pg_stat_activity ORDER BY pid"
 [exit=0]
 ```
 
-logger(561)는 가장 먼저(다른 어떤 자식보다 먼저) 떴습니다. 이후 프로세스들의 로그를 받아 적어야 하기 때문입니다. archiver(570)는 `pg_stat_activity`에 보이지만 **logger는 보이지 않습니다.** 공유 메모리에 붙지 않는 프로세스라서 그렇습니다.
+logger(561)는 다른 어떤 자식보다 먼저 떴습니다. 이후 프로세스들의 로그를 받아 적어야 하기 때문입니다. archiver(570)는 `pg_stat_activity`에 보이지만 **logger는 보이지 않습니다.** 공유 메모리에 붙지 않는 프로세스라서 그렇습니다.
 
 ### 실습 11. postmaster가 죽으면
 
@@ -1021,7 +1021,7 @@ server started
 
 접속 하나가 프로세스 하나이므로, 커넥션 수는 곧 프로세스 수입니다. 실습에서 확인한 비용은 다음과 같습니다.
 
-- **접속할 때마다 드는 비용**: 실습 3에서 접속 준비에 약 1ms(fork 약 0.15ms)가 걸렸습니다. 로컬 소켓에 `trust` 인증을 쓴 가장 가벼운 조건입니다. 네트워크 왕복, TLS, 비밀번호 인증이 붙으면 더 걸립니다. 요청마다 새로 접속하는 애플리케이션이라면 이 비용을 요청마다 냅니다.
+- **접속할 때마다 드는 비용**: 실습 3에서 접속 준비에 약 1ms(fork 약 0.15ms)가 걸렸습니다. 로컬 소켓에 `trust` 인증을 쓴 가장 가벼운 조건입니다. 네트워크 왕복, TLS, 비밀번호 인증이 붙으면 더 걸립니다. 요청마다 새로 접속하는 애플리케이션이라면 이 비용을 매번 냅니다.
 - **프로세스마다 드는 메모리**: idle backend 하나의 개인 메모리(`RssAnon`)는 약 1.8MB였습니다. 쿼리를 실행하면 카탈로그 캐시와 정렬, 해시에 쓰는 작업 메모리(`work_mem`)가 여기에 더해집니다. 작업 메모리는 [2편](/posts/postgresql/02-memory-architecture/)에서 다룹니다.
 - **공유 자원 경쟁**: 모든 backend가 같은 공유 메모리의 락과 PGPROC 배열을 씁니다. 프로세스가 많아지면 그만큼 경쟁과 문맥 전환(context switch)이 늘어납니다.
 

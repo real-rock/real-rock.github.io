@@ -13,7 +13,7 @@ description: "왜 생기고 어떻게 막는가"
 
 [4편](/posts/postgresql/04-mvcc/)에서 PostgreSQL이 행마다 "만든 트랜잭션 ID(xmin)"를 적어 두고, 그 번호를 비교해 행이 보이는지 판단한다는 것을 봤습니다. 그런데 이 번호는 **32비트**입니다. 약 42억 개를 쓰고 나면 다시 처음으로 돌아옵니다. 초당 1만 건의 쓰기 트랜잭션이 도는 시스템이라면 약 2.5일이면 21억 개, 즉 비교에 쓸 수 있는 범위의 절반을 씁니다.
 
-번호가 한 바퀴 돌면, 아주 오래전에 커밋된 행이 갑자기 "미래의 트랜잭션이 만든 행"으로 보여 사라질 수 있습니다. 이것이 **트랜잭션 ID wraparound**입니다. PostgreSQL은 이를 막으려고 오래된 행을 **freeze(동결)**하고, 그래도 위험하면 단계적으로 경고를 내다가 마지막에는 **새 트랜잭션을 거부**합니다. 이 글에서는 그 전 과정을 실제로 재현합니다.
+번호가 한 바퀴 돌면, 아주 오래전에 커밋된 행이 갑자기 "미래의 트랜잭션이 만든 행"으로 보여 사라질 수 있습니다. 이것이 **트랜잭션 ID wraparound**입니다. PostgreSQL은 이를 막으려고 오래된 행을 **freeze**(동결)하고, 그래도 위험하면 단계적으로 경고를 내다가 마지막에는 **새 트랜잭션을 거부**합니다. 이 글에서는 그 전 과정을 실제로 재현합니다.
 
 이 글에서 답할 질문은 다음과 같습니다.
 
@@ -44,13 +44,13 @@ diff = (int32) (id1 - id2);
 return (diff < 0);
 ```
 
-xid를 시계 문자판처럼 원 위에 놓고, 어느 xid에서 보든 **앞쪽 약 21억 개는 과거, 뒤쪽 약 21억 개는 미래**로 보는 것입니다. 번호가 한 바퀴 돌아도 비교는 계속 됩니다. 문제는 **21억 개보다 더 오래된 xid**입니다. 그런 xid는 원의 반대편, 즉 "미래"로 보이게 됩니다. 행의 `xmin`이 미래면 그 행은 아직 만들어지지 않은 것으로 판단되어 보이지 않습니다. 데이터가 사라진 것처럼 보이는 것입니다.
+xid를 시계 문자판처럼 원 위에 놓고, 어느 xid에서 보든 **앞쪽 약 21억 개는 과거, 뒤쪽 약 21억 개는 미래**로 보는 것입니다. 번호가 한 바퀴 돌아도 비교는 계속됩니다. 문제는 **21억 개보다 더 오래된 xid**입니다. 그런 xid는 원의 반대편, 즉 "미래"로 보입니다. 행의 `xmin`이 미래면 그 행은 아직 만들어지지 않은 것으로 판단되어 보이지 않습니다. 데이터가 사라진 것처럼 보이는 것입니다.
 
 ### freeze: "이 행은 누구보다도 먼저 만들어졌다"
 
-해결책은 충분히 오래된 행에 **"이 행은 모든 트랜잭션보다 먼저 만들어졌다"**고 표시해서 xmin 비교를 아예 하지 않게 하는 것입니다. 이것이 **freeze**입니다. 9.4 이전에는 xmin 자체를 `FrozenTransactionId`(2)로 바꿨지만, 9.4부터는 xmin 값은 그대로 두고 `t_infomask`에 [`HEAP_XMIN_FROZEN`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/htup_details.h#L206)(`HEAP_XMIN_COMMITTED`와 `HEAP_XMIN_INVALID`를 함께 켠 조합)을 적습니다(실습 2). 원래 xmin이 남아 있으면 장애 분석에 도움이 되기 때문입니다.
+해결책은 충분히 오래된 행에 "**이 행은 모든 트랜잭션보다 먼저 만들어졌다**"고 표시해서 xmin 비교를 아예 하지 않게 하는 것입니다. 이것이 **freeze**입니다. 9.4 이전에는 xmin 자체를 `FrozenTransactionId`(2)로 바꿨지만, 9.4부터는 xmin 값은 그대로 두고 `t_infomask`에 [`HEAP_XMIN_FROZEN`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/htup_details.h#L206)(`HEAP_XMIN_COMMITTED`와 `HEAP_XMIN_INVALID`를 함께 켠 조합)을 적습니다(실습 2). 원래 xmin이 남아 있으면 장애 분석에 도움이 되기 때문입니다.
 
-freeze는 VACUUM이 합니다([`heap_prepare_freeze_tuple()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/heapam.c#L7318)). VACUUM이 all-frozen이 아닌 페이지를 빠짐없이 스캔했을 때, 테이블에 남은 가장 오래된 얼리지 않은 xid를 **`pg_class.relfrozenxid`**에 적습니다. "이보다 오래된 xid는 이 테이블에 더는 없다"는 경계입니다. 데이터베이스 단위로는 모든 테이블의 relfrozenxid 가운데 가장 오래된 값이 **`pg_database.datfrozenxid`**입니다.
+freeze는 VACUUM이 합니다([`heap_prepare_freeze_tuple()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/heapam.c#L7318)). VACUUM이 all-frozen이 아닌 페이지를 빠짐없이 스캔했을 때, 테이블에 남은 가장 오래된 얼리지 않은 xid를 `pg_class.relfrozenxid`에 적습니다. "이보다 오래된 xid는 이 테이블에 더는 없다"는 경계입니다. 데이터베이스 단위로는 모든 테이블의 relfrozenxid 가운데 가장 오래된 값이 `pg_database.datfrozenxid`입니다.
 
 `age(xid)`는 현재 xid에서 그 xid까지의 거리입니다. `age(relfrozenxid)`는 "이 테이블에서 아직 얼려지지 않았을 수 있는 가장 오래된 xid가 몇 트랜잭션 전인가"이고, 이 값이 21억에 가까워질수록 위험합니다.
 
@@ -67,7 +67,7 @@ freeze는 VACUUM이 합니다([`heap_prepare_freeze_tuple()`](https://github.com
 | 한계 − 4000만 | (고정) | 새 xid를 줄 때마다 **WARNING** |
 | 한계 − 300만 | (고정) | **새 xid 발급 거부**. 쓰기 불가, 읽기만 가능 |
 
-여기서 "한계"는 가장 오래된 `datfrozenxid` + 2³¹ − 1(`MaxTransactionId >> 1`, 약 21억)이고, 경고와 정지 지점도 여기서 계산합니다([`SetTransactionIdLimit()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/varsup.c#L389-L419)). 새 xid를 줄 때마다 이 값과 비교해 경고하거나 거부하는 곳이 [`GetNewTransactionId()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/varsup.c#L123-L186)입니다. VACUUM 자체는 새 xid가 필요 없어서 정지 상태에서도 돕니다. 마지막 300만 개는, 관리자가 단일 사용자 모드에서 필요 없는 테이블을 TRUNCATE하거나 DROP해서 VACUUM할 양을 줄일 수 있게 남겨 둔 여유입니다([문서](https://www.postgresql.org/docs/18/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND)).
+여기서 "한계"는 가장 오래된 `datfrozenxid` + 2³¹ − 1(`MaxTransactionId >> 1`, 약 21억)이고, 경고와 정지 지점도 여기서 계산합니다([`SetTransactionIdLimit()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/varsup.c#L389-L419)). 새 xid를 줄 때마다 이 값과 비교해 경고하거나 거부하는 곳이 [`GetNewTransactionId()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/varsup.c#L123-L186)입니다. VACUUM 자체는 새 xid가 필요 없어서 정지 상태에서도 돕니다. 마지막 300만 개는 관리자가 단일 사용자 모드에서 필요 없는 테이블을 TRUNCATE하거나 DROP해서 VACUUM할 양을 줄일 수 있게 남겨 둔 여유입니다([문서](https://www.postgresql.org/docs/18/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND)).
 
 ### freeze가 막히는 경우
 
@@ -79,7 +79,7 @@ VACUUM은 [5편](/posts/postgresql/05-vacuum/)에서 본 `removable cutoff`보�
 
 [실습 이미지](/labs/pg-lab-image/Dockerfile)로 [lab.sh](/labs/pg-06-wraparound/lab.sh)가 새 컨테이너에서 처음부터 끝까지 실행했습니다(공용 함수는 [labkit.sh](/labs/common/labkit.sh)). 원본 출력은 [final-run.log](/labs/pg-06-wraparound/final-run.log)에 있습니다.
 
-실제 서비스에서 xid 21억 개를 쓰려면 며칠에서 몇 달이 걸립니다. 실습에서는 PostgreSQL 소스에 포함된 테스트 모듈 [`xid_wraparound`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/test/modules/xid_wraparound/xid_wraparound.c#L80-L95)의 `consume_xids()`로 xid를 몇 초 만에 소모합니다. 이 함수는 최상위 xid를 가진 트랜잭션 안에서 xid를 하위 트랜잭션용으로 소모하므로, 소모하는 동안에는 그 트랜잭션 자체가 오래 열린 트랜잭션처럼 동작합니다. autovacuum이 빨리 반응하도록 `autovacuum_naptime`은 1초로 줄였습니다.
+실제 서비스에서 xid 21억 개를 쓰려면 며칠에서 몇 달이 걸립니다. 실습에서는 PostgreSQL 소스에 포함된 테스트 모듈 [`xid_wraparound`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/test/modules/xid_wraparound/xid_wraparound.c#L80-L95)의 `consume_xids()`로 xid를 몇 초 만에 소모합니다. 이 함수는 최상위 xid를 받은 트랜잭션 안에서 xid를 하위 트랜잭션용으로 소모하므로, 소모하는 동안에는 그 트랜잭션 자체가 오래 열린 트랜잭션처럼 동작합니다. autovacuum이 빨리 반응하도록 `autovacuum_naptime`은 1초로 줄였습니다.
 
 ```bash
 docker run -d --init --name pglab --hostname pglab pg-internals:rel18-lab sleep infinity
@@ -268,7 +268,7 @@ NOTICE:  consumed 50002824 / 60000000 XIDs, latest 0:200003584
 [exit=0]
 ```
 
-로그에 `automatic aggressive vacuum to prevent wraparound of table`이 찍혔습니다. **autovacuum을 끈 테이블인데도 VACUUM이 돌았습니다.** age가 2억을 넘으면 `autovacuum_enabled` 설정과 상관없이 강제로 돕니다. 그 뒤 age는 6000만으로 줄었습니다. 0이 아닌 이유는, 이 VACUUM이 도는 동안 xid를 소모하던 트랜잭션이 열려 있어서 그보다 뒤로는 얼릴 수 없었기 때문입니다. 다음 xid 210000771에서 60000011을 빼면 150000760으로, 실습 4에서 소모를 시작한 트랜잭션의 xid와 같습니다.
+로그에 `automatic aggressive vacuum to prevent wraparound of table`이 찍혔습니다. **autovacuum을 끈 테이블인데도 VACUUM이 돌았습니다.** age가 2억을 넘으면 `autovacuum_enabled` 설정과 상관없이 강제로 돕니다. 그 뒤 age는 6000만으로 줄었습니다. 0이 아닌 이유는 이 VACUUM이 도는 동안 xid를 소모하던 트랜잭션이 열려 있어서 그보다 뒤로는 얼릴 수 없었기 때문입니다. 다음 xid 210000771에서 60000011을 빼면 150000760으로, 실습 4에서 소모를 시작한 트랜잭션의 xid와 같습니다.
 
 ### 실습 5. 오래된 트랜잭션이 freeze를 막으면
 
@@ -350,7 +350,7 @@ INSERT 0 1
 [exit=0]
 ```
 
-INSERT는 성공했지만 **WARNING**이 붙었습니다. "postgres DB를 39998999 트랜잭션 안에 VACUUM하라"는 뜻입니다. 경고 지점(4000만 전)을 약 1000개 지난 뒤라 남은 수가 4000만보다 조금 적습니다. HINT는 DB 전체 VACUUM과 함께, 오래된 prepared transaction과 버려진 replication slot을 확인하라고 알려 줍니다. 이 단계부터 **새 xid를 받는 모든 트랜잭션**에 이 경고가 붙습니다.
+INSERT는 성공했지만 **WARNING**이 붙었습니다. "postgres DB를 39998999 트랜잭션 안에 VACUUM하라"는 뜻입니다. 경고 지점(4000만 전)을 약 1000개 지난 뒤라 남은 수가 4000만보다 조금 적습니다. HINT는 DB 전체 VACUUM과 함께 오래된 prepared transaction과 버려진 replication slot을 확인하라고 알려 줍니다. 이 단계부터 **새 xid를 받는 모든 트랜잭션**에 이 경고가 붙습니다.
 
 ### 실습 7. 정지 단계: 한계까지 300만 개 남았을 때
 
@@ -414,9 +414,9 @@ INSERT 0 1
 [exit=0]
 ```
 
-A를 롤백하고 15초 뒤, autovacuum이 모든 DB를 얼려 age가 2억 아래(약 3700만)로 내려왔고, INSERT가 다시 성공했습니다. 0이 아니라 3700만인 이유는, postgres DB에서는 실습 6에서 넣은 행(xid 약 23.17억)이 `vacuum_freeze_min_age`(5000만)보다 젊어서 얼리지 않았고, 그 xid가 relfrozenxid로 남았기 때문입니다. 로그의 2499줄은 서버를 시작한 뒤 쌓인 wraparound 방지 VACUUM 기록 전체입니다. A가 freeze를 막는 동안 autovacuum이 1초마다 같은 테이블들을 계속 시도했기 때문에 이렇게 많습니다. `bypassing nonessential maintenance ... as a failsafe`는 age가 16억(`vacuum_failsafe_age`)을 넘은 뒤부터 VACUUM이 failsafe로 전환해 필수가 아닌 일을 건너뛰었다는 기록입니다(로그에서 가장 이른 두 줄).
+A를 롤백하고 15초 뒤, autovacuum이 모든 DB를 얼려 age가 2억 아래(약 3700만)로 내려왔고, INSERT가 다시 성공했습니다. 0이 아니라 3700만인 이유는 postgres DB에서는 실습 6에서 넣은 행(xid 약 23.17억)이 `vacuum_freeze_min_age`(5000만)보다 젊어서 얼리지 않았고, 그 xid가 relfrozenxid로 남았기 때문입니다. 로그의 2499줄은 서버를 시작한 뒤 쌓인 wraparound 방지 VACUUM 기록 전체입니다. A가 freeze를 막는 동안 autovacuum이 1초마다 같은 테이블들을 계속 시도했기 때문에 이렇게 많습니다. `bypassing nonessential maintenance ... as a failsafe`는 age가 16억(`vacuum_failsafe_age`)을 넘은 뒤부터 VACUUM이 failsafe로 전환해 필수가 아닌 일을 건너뛰었다는 기록입니다(로그에서 가장 이른 두 줄).
 
-예전 버전에서는 이 상태에서 서버를 내리고 단일 사용자 모드로 VACUUM해야 했지만, 지금은 그럴 필요가 없고 오히려 피해야 한다고 [문서](https://www.postgresql.org/docs/18/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND)가 안내합니다. 정지 상태에서도 VACUUM은 새 xid 없이 돌 수 있으므로, 원인을 없앤 뒤 **평소 모드에서 VACUUM을 돌리면** 됩니다. ERROR의 HINT도 "Execute a database-wide VACUUM"이라고 안내합니다.
+예전 버전에서는 이 상태에서 서버를 내리고 단일 사용자 모드로 VACUUM해야 했지만, 지금은 그럴 필요가 없고 오히려 피해야 한다고 [문서](https://www.postgresql.org/docs/18/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND)가 안내합니다. 정지 상태에서도 VACUUM은 새 xid 없이 돌 수 있으므로, 원인을 없앤 뒤 **평소 모드에서 VACUUM을 돌리면** 됩니다. ERROR의 HINT에도 "Execute a database-wide VACUUM"이라고 나옵니다.
 
 아래 그림은 실습 5-8을 순서대로 정리한 것입니다.
 
@@ -469,7 +469,7 @@ WARNING이 보이면 이미 한계까지 4000만 개 남은 상태입니다. 초
 - age에 따라 aggressive VACUUM(1.5억), 강제 autovacuum(2억, autovacuum을 꺼도 실행), failsafe(16억), 경고(한계 − 4000만), 쓰기 정지(한계 − 300만)가 차례로 작동합니다.
 - wraparound는 보통 오래된 트랜잭션, prepared transaction, replication slot이 freeze를 막아서 생깁니다. 원인을 없앤 뒤 VACUUM하면 평소 모드에서 복구됩니다.
 
-다음 글에서는 지금까지 여러 번 등장한 **WAL**을 본격적으로 살펴봅니다. LSN, WAL 레코드의 구조, 그리고 full page writes입니다.
+다음 글에서는 지금까지 여러 번 등장한 **WAL**을 본격적으로 살펴봅니다. LSN과 WAL 레코드의 구조, full page writes입니다.
 
 ## 참고 자료
 

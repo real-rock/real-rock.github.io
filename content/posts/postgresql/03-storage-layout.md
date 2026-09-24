@@ -120,7 +120,7 @@ line pointer를 한 단계 거치는 이유가 있습니다. 행의 주소(ctid)
 줄이는 순서는 네 단계입니다.
 
 1. 저장 전략이 **EXTENDED**인 값을 큰 것부터 압축합니다. 압축해도 값 하나가 목표 크기(2032바이트에서 튜플 헤더를 뺀 데이터 크기)보다 크면 바로 TOAST 테이블로 옮깁니다. **EXTERNAL**인 값은 압축하지 않고, 크면 이 단계에서 바로 옮깁니다.
-2. 아직 크면, EXTENDED나 **EXTERNAL**인 값을 큰 것부터 TOAST 테이블로 옮깁니다.
+2. 아직 크면, EXTENDED나 EXTERNAL인 값을 큰 것부터 TOAST 테이블로 옮깁니다.
 3. 아직 크면, **MAIN**인 값을 압축합니다.
 4. 그래도 크면 MAIN인 값도 옮깁니다. 이때는 목표를 페이지 하나 크기로 넓혀서, MAIN은 정말 어쩔 수 없을 때만 옮깁니다.
 
@@ -509,7 +509,7 @@ SQL
 
 3번 값은 TOAST 테이블에 51조각(`chunk_seq` 0-50)으로 들어갔고, 조각 하나의 최대 크기는 정확히 1996바이트입니다. 튜플 크기 46 = 헤더 24 + `id` 4 + 포인터 18입니다.
 
-`stored_bytes`(`pg_column_size`)를 읽을 때 주의할 점이 있습니다. TOAST로 나간 값에 대해서는 포인터 크기(18)가 아니라 **TOAST 테이블에 저장된 크기를 varlena 헤더 없이** 돌려줍니다([`detoast.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/common/detoast.c#L606-L616)). 3번 행이 100000으로 나온 이유이고, 실습 9에서 2001바이트 값이 2005가 아닌 2001로 나오는 이유도 같습니다.
+`stored_bytes`(`pg_column_size`)를 읽을 때 주의할 점이 있습니다. TOAST로 나간 값이면 포인터 크기(18)가 아니라 **TOAST 테이블에 저장된 크기를 varlena 헤더 없이** 돌려줍니다([`detoast.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/common/detoast.c#L606-L616)). 3번 행이 100000으로 나온 이유이고, 실습 9에서 2001바이트 값이 2005가 아닌 2001로 나오는 이유도 같습니다.
 
 ### 실습 9. TOAST가 시작되는 정확한 크기
 
@@ -578,7 +578,7 @@ INSERT 0 1
 [exit=0]
 ```
 
-같은 값(`a` 10만 개)이 기본 전략(EXTENDED)에서는 압축되어 1156바이트였지만, EXTERNAL로 바꾸면 압축 없이 10만 바이트 그대로 TOAST 테이블에 들어갑니다. 공간은 더 쓰지만 대신 `substr()`처럼 값의 일부만 읽을 때 필요한 조각만 가져올 수 있습니다([TOAST 문서](https://www.postgresql.org/docs/18/storage-toast.html)). 압축된 값은 원하는 위치까지 앞에서부터 풀어야 합니다. pglz는 필요한 앞부분 조각만 가져와 풀 수 있지만, 값의 뒤쪽을 읽을수록 더 많이 풀어야 하고, lz4는 항상 전체를 가져옵니다([`detoast.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/common/detoast.c#L236-L262)).
+같은 값(`a` 10만 개)이 기본 전략(EXTENDED)에서는 압축되어 1156바이트였지만, EXTERNAL로 바꾸면 압축 없이 10만 바이트 그대로 TOAST 테이블에 들어갑니다. 공간은 더 쓰지만 대신 `substr()`처럼 값의 일부만 읽을 때 필요한 조각만 가져올 수 있습니다([TOAST 문서](https://www.postgresql.org/docs/18/storage-toast.html)). 압축된 값은 원하는 위치까지 앞에서부터 풀어야 합니다. pglz는 필요한 앞부분 조각만 가져와 풀 수 있지만 값의 뒤쪽을 읽을수록 더 많이 풀어야 합니다. lz4는 항상 전체를 가져옵니다([`detoast.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/common/detoast.c#L236-L262)).
 
 ## 운영에서는 이렇게 나타납니다
 
@@ -592,7 +592,7 @@ PostgreSQL의 행은 데이터 말고도 헤더 24바이트(정렬 포함)와 li
 
 ### 큰 값을 자주 바꾸면 TOAST 테이블이 커진다
 
-TOAST로 나간 값을 UPDATE하면 TOAST 테이블에도 새 조각이 생기고 옛 조각은 dead tuple이 됩니다. 큰 `jsonb`나 `text`를 자주 고치는 테이블은 본 테이블보다 TOAST 테이블이 훨씬 커지는 일이 흔합니다. 테이블 크기를 볼 때는 `pg_relation_size()`(main fork만)가 아니라 `pg_total_relation_size()`(TOAST와 인덱스 포함)나 `pg_table_size()`를 봐야 하고, TOAST 테이블도 VACUUM 대상이라는 점을 기억해야 합니다.
+TOAST로 나간 값을 UPDATE하면 TOAST 테이블에도 새 조각이 생기고 옛 조각은 dead tuple이 됩니다. 큰 `jsonb`나 `text`를 자주 고치는 테이블은 본 테이블보다 TOAST 테이블이 훨씬 커지는 일이 흔합니다. 테이블 크기를 볼 때는 `pg_relation_size()`(main fork만)가 아니라 `pg_total_relation_size()`(TOAST와 인덱스 포함)나 `pg_table_size()`를 봐야 합니다. TOAST 테이블도 VACUUM 대상입니다.
 
 또한 `SELECT *`는 TOAST로 나간 큰 값을 매번 모아서 읽어 옵니다. 큰 열이 필요 없는 조회라면 열을 골라 쓰는 것만으로 I/O가 크게 줄어듭니다.
 

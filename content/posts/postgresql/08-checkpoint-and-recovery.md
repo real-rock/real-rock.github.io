@@ -16,7 +16,7 @@ description: "체크포인트가 하는 일과 장애 후 복구가 진행되는
 - 데이터 페이지는 언제 디스크에 쓰이는가. 영원히 메모리에만 둘 수는 없습니다.
 - 서버가 갑자기 죽으면 WAL을 **어디서부터** 다시 적용해야 하는가. 클러스터를 만든 뒤의 WAL을 전부 다시 적용할 수는 없습니다.
 
-두 질문의 답이 **체크포인트(checkpoint)**입니다. 체크포인트는 "이 위치 이전의 변경은 모두 데이터 파일에 반영되었다"는 표시를 남기는 작업이고, 장애 복구는 마지막 체크포인트가 남긴 그 위치부터 WAL을 다시 적용합니다. 같은 원리를 백업에 적용하면, 원하는 시점까지만 되돌리는 **PITR(Point-In-Time Recovery)**이 됩니다.
+두 질문의 답이 **체크포인트**(checkpoint)입니다. 체크포인트는 "이 위치 이전의 변경은 모두 데이터 파일에 반영되었다"는 표시를 남기는 작업이고, 장애 복구는 마지막 체크포인트가 남긴 그 위치부터 WAL을 다시 적용합니다. 같은 원리를 백업에 적용하면, 원하는 시점까지만 되돌리는 **PITR**(Point-In-Time Recovery)이 됩니다.
 
 이 글에서 답할 질문은 다음과 같습니다.
 
@@ -59,7 +59,7 @@ checkpointer는 주기적으로 깨어나 경과 시간을 보고 `time` 체크�
 
 ### 쓰기를 나눠서 한다: checkpoint_completion_target
 
-dirty 페이지 수천, 수만 개를 한꺼번에 쓰면 그동안 디스크가 포화되어 다른 쿼리가 느려집니다. 그래서 `time`, `wal` 체크포인트는 쓰기를 다음 체크포인트까지 남은 시간의 `checkpoint_completion_target`(기본 0.9) 비율에 걸쳐 나눠서 합니다. 페이지를 하나 쓸 때마다 진행률을 확인해서, 예정보다 앞서 있으면 잠깐 쉽니다([`CheckpointWriteDelay()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/checkpointer.c#L772), [`IsCheckpointOnSchedule()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/checkpointer.c#L842)). 진행률은 시간 기준과 WAL 양 기준을 모두 보고 더 급한 쪽에 맞춥니다.
+dirty 페이지 수천, 수만 개를 한꺼번에 쓰면 그동안 디스크가 포화되어 다른 쿼리가 느려집니다. 그래서 `time`, `wal` 체크포인트는 쓰기를 다음 체크포인트까지 남은 시간의 `checkpoint_completion_target`(기본 0.9) 비율에 걸쳐 나눠서 합니다. 페이지를 하나 쓸 때마다 진행률을 확인해서 예정보다 앞서 있으면 잠깐 쉽니다([`CheckpointWriteDelay()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/checkpointer.c#L772), [`IsCheckpointOnSchedule()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/checkpointer.c#L842)). 진행률은 시간 기준과 WAL 양 기준을 모두 보고 더 급한 쪽에 맞춥니다.
 
 반면 `CHECKPOINT` 명령이나 복구 끝의 체크포인트는 `immediate` 플래그가 붙어 쉬지 않고 최대한 빨리 씁니다.
 
@@ -79,7 +79,7 @@ dirty 페이지 수천, 수만 개를 한꺼번에 쓰면 그동안 디스크가
 4단계에서 같은 변경을 두 번 적용하지 않는 장치가 **페이지 LSN**입니다. 레코드가 건드리는 페이지를 읽었을 때,
 
 - 레코드에 페이지 이미지가 있으면 그 이미지로 페이지를 통째로 덮습니다([`xlogutils.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlogutils.c#L403)). torn page도 이렇게 되살아납니다.
-- 이미지가 없으면 페이지 LSN과 레코드 LSN을 비교해서, 페이지가 이미 이 레코드 이후의 상태라면 건너뜁니다([`xlogutils.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlogutils.c#L444-L445)). 체크포인트 도중이나 그 뒤에 이미 디스크에 쓰인 페이지가 여기에 해당합니다.
+- 이미지가 없으면 페이지 LSN과 레코드 LSN을 비교해서 페이지가 이미 이 레코드 이후의 상태라면 건너뜁니다([`xlogutils.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlogutils.c#L444-L445)). 체크포인트 도중이나 그 뒤에 이미 디스크에 쓰인 페이지가 여기에 해당합니다.
 
 그래서 복구는 몇 번을 다시 해도 같은 결과가 나옵니다. 복구 도중 다시 죽어도 처음부터 다시 하면 됩니다.
 
@@ -247,7 +247,7 @@ REDO=0/6C91478 CHECKPOINT=0/6C914D0
 
 REDO 위치 `0/6C91478`에 `CHECKPOINT_REDO`가 있고, 완료 기록 `CHECKPOINT_ONLINE`은 `0/6C914D0`에 있습니다. 완료 기록의 설명에 있는 `redo 0/6C91478`이 REDO 위치를 다시 가리킵니다. 둘 사이의 `RUNNING_XACTS`는 체크포인트가 완료 기록 직전에 standby를 위해 남기는 "지금 실행 중인 트랜잭션 목록"입니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7239), [9편](/posts/postgresql/09-streaming-replication/)).
 
-이번에는 다른 세션이 없어 레코드가 셋뿐이지만, 바쁜 서버라면 체크포인트가 페이지를 쓰는 동안 생긴 모든 변경 레코드가 REDO와 완료 기록 사이에 들어갑니다. 완료 기록에는 `xid 0:756`(다음에 줄 xid), `oid 24576`(다음에 줄 OID) 같은 값도 담겨 있어서, 복구를 마친 서버가 번호를 이어서 쓸 수 있습니다.
+이번에는 다른 세션이 없어 레코드가 셋뿐이지만, 바쁜 서버라면 체크포인트가 페이지를 쓰는 동안 생긴 모든 변경 레코드가 REDO와 완료 기록 사이에 들어갑니다. 완료 기록에는 `xid 0:756`(다음에 줄 xid), `oid 24576`(다음에 줄 OID) 같은 값도 담겨 있어서 복구를 마친 서버가 번호를 이어서 쓸 수 있습니다.
 
 ### 실습 4. WAL이 많이 쌓여도 체크포인트가 일어난다
 
@@ -418,11 +418,11 @@ server started
 [exit=0]
 ```
 
-REDO 이후 WAL 453MB를 재생하는 데 0.84초 걸렸습니다. 실습 6(약 65MB, 0.08초)보다 WAL이 약 7배이고 시간은 약 10배입니다. 재생은 startup 프로세스 하나가 순서대로 합니다. 이 실습은 테이블이 작아 페이지가 모두 메모리에 있으므로 빠르지만, 실제 서버에서는 재생할 페이지를 디스크에서 읽어야 하므로 훨씬 오래 걸릴 수 있습니다. 중요한 것은 복구 시간이 REDO 이후 WAL 양에 따라 늘어난다는 점입니다.
+REDO 이후 WAL 453MB를 재생하는 데 0.84초 걸렸습니다. 실습 6(약 65MB, 0.08초)보다 WAL이 약 7배이고 시간은 약 10배입니다. 재생은 startup 프로세스 하나가 순서대로 합니다. 이 실습은 테이블이 작아 페이지가 모두 메모리에 있으므로 빠르지만, 실제 서버에서는 재생할 페이지를 디스크에서 읽어야 하므로 훨씬 오래 걸릴 수 있습니다. 어느 쪽이든 복구 시간은 REDO 이후 WAL 양에 따라 늘어납니다.
 
 ### 실습 8. PITR: 실수로 지운 테이블 되살리기
 
-WAL 보관을 켜고 베이스 백업을 뜬 뒤, 행 하나를 더 넣고 **복원 지점(restore point)**을 만든 다음, 실수로 테이블을 지웠다고 해 봅니다.
+WAL 보관을 켜고 베이스 백업을 뜬 뒤, 행 하나를 더 넣고 **복원 지점**(restore point)을 만든 다음, 실수로 테이블을 지웠다고 해 봅니다.
 
 ```bash
 mkdir -p /home/postgres/archive
@@ -538,7 +538,7 @@ summaries
 
 ### checkpoints are occurring too frequently
 
-실습 4의 이 경고는 `wal` 체크포인트가 `checkpoint_warning`(기본 30초)보다 짧은 간격으로 일어날 때 나옵니다([`checkpointer.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/checkpointer.c#L454-L462)). 대량 적재나 배치 UPDATE 때 자주 보입니다. 체크포인트가 잦으면 체크포인트 직후마다 페이지 이미지가 쏟아지고([7편](/posts/postgresql/07-wal/)), 쓰기를 나눌 시간도 없어 디스크 I/O가 튑니다. 로그의 힌트대로 `max_wal_size`를 늘리는 것이 보통의 해결책입니다. `pg_stat_checkpointer`에서 `num_requested`가 `num_timed`보다 훨씬 많다면 같은 신호입니다.
+실습 4의 이 경고는 `wal` 체크포인트가 `checkpoint_warning`(기본 30초)보다 짧은 간격으로 일어날 때 나옵니다([`checkpointer.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/checkpointer.c#L454-L462)). 대량 적재나 배치 UPDATE 때 자주 보입니다. 체크포인트가 잦으면 체크포인트 직후마다 페이지 이미지가 쏟아지고([7편](/posts/postgresql/07-wal/)), 쓰기를 나눌 시간도 없어 디스크 I/O가 튑니다. 보통은 로그의 힌트대로 `max_wal_size`를 늘려 해결합니다. `pg_stat_checkpointer`에서 `num_requested`가 `num_timed`보다 훨씬 많다면 같은 신호입니다.
 
 ### 체크포인트 동안 쿼리가 느려진다
 
@@ -550,7 +550,7 @@ summaries
 
 ### PITR은 연습해 둬야 한다
 
-PITR에는 베이스 백업과, 그 백업 이후 **끊김 없는** WAL 보관본이 모두 필요합니다. `pg_stat_archiver`의 `failed_count`를 모니터링하고, 복원 절차는 실제로 한 번 해 봐야 합니다. 실습처럼 위험한 작업 전에 `pg_create_restore_point()`로 이름을 붙여 두면 멈출 지점을 찾기 쉽습니다.
+PITR에는 베이스 백업과, 그 백업 이후 **끊김 없는** WAL 보관본이 모두 필요합니다. `pg_stat_archiver`의 `failed_count`를 모니터링하고 복원 절차는 실제로 한 번 해 봐야 합니다. 실습처럼 위험한 작업 전에 `pg_create_restore_point()`로 이름을 붙여 두면 멈출 지점을 찾기 쉽습니다.
 
 ## 정리
 

@@ -13,7 +13,7 @@ description: "LSN, full page writes, WAL 레코드 구조"
 
 지금까지 여러 편에서 WAL이 등장했습니다. dirty 페이지를 내보내기 전에 WAL을 먼저 쓴다([2편](/posts/postgresql/02-memory-architecture/)), 체크섬이 켜져 있으면 hint bit도 WAL을 남긴다([3편](/posts/postgresql/03-storage-layout/)), VACUUM도 WAL을 쓴다([5편](/posts/postgresql/05-vacuum/)). 이번 글에서 WAL을 본격적으로 들여다봅니다.
 
-**WAL(Write-Ahead Log)**은 "데이터 파일을 바꾸기 전에, 무엇을 바꿀지를 먼저 로그에 적는다"는 규칙이자 그 로그입니다. 커밋할 때 데이터 파일은 그대로 두고 WAL만 디스크에 확실히 써 두면, 서버가 갑자기 죽어도 WAL을 다시 재생해서 커밋된 변경을 모두 되살릴 수 있습니다. 데이터 파일은 나중에 여유 있게 쓰면 됩니다.
+**WAL**(Write-Ahead Log)은 "데이터 파일을 바꾸기 전에, 무엇을 바꿀지를 먼저 로그에 적는다"는 규칙이자 그 로그입니다. 커밋할 때 데이터 파일은 그대로 두고 WAL만 디스크에 확실히 써 두면, 서버가 갑자기 죽어도 WAL을 다시 재생해서 커밋된 변경을 모두 되살릴 수 있습니다. 데이터 파일은 나중에 여유 있게 쓰면 됩니다.
 
 이 글에서 답할 질문은 다음과 같습니다.
 
@@ -28,7 +28,7 @@ description: "LSN, full page writes, WAL 레코드 구조"
 
 ### LSN: WAL 안의 위치
 
-WAL은 클러스터가 만들어진(initdb) 이래 끝없이 이어지는 하나의 바이트 흐름으로 볼 수 있습니다. 그 흐름 안의 위치(바이트 오프셋)가 **LSN(Log Sequence Number)**입니다. 64비트 정수이고([`XLogRecPtr`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlogdefs.h#L21)), `0/17E4990`처럼 상위 32비트와 하위 32비트를 16진수로 나눠 씁니다. LSN은 계속 커지기만 하므로, 두 LSN을 빼면 그 사이에 쓴 WAL의 바이트 수가 됩니다.
+WAL은 클러스터가 만들어진(initdb) 이래 끝없이 이어지는 하나의 바이트 흐름으로 볼 수 있습니다. 그 흐름 안의 위치(바이트 오프셋)가 **LSN**(Log Sequence Number)입니다. 64비트 정수이고([`XLogRecPtr`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlogdefs.h#L21)), `0/17E4990`처럼 상위 32비트와 하위 32비트를 16진수로 나눠 씁니다. LSN은 계속 커지기만 하므로, 두 LSN을 빼면 그 사이에 쓴 WAL의 바이트 수가 됩니다.
 
 LSN은 여러 곳에 쓰입니다.
 
@@ -45,7 +45,7 @@ WAL 위치는 세 가지로 나눠 볼 수 있습니다.
 
 ### WAL 파일(세그먼트)
 
-WAL은 `$PGDATA/pg_wal` 아래에 **16MB짜리 파일(세그먼트)**로 나뉘어 저장됩니다. 파일 이름은 24자리 16진수로, 타임라인 ID 8자리, LSN 상위 32비트 8자리, 그리고 그 4GB 구간 안의 세그먼트 순번 8자리(16MB 세그먼트면 `00`~`FF`)입니다([`XLogFileName()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlog_internal.h#L166-L171)). LSN을 보면 몇 번 파일의 몇 번째 바이트인지 바로 계산할 수 있고, `pg_walfile_name()`이 그 계산을 해 줍니다. 타임라인은 복구나 standby 승격 때 WAL의 "갈래"를 나누는 번호입니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)).
+WAL은 `$PGDATA/pg_wal` 아래에 **16MB짜리 파일**(세그먼트)로 나뉘어 저장됩니다. 파일 이름은 24자리 16진수로, 타임라인 ID 8자리, LSN 상위 32비트 8자리, 그리고 그 4GB 구간 안의 세그먼트 순번 8자리(16MB 세그먼트면 `00`~`FF`)입니다([`XLogFileName()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlog_internal.h#L166-L171)). LSN을 보면 몇 번 파일의 몇 번째 바이트인지 바로 계산할 수 있고, `pg_walfile_name()`이 그 계산을 해 줍니다. 타임라인은 복구나 standby 승격 때 WAL의 "갈래"를 나누는 번호입니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)).
 
 다 쓴 세그먼트는 체크포인트 뒤에 필요가 없어지면, 지우는 대신 **앞으로 쓸 번호의 이름으로 바꿔 재활용**합니다(실습 8). 파일을 새로 만드는 비용을 아끼려는 것입니다.
 
@@ -60,13 +60,13 @@ WAL은 `$PGDATA/pg_wal` 아래에 **16MB짜리 파일(세그먼트)**로 나뉘�
 - **이미지 헤더**([`XLogRecordBlockImageHeader`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlogrecord.h#L141-L159)): 페이지 전체 이미지가 붙어 있을 때, 그 길이와 **hole**(페이지 가운데 빈 공간, 즉 `pd_lower`와 `pd_upper` 사이)의 위치.
 - **블록 데이터와 main data**: 실제 변경 내용. "몇 번 line pointer에 이런 튜플을 넣어라" 같은 정보입니다. 블록에 페이지 이미지가 붙으면 이미지가 이미 새 내용을 담고 있으므로 그 블록의 데이터는 보통 생략합니다([`xloginsert.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xloginsert.c#L629-L634)).
 
-어떤 종류의 레코드인지는 **resource manager(rmgr)**로 나뉩니다([`rmgrlist.h`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/rmgrlist.h#L28-L49)). 테이블 변경은 `Heap`, `Heap2`, 인덱스는 `Btree`, 커밋은 `Transaction`, 체크포인트나 페이지 이미지는 `XLOG` 식입니다. 장애 복구 때는 rmgr마다 정해진 재생(redo) 함수가 레코드를 해석해 페이지에 다시 적용합니다.
+어떤 종류의 레코드인지는 **resource manager**(rmgr)로 나뉩니다([`rmgrlist.h`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/rmgrlist.h#L28-L49)). 테이블 변경은 `Heap`, `Heap2`, 인덱스는 `Btree`, 커밋은 `Transaction`, 체크포인트나 페이지 이미지는 `XLOG` 식입니다. 장애 복구 때는 rmgr마다 정해진 재생(redo) 함수가 레코드를 해석해 페이지에 다시 적용합니다.
 
 ### full page write: 페이지 전체를 남기는 이유
 
 디스크는 8kB 페이지를 한 번에 쓰지 못할 수 있습니다. 운영체제와 디스크의 쓰기 단위(보통 4kB나 512바이트)가 더 작기 때문입니다. 페이지를 쓰는 도중 전원이 나가면 **앞 절반은 새 내용, 뒤 절반은 옛 내용**인 깨진 페이지(torn page)가 남을 수 있습니다. 이 페이지에 "3번 line pointer에 튜플 추가" 같은 작은 WAL 레코드를 적용해 봐야 페이지 자체가 망가져 있으니 소용이 없습니다.
 
-그래서 PostgreSQL은 **체크포인트 뒤에 어떤 페이지를 처음 고칠 때, 그 페이지 전체를 WAL에 함께 남깁니다.** 이것이 **full page write(FPW)**, 또는 **full page image(FPI)**입니다. 복구할 때는 이 이미지로 페이지를 통째로 되살린 뒤, 그 뒤의 레코드를 차례로 적용합니다. 판단 기준은 간단합니다. 페이지의 LSN이 마지막 체크포인트의 REDO 위치보다 작거나 같으면, 즉 체크포인트 뒤로 한 번도 안 바뀌었으면 이미지를 붙입니다([`xloginsert.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xloginsert.c#L620)).
+그래서 PostgreSQL은 **체크포인트 뒤에 어떤 페이지를 처음 고칠 때, 그 페이지 전체를 WAL에 함께 남깁니다.** 이것이 **full page write(FPW)**, 또는 **full page image**(FPI)입니다. 복구할 때는 이 이미지로 페이지를 통째로 되살린 뒤, 그 뒤의 레코드를 차례로 적용합니다. 판단 기준은 간단합니다. 페이지의 LSN이 마지막 체크포인트의 REDO 위치보다 작거나 같으면, 즉 체크포인트 뒤로 한 번도 안 바뀌었으면 이미지를 붙입니다([`xloginsert.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xloginsert.c#L620)).
 
 - 이미지를 남길 때 가운데 빈 공간(hole)은 빼고 저장해서 크기를 줄입니다.
 - `wal_compression`을 켜면 이미지를 압축합니다(pglz, 그리고 빌드 옵션에 따라 lz4, zstd).
@@ -81,7 +81,7 @@ WAL은 `$PGDATA/pg_wal` 아래에 **16MB짜리 파일(세그먼트)**로 나뉘�
 3. COMMIT하면 커밋 레코드를 넣고, [`XLogFlush()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L2777)로 그 위치까지 WAL을 디스크에 쓰고 fsync합니다([`RecordTransactionCommit()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xact.c#L1498-L1502)). 이게 끝나야 클라이언트에 "커밋 완료"를 돌려줍니다. 데이터 페이지는 아직 메모리에만 있습니다.
 4. 나중에 checkpointer나 bgwriter가 dirty 페이지를 쓸 때, 그 페이지 LSN까지 WAL이 디스크에 있는지 확인하고(없으면 먼저 flush) 씁니다([2편](/posts/postgresql/02-memory-architecture/)).
 
-`synchronous_commit = off`로 두면 3단계의 `XLogFlush()`를 아예 건너뛰고 바로 "커밋 완료"를 돌려줍니다. WAL을 쓰고 fsync하는 일은 walwriter가 곧 합니다. (동기 복제를 쓰면 커밋은 standby의 응답도 기다리는데, 이것은 [9편](/posts/postgresql/09-streaming-replication/)에서 다룹니다.) 문서에 따르면 위험 구간은 최대 `wal_writer_delay`(기본 200ms)의 세 배입니다([Asynchronous Commit](https://www.postgresql.org/docs/18/wal-async-commit.html)). 빠르지만, 그 짧은 사이에 서버가 죽으면 **이미 커밋 완료를 받은 트랜잭션이 사라질 수 있습니다.** 데이터가 깨지지는 않고, 마지막 몇 개의 커밋만 없던 일이 됩니다.
+`synchronous_commit = off`로 두면 3단계의 `XLogFlush()`를 아예 건너뛰고 바로 "커밋 완료"를 돌려줍니다. WAL을 쓰고 fsync하는 일은 walwriter가 곧 합니다. (동기 복제를 쓰면 커밋은 standby의 응답도 기다리는데, 이것은 [9편](/posts/postgresql/09-streaming-replication/)에서 다룹니다.) 문서에 따르면 위험 구간은 최대 `wal_writer_delay`(기본 200ms)의 세 배입니다([Asynchronous Commit](https://www.postgresql.org/docs/18/wal-async-commit.html)). 빠르지만 그 짧은 사이에 서버가 죽으면 **이미 커밋 완료를 받은 트랜잭션이 사라질 수 있습니다.** 데이터가 깨지지는 않고, 마지막 몇 개의 커밋만 없던 일이 됩니다.
 
 ## 직접 확인해 보기
 
@@ -203,7 +203,7 @@ INSERT 0 1
 같은 INSERT인데 첫 번째는 **8968바이트**, 두 번째는 **176바이트**입니다.
 
 - 첫 번째 INSERT는 실습 환경을 만들 때 한 `CHECKPOINT` 뒤로 이 테이블 페이지와 인덱스 페이지를 처음 고친 것이라, 두 레코드 모두 페이지 이미지를 달고 있습니다(`fpi` 3368, 5420). 레코드 세 개는 힙에 튜플 넣기(`Heap INSERT`), 인덱스에 항목 넣기(`Btree INSERT_LEAF`), 커밋(`Transaction COMMIT`)입니다.
-- 두 번째 INSERT는 같은 페이지를 다시 고친 것이라 이미지가 없고, 레코드 크기가 69, 64, 34바이트뿐입니다.
+- 두 번째 INSERT는 같은 페이지를 다시 고친 것이라 이미지가 없고 레코드 크기가 69, 64, 34바이트뿐입니다.
 - 레코드 길이를 더한 값(3422 + 5473 + 34)보다 LSN 차이(8968)가 조금 큰 것은, 레코드가 8바이트 단위로 정렬되고 WAL 페이지(8kB)마다 페이지 헤더가 끼기 때문입니다.
 
 같은 레코드를 `pg_waldump`로 보면 이렇습니다.
@@ -224,7 +224,7 @@ rmgr: Transaction len (rec/tot):     34/    34, tx:        757, lsn: 0/017EE930,
 [exit=0]
 ```
 
-각 줄은 레코드 하나입니다. `len (rec/tot)`은 레코드 길이, `tx`는 xid, `lsn`은 위치, `prev`는 바로 앞 레코드의 위치이고, `blkref #0: rel 1663/5/16391 blk 5`는 테이블스페이스 1663, DB 5, 파일 16391의 5번 블록을 건드렸다는 뜻입니다. `prev`를 따라가면 레코드가 한 줄로 이어져 있음을 알 수 있습니다.
+각 줄은 레코드 하나입니다. `len (rec/tot)`은 레코드 길이, `tx`는 xid, `lsn`은 위치, `prev`는 바로 앞 레코드의 위치이고, `blkref #0: rel 1663/5/16391 blk 5`는 테이블스페이스 1663, DB 5, 파일 16391의 5번 블록을 건드렸다는 뜻입니다. `prev`를 따라가면 레코드가 한 줄로 이어집니다.
 
 ### 실습 3. full page write: 체크포인트 뒤 첫 수정
 
@@ -276,7 +276,7 @@ UPDATE 1
 
 이 UPDATE는 blk 0에 자리가 없어 새 버전을 blk 5에 넣었고, 그래서 HOT가 아닌 일반 UPDATE가 되어 인덱스 항목도 새로 만들었습니다([5편](/posts/postgresql/05-vacuum/)). 행 하나를 바꿨는데 WAL은 약 19kB가 생겼습니다.
 
-반면 **두 번째 UPDATE**는 페이지 정리(`PRUNE_ON_ACCESS`) 56바이트와 `HOT_UPDATE` 71바이트뿐입니다. 첫 UPDATE가 커밋되어 `id = 1`의 옛 버전은 누구에게도 보이지 않게 되었고, 이번에 blk 0을 읽으면서 그 옛 버전을 치웠습니다. 그렇게 생긴 자리에 새 버전이 들어가 같은 페이지 안의 HOT 업데이트가 되었고, 그래서 인덱스는 건드리지 않았습니다. blk 0은 체크포인트 뒤에 이미 한 번 이미지를 남긴 페이지라 이번에는 이미지도 필요 없습니다.
+반면 **두 번째 UPDATE**는 페이지 정리(`PRUNE_ON_ACCESS`) 56바이트와 `HOT_UPDATE` 71바이트뿐입니다. 첫 UPDATE가 커밋되어 `id = 1`의 옛 버전은 누구에게도 보이지 않게 되었고, 이번에 blk 0을 읽으면서 그 옛 버전을 치웠습니다. 그렇게 생긴 자리에 새 버전이 들어가 같은 페이지 안의 HOT 업데이트가 되었으므로 인덱스는 건드리지 않았습니다. blk 0은 체크포인트 뒤에 이미 한 번 이미지를 남긴 페이지라 이번에는 이미지도 필요 없습니다.
 
 ### 실습 4. full_page_writes와 wal_compression이 WAL 양에 주는 영향
 
@@ -543,13 +543,13 @@ ls $PGDATA/pg_wal | grep -v -e archive_status -e summaries | tr '\n' ' '; echo
 
 ### WAL 디렉터리가 가득 차면 서버가 멈춘다
 
-WAL을 쓸 자리가 없으면 PostgreSQL은 PANIC으로 멈춥니다. 보통은 체크포인트가 오래된 세그먼트를 재활용하므로 `max_wal_size`(soft limit) 이하로 유지되지만, **아카이빙이 실패하거나(`archive_command`), replication slot이 오래된 WAL을 붙잡거나([9편](/posts/postgresql/09-streaming-replication/)), `wal_keep_size`가 크면** 지울 수 없는 WAL이 계속 쌓입니다. 커밋된 트랜잭션을 잃지는 않지만, 공간을 비울 때까지 서버를 다시 켤 수 없습니다([Continuous Archiving](https://www.postgresql.org/docs/18/continuous-archiving.html#BACKUP-ARCHIVING-WAL)). `pg_wal` 디렉터리의 크기와 `pg_stat_archiver`의 `failed_count`를 모니터링해야 합니다.
+WAL을 쓸 자리가 없으면 PostgreSQL은 PANIC으로 멈춥니다. 보통은 체크포인트가 오래된 세그먼트를 재활용하므로 `max_wal_size`(soft limit) 이하로 유지되지만, **아카이빙이 실패하거나(`archive_command`), replication slot이 오래된 WAL을 붙잡거나([9편](/posts/postgresql/09-streaming-replication/)), `wal_keep_size`가 크면** 지울 수 없는 WAL이 계속 쌓입니다. 커밋된 트랜잭션을 잃지는 않지만 공간을 비울 때까지 서버를 다시 켤 수 없습니다([Continuous Archiving](https://www.postgresql.org/docs/18/continuous-archiving.html#BACKUP-ARCHIVING-WAL)). `pg_wal` 디렉터리의 크기와 `pg_stat_archiver`의 `failed_count`를 모니터링해야 합니다.
 
 ## 정리
 
 - **WAL**은 데이터 파일보다 먼저 쓰는 변경 기록이고, **LSN**은 그 안의 위치입니다. WAL은 16MB 세그먼트 파일로 나뉘고, 파일 이름은 타임라인과 세그먼트 번호입니다.
 - WAL 레코드는 **고정 헤더 → 블록 헤더들 → 블록 데이터 → main data** 구조이고, resource manager별로 종류가 나뉩니다.
-- 체크포인트 뒤 페이지를 처음 고칠 때는 torn page에 대비해 **페이지 전체 이미지(FPW)**를 함께 남기고, 이것이 WAL의 대부분을 차지할 수 있습니다. 체크섬이 켜져 있으면 hint bit 변경도 이미지를 남깁니다.
+- 체크포인트 뒤 페이지를 처음 고칠 때는 torn page에 대비해 **페이지 전체 이미지**(FPW)를 함께 남기고, 이것이 WAL의 대부분을 차지할 수 있습니다. 체크섬이 켜져 있으면 hint bit 변경도 이미지를 남깁니다.
 - 커밋은 커밋 레코드까지 WAL이 **디스크에 flush될 때까지** 기다립니다. `synchronous_commit = off`는 이 대기를 없애는 대신 마지막 커밋 몇 건을 잃을 수 있습니다.
 - 다 쓴 세그먼트는 지우지 않고 이름을 바꿔 재활용합니다.
 

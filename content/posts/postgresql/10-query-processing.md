@@ -13,7 +13,7 @@ description: "파서, 분석기, 리라이터, 플래너, 실행기와 통계 �
 
 지금까지는 데이터가 **어떻게 저장되고 지켜지는지**를 봤습니다. 마지막 편에서는 반대 방향, 사용자가 보낸 SQL 한 줄이 **어떻게 결과가 되는지**를 봅니다.
 
-SQL은 "무엇을 원하는지"만 말하고 "어떻게 가져올지"는 말하지 않습니다. `WHERE amount < 30`을 만족하는 행을 찾으려면 테이블을 처음부터 끝까지 읽을 수도 있고, 인덱스를 쓸 수도 있습니다. 어느 쪽이 빠른지는 데이터에 따라 다르고, 그것을 정하는 것이 **플래너**입니다. 플래너가 판단 근거로 쓰는 것이 **통계 정보**이고, 통계가 틀리면 계획도 틀립니다. 운영 중 "어제까지 빠르던 쿼리가 갑자기 느려졌다"의 상당수가 여기서 나옵니다.
+SQL은 "무엇을 원하는지"만 말하고 "어떻게 가져올지"는 말하지 않습니다. `WHERE amount < 30`을 만족하는 행을 찾으려면 테이블을 처음부터 끝까지 읽을 수도 있고, 인덱스를 쓸 수도 있습니다. 어느 쪽이 빠른지는 데이터에 따라 다르고, 이를 정하는 것이 **플래너**입니다. 플래너가 판단 근거로 쓰는 것이 **통계 정보**이고, 통계가 틀리면 계획도 틀립니다. 운영 중 "어제까지 빠르던 쿼리가 갑자기 느려졌다"의 상당수가 여기서 나옵니다.
 
 이 글에서 답할 질문은 다음과 같습니다.
 
@@ -34,7 +34,7 @@ SQL은 "무엇을 원하는지"만 말하고 "어떻게 가져올지"는 말하�
 
 1. **파서(parser)**: 문자열을 문법 규칙([`gram.y`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/parser/gram.y))에 맞춰 **파스 트리**로 바꿉니다([`raw_parser()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/parser/parser.c#L42), [`postgres.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L1065)의 `pg_parse_query()`를 거쳐 불립니다). 이 단계는 문법만 보고 카탈로그는 보지 않습니다. `orders`라는 테이블이 정말 있는지는 아직 모릅니다.
 2. **분석기(analyzer)**: 시스템 카탈로그를 보며 이름을 실제 객체로 바꿉니다. `orders`가 어떤 OID의 테이블인지, `amount`가 몇 번째 컬럼이고 타입이 무엇인지, `<`가 어떤 연산자 함수인지 정해서 **Query 트리**를 만듭니다([`transformStmt()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/parser/analyze.c#L312)). 없는 테이블이나 컬럼은 여기서 오류가 납니다(실습 2).
-3. **리라이터(rewriter)**: 규칙(rule)을 적용합니다. 가장 흔한 것은 **뷰**입니다. 뷰는 "이 이름을 이 SELECT로 바꿔라"는 규칙으로 저장되어 있어, 리라이터가 뷰 이름을 그 정의(SELECT)의 서브쿼리로 바꿉니다([`QueryRewrite()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/rewrite/rewriteHandler.c#L4635), [`ApplyRetrieveRule()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/rewrite/rewriteHandler.c#L1746)). 플래너는 이 서브쿼리를 바깥 쿼리로 끌어올려(pull-up) 합치므로, 결국 뷰가 아니라 원래 테이블을 보고 계획을 세웁니다(실습 4). 2번과 3번은 [`pg_analyze_and_rewrite_fixedparams()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L1190)에서 함께 불립니다.
+3. **리라이터(rewriter)**: 규칙(rule)을 적용합니다. 가장 흔한 것은 **뷰**입니다. 뷰는 "이 이름을 이 SELECT로 바꿔라"라는 규칙으로 저장되어 있어, 리라이터가 뷰 이름을 그 정의(SELECT)의 서브쿼리로 바꿉니다([`QueryRewrite()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/rewrite/rewriteHandler.c#L4635), [`ApplyRetrieveRule()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/rewrite/rewriteHandler.c#L1746)). 플래너는 이 서브쿼리를 바깥 쿼리로 끌어올려(pull-up) 합치므로, 결국 뷰가 아니라 원래 테이블을 보고 계획을 세웁니다(실습 4). 2번과 3번은 [`pg_analyze_and_rewrite_fixedparams()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L1190)에서 함께 불립니다.
 4. **플래너(planner)**: Query 트리를 실행할 수 있는 여러 방법(**경로, path**)을 만들고, 통계로 비용을 추정해 가장 싼 것을 **계획 트리**로 만듭니다([`planner()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/optimizer/plan/planner.c#L310), [`create_plan()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/optimizer/plan/createplan.c#L337)). `EXPLAIN`이 보여 주는 것이 이 계획 트리입니다.
 5. **실행기(executor)**: 계획 트리를 실행합니다([`standard_ExecutorRun()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/executor/execMain.c#L307)). 맨 위 노드에게 "행 하나 줘"라고 요청하면, 그 노드가 자기 아래 노드에게 다시 요청하는 식으로 행이 한 개씩 위로 올라옵니다([`ExecProcNode()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/executor/executor.h#L310)). 위에서 더 필요 없다고 하면 아래 노드도 거기서 멈춥니다(실습 10). 다만 정렬(Sort), 해시(Hash), 해시 집계(HashAggregate) 노드는 첫 행을 내기 전에 아래 입력을 모두 읽어야 하고, Bitmap Index Scan은 행 대신 비트맵을 통째로 넘깁니다. `EXPLAIN`의 비용 앞쪽 숫자(startup cost)가 이렇게 첫 행을 내기까지의 비용입니다.
 
@@ -51,7 +51,7 @@ SQL은 "무엇을 원하는지"만 말하고 "어떻게 가져올지"는 말하�
 | Bitmap Scan | 인덱스로 해당 페이지 목록(비트맵)을 먼저 만들고, 페이지 순서대로 읽음 | 그 중간, 또는 여러 인덱스를 AND/OR로 합칠 때(실습 4) |
 | Index Only Scan | 인덱스만 읽고 테이블은 건너뜀(visibility map이 all-visible인 페이지, [5편](/posts/postgresql/05-vacuum/)) | 필요한 컬럼이 모두 인덱스에 있을 때 |
 
-플래너는 경로마다 **비용(cost)**을 계산합니다. 비용의 단위는 "페이지 하나를 순차로 읽는 비용 = 1"(`seq_page_cost`)이고, 나머지는 그에 대한 상대값입니다.
+플래너는 경로마다 **비용**(cost)을 계산합니다. 비용의 단위는 "페이지 하나를 순차로 읽는 비용 = 1"(`seq_page_cost`)이고, 나머지는 이를 기준으로 한 상대값입니다.
 
 | 설정 | 기본값 | 뜻 |
 |---|---|---|
@@ -79,7 +79,7 @@ Hash Join과 Merge Join은 등호(`=`) 조인에서만 쓸 수 있고, `a.x < b.
 - **테이블 통계** (`pg_class`): 페이지 수 `relpages`, 행 수 `reltuples`. 계획할 때는 지금 실제 페이지 수를 보고, `reltuples / relpages`(페이지당 행 밀도)에 그 페이지 수를 곱해 행 수를 추정합니다([`tableam.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/table/tableam.c#L711-L747)).
 - **컬럼 통계** (`pg_statistic`, 읽기 쉬운 뷰는 `pg_stats`): 컬럼마다 NULL 비율(`null_frac`), 서로 다른 값의 수(`n_distinct`), **가장 흔한 값과 그 비율(MCV, `most_common_vals`, `most_common_freqs`)**, 나머지 값의 분포를 같은 개수씩 나눈 **히스토그램(`histogram_bounds`)**, 물리적 순서와 값 순서의 상관관계(`correlation`)가 들어 있습니다.
 
-`WHERE status = 'shipped'`처럼 같다 조건이면 MCV에서 그 값의 비율을 찾고([`var_eq_const()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/adt/selfuncs.c#L303)), `WHERE amount < 30`처럼 범위 조건이면 히스토그램의 몇 번째 구간까지인지로 비율을 구합니다([`ineq_histogram_selectivity()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/adt/selfuncs.c#L1050)). 이 비율이 **선택도(selectivity)**이고, 행 수 추정은 `선택도 × 행 수`입니다. 조건이 여러 개면 기본적으로 **서로 독립이라고 가정하고 곱합니다**([`clauselist_selectivity()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/optimizer/path/clausesel.c#L100)). 이 가정이 틀리는 경우를 위해 **확장 통계**(`CREATE STATISTICS`)가 있습니다(실습 12).
+`WHERE status = 'shipped'`처럼 같다 조건이면 MCV에서 그 값의 비율을 찾고([`var_eq_const()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/adt/selfuncs.c#L303)), `WHERE amount < 30`처럼 범위 조건이면 히스토그램의 몇 번째 구간까지인지로 비율을 구합니다([`ineq_histogram_selectivity()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/adt/selfuncs.c#L1050)). 이 비율이 **선택도**(selectivity)이고, 행 수 추정은 `선택도 × 행 수`입니다. 조건이 여러 개면 기본적으로 **서로 독립이라고 가정하고 곱합니다**([`clauselist_selectivity()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/optimizer/path/clausesel.c#L100)). 이 가정이 틀리는 경우를 위해 **확장 통계**(`CREATE STATISTICS`)가 있습니다(실습 12).
 
 통계는 `ANALYZE`가 만듭니다. 테이블 전체가 아니라 **표본**을 읽습니다. 표본 크기는 `300 × default_statistics_target`(기본 100), 즉 30000행입니다([`analyze.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/analyze.c#L1940)). autovacuum이 변경량에 따라 자동으로 `ANALYZE`를 돌리지만([5편](/posts/postgresql/05-vacuum/)), 그 사이에 데이터 분포가 크게 바뀌면 통계는 옛 모습 그대로입니다(실습 11).
 
@@ -195,7 +195,7 @@ LINE 1: SELECT nosuchcol FROM orders
 
 ### 실습 3. 내부 트리: Query와 PlannedStmt
 
-`debug_print_rewritten`, `debug_print_plan`을 켜면 리라이터를 거친 Query 트리와 계획 트리 전체가 출력됩니다. 매우 길어서, 트리에 나오는 노드 이름만 처음 나온 순서대로 뽑았습니다.
+`debug_print_rewritten`, `debug_print_plan`을 켜면 리라이터를 거친 Query 트리와 계획 트리 전체가 출력됩니다. 매우 길어서 트리에 나오는 노드 이름만 처음 나온 순서대로 뽑았습니다.
 
 ```bash
 psql -X -c "SET client_min_messages = log" -c "SET debug_print_rewritten = on" -c "SELECT status, count(*) FROM orders WHERE amount < 100 GROUP BY status" 2>&1 | grep -oE "\{[A-Z_]+" | awk '!seen[$0]++' | tr '\n' ' '; echo
@@ -208,8 +208,8 @@ psql -X -c "SET client_min_messages = log" -c "SET debug_print_plan = on" -c "SE
 [exit=0]
 ```
 
-- **Query 트리**(첫 줄)에는 SQL의 구성 요소가 그대로 들어 있습니다. `RANGETBLENTRY`는 FROM의 `orders`(그리고 PG18부터 생긴 GROUP BY용 항목), `VAR`는 컬럼 참조, `OPEXPR`과 `CONST`는 `amount < 100`, `TARGETENTRY`와 `AGGREF`는 SELECT 목록의 `count(*)`, `SORTGROUPCLAUSE`는 GROUP BY입니다. "어떻게"에 대한 정보는 아직 없습니다.
-- **계획 트리**(둘째 줄)는 `PLANNEDSTMT` 아래에 `AGG`(집계), `BITMAPHEAPSCAN`, `BITMAPINDEXSCAN`(읽는 방법)이 있습니다. 플래너가 "`amount` 인덱스로 비트맵을 만들어 읽고 집계한다"는 방법을 정한 것입니다. `EXPLAIN`은 이 트리를 사람이 읽기 좋게 보여 주는 명령입니다.
+- **Query 트리**(첫 줄)에는 SQL의 구성 요소가 그대로 들어 있습니다. `RANGETBLENTRY`는 FROM의 `orders`(그리고 PG18부터 생긴 GROUP BY용 항목), `VAR`는 컬럼 참조, `OPEXPR`과 `CONST`는 `amount < 100`, `TARGETENTRY`와 `AGGREF`는 SELECT 목록의 `count(*)`, `SORTGROUPCLAUSE`는 GROUP BY입니다. "어떻게" 읽을지는 아직 들어 있지 않습니다.
+- **계획 트리**(둘째 줄)에는 `PLANNEDSTMT` 아래에 `AGG`(집계), `BITMAPHEAPSCAN`, `BITMAPINDEXSCAN`(읽는 방법)이 있습니다. 플래너가 "`amount` 인덱스로 비트맵을 만들어 읽고 집계한다"는 방법을 정한 것입니다. `EXPLAIN`은 이 트리를 사람이 읽기 좋게 보여 주는 명령입니다.
 
 ### 실습 4. 리라이터: 뷰는 원래 테이블로 풀린다
 
@@ -233,7 +233,7 @@ psql -X -c "EXPLAIN (COSTS OFF) SELECT * FROM big_orders WHERE customer_id = 7"
 [exit=0]
 ```
 
-뷰 `big_orders`를 조회했는데 계획에는 뷰가 없고 `orders`만 나옵니다. 리라이터가 뷰를 그 정의의 서브쿼리로 바꾸고, 플래너가 그 서브쿼리를 바깥 쿼리로 끌어올려, 뷰 안의 조건(`amount >= 990`)과 바깥 조건(`customer_id = 7`)이 한 쿼리가 되었습니다. 플래너는 두 조건을 합쳐, 두 인덱스의 비트맵을 AND(`BitmapAnd`)해서 읽는 계획을 세웠습니다.
+뷰 `big_orders`를 조회했는데 계획에는 뷰가 없고 `orders`만 나옵니다. 리라이터가 뷰를 그 정의의 서브쿼리로 바꾸고, 플래너가 그 서브쿼리를 바깥 쿼리로 끌어올려, 뷰 안의 조건(`amount >= 990`)과 바깥 조건(`customer_id = 7`)이 한 쿼리가 되었습니다. 플래너는 두 조건을 합쳐 두 인덱스의 비트맵을 AND(`BitmapAnd`)해서 읽는 계획을 세웠습니다.
 
 ### 실습 5. 통계 정보: pg_stats
 
@@ -332,7 +332,7 @@ psql -X -c "SELECT relpages * 1.0 + reltuples * 0.01 AS seqscan_cost, relpages *
 
 ### 실습 7. 추정과 실제: MCV와 히스토그램
 
-`EXPLAIN (ANALYZE)`는 실제로 실행해서 `rows=`(추정) 옆에 `actual rows=`(실제)를 보여 줍니다. PG18은 `EXPLAIN ANALYZE`에 `BUFFERS`가 기본으로 붙는데([2편](/posts/postgresql/02-memory-architecture/)), 여기서는 출력을 짧게 하려고 `BUFFERS OFF`, `TIMING OFF`를 붙였습니다.
+`EXPLAIN (ANALYZE)`는 실제로 실행해서 `rows=`(추정) 옆에 `actual rows=`(실제)를 보여 줍니다. PG18에서는 `EXPLAIN ANALYZE`에 `BUFFERS`가 기본으로 붙는데([2편](/posts/postgresql/02-memory-architecture/)), 여기서는 출력을 짧게 하려고 `BUFFERS OFF`, `TIMING OFF`를 붙였습니다.
 
 ```bash
 psql -X -c "EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE status = 'shipped'"
@@ -594,7 +594,7 @@ psql -X -c "EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHER
 
 ### 인덱스가 있는데 사용되지 않는다
 
-실습 8처럼 조건이 테이블의 상당 부분을 가져오면 Seq Scan이 실제로 더 빠르고, 플래너는 그것을 고릅니다. 인덱스를 쓰지 않는 것이 이상하다면, 먼저 추정 행 수가 맞는지 봅니다. 추정이 맞는데도 Seq Scan이라면 대부분 올바른 선택입니다. SSD처럼 임의 읽기가 빠른 저장 장치에서는 `random_page_cost`를 기본값 4보다 낮추는(예: 1.1) 경우가 많습니다. 이 밖에 컬럼에 함수를 씌우거나(`WHERE lower(email) = ...`) 타입이 맞지 않으면 인덱스를 쓸 수 없는데, 이때는 표현식 인덱스를 만들거나 타입을 맞춥니다.
+실습 8처럼 조건이 테이블의 상당 부분을 가져오면 Seq Scan이 실제로 더 빠르고, 플래너도 그쪽을 고릅니다. 인덱스를 쓰지 않는 것이 이상하다면, 먼저 추정 행 수가 맞는지 봅니다. 추정이 맞는데도 Seq Scan이라면 대부분 올바른 선택입니다. SSD처럼 임의 읽기가 빠른 저장 장치에서는 `random_page_cost`를 기본값 4보다 낮추는(예: 1.1) 경우가 많습니다. 이 밖에 컬럼에 함수를 씌우거나(`WHERE lower(email) = ...`) 타입이 맞지 않으면 인덱스를 쓸 수 없는데, 이때는 표현식 인덱스를 만들거나 타입을 맞춥니다.
 
 ### enable_* 설정은 진단용이다
 

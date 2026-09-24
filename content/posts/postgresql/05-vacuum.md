@@ -27,9 +27,9 @@ description: "dead tuple, FSM, Visibility Map"
 
 ### VACUUM이 하는 일
 
-VACUUM(정확히는 `VACUUM FULL`이 아닌 일반 VACUUM)은 읽기와 쓰기를 막지 않고, 다른 쿼리와 동시에 돌면서 다음 일을 합니다. 다만 `SHARE UPDATE EXCLUSIVE` 락을 잡으므로, 같은 테이블의 DDL이나 다른 VACUUM과는 동시에 돌지 않습니다.
+VACUUM(정확히는 `VACUUM FULL`이 아닌 일반 VACUUM)은 읽기와 쓰기를 막지 않고 다른 쿼리와 동시에 돌면서 다음 일을 합니다. 다만 `SHARE UPDATE EXCLUSIVE` 락을 잡으므로, 같은 테이블의 DDL이나 다른 VACUUM과는 동시에 돌지 않습니다.
 
-1. **dead tuple 공간 회수**: 아무도 볼 수 없게 된 옛 버전을 지우고, 그 자리를 새 행이 쓸 수 있게 합니다.
+1. **dead tuple 공간 회수**: 아무도 볼 수 없게 된 옛 버전을 지우고 그 자리를 새 행이 쓸 수 있게 합니다.
 2. **Visibility Map 갱신**: "이 페이지의 모든 행은 모두에게 보인다"를 표시합니다.
 3. **Free Space Map 갱신**: 페이지마다 빈 공간이 얼마나 있는지 기록합니다.
 4. **freeze**: 오래된 트랜잭션 ID를 "얼려서" 번호가 한 바퀴 돌아도 문제가 없게 합니다([6편](/posts/postgresql/06-xid-wraparound/)).
@@ -39,7 +39,7 @@ VACUUM(정확히는 `VACUUM FULL`이 아닌 일반 VACUUM)은 읽기와 쓰기�
 
 {{< diagram src="/diagrams/pg-vacuum-phases.html" title="VACUUM 한 번이 하는 일" height="560" caption="1단계에서 힙을 훑으며 지울 주소를 모으고, 2단계에서 인덱스를 먼저 정리한 뒤, 3단계에서 힙의 자리를 비웁니다." >}}
 
-- **1단계, 힙 스캔**([`lazy_scan_heap()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/vacuumlazy.c#L1200)): 테이블을 앞에서부터 읽습니다. Visibility Map에서 "모두 보임"으로 표시된 페이지는 대체로 건너뜁니다(aggressive VACUUM, 아래의 eager scanning, 짧은 구간은 읽는 예외가 있습니다). 읽은 페이지마다 dead tuple을 지우고(pruning), 그 line pointer를 `LP_DEAD`로 바꾼 뒤 주소(TID)를 메모리에 모읍니다. 모을 수 있는 양은 `maintenance_work_mem`까지이고, autovacuum은 `autovacuum_work_mem`(기본값 -1이면 `maintenance_work_mem`)까지입니다. PG17부터는 이 TID를 radix tree 기반의 TidStore에 담아, 예전보다 훨씬 적은 메모리로 많은 TID를 모읍니다.
+- **1단계, 힙 스캔**([`lazy_scan_heap()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/vacuumlazy.c#L1200)): 테이블을 앞에서부터 읽습니다. Visibility Map에서 "모두 보임"으로 표시된 페이지는 대체로 건너뜁니다(aggressive VACUUM, 아래의 eager scanning, 짧은 구간은 읽는 예외가 있습니다). 읽은 페이지마다 dead tuple을 지우고(pruning), 그 line pointer를 `LP_DEAD`로 바꾼 뒤 주소(TID)를 메모리에 모읍니다. 모을 수 있는 양은 `maintenance_work_mem`까지이고, autovacuum은 `autovacuum_work_mem`(기본값 -1이면 `maintenance_work_mem`)까지입니다. PG17부터는 이 TID를 radix tree 기반의 TidStore에 담아 예전보다 훨씬 적은 메모리로 많은 TID를 모읍니다.
 - **2단계, 인덱스 정리**: 모은 TID를 가리키는 인덱스 항목을 모든 인덱스에서 지웁니다.
 - **3단계, 힙 정리**([`lazy_vacuum_heap_rel()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/vacuumlazy.c#L2734)): 힙 페이지를 다시 방문해 `LP_DEAD`를 `LP_UNUSED`로 바꿉니다. 이제 그 line pointer를 새 행이 쓸 수 있습니다.
 
@@ -53,13 +53,13 @@ VACUUM(정확히는 `VACUUM FULL`이 아닌 일반 VACUUM)은 읽기와 쓰기�
 
 {{< diagram src="/diagrams/pg-line-pointer.html" title="line pointer 하나의 일생" height="560" caption="살아 있던 튜플은 dead tuple이 되고, pruning이 LP_DEAD로, VACUUM이 LP_UNUSED로 바꾼 뒤 다시 쓰입니다." >}}
 
-"지워졌지만 옛 스냅샷엔 보임" 단계가 중요합니다. DELETE나 UPDATE가 커밋되어도, 그보다 먼저 시작한 스냅샷은 여전히 옛 버전을 볼 수 있습니다([4편](/posts/postgresql/04-mvcc/)). VACUUM은 **지금 살아 있는 모든 스냅샷 가운데 가장 오래된 것**보다 먼저 지워진 튜플만 지울 수 있습니다. 이 경계를 VACUUM 출력에서는 `removable cutoff`라고 부르고, 소스에서는 [`GetOldestNonRemovableTransactionId()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/ipc/procarray.c#L2005)가 계산합니다. 오래 열린 트랜잭션 하나가 테이블 전체의 정리를 막을 수 있는 이유입니다(실습 6).
+"지워졌지만 옛 스냅샷엔 보임" 단계가 중요합니다. DELETE나 UPDATE가 커밋되어도, 그보다 먼저 시작한 스냅샷은 여전히 옛 버전을 볼 수 있습니다([4편](/posts/postgresql/04-mvcc/)). VACUUM은 **지금 살아 있는 모든 스냅샷 가운데 가장 오래된 것**보다 먼저 지워진 튜플만 지울 수 있습니다. 이 경계를 VACUUM 출력에서는 `removable cutoff`라고 부르고 소스에서는 [`GetOldestNonRemovableTransactionId()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/ipc/procarray.c#L2005)가 계산합니다. 오래 열린 트랜잭션 하나가 테이블 전체의 정리를 막을 수 있는 이유입니다(실습 6).
 
 ### pruning과 HOT: VACUUM 없이도 조금씩 치운다
 
-VACUUM만 dead tuple을 지우는 것은 아닙니다. 일반 쿼리가 페이지를 읽다가, 그 페이지에 **지울 수 있는 옛 버전이 있다는 표시**(`pd_prune_xid`)가 있고 **빈 공간이 부족해 보이면**(fillfactor 목표 또는 페이지의 10% 미만) 그 자리에서 페이지 안의 dead tuple을 정리합니다. 이를 **pruning**이라고 합니다([`heap_page_prune_opt()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/pruneheap.c#L193-L260)). pruning은 튜플 공간을 비우고, 인덱스가 가리키는 line pointer는 `LP_DEAD`로 남겨 둡니다. 인덱스는 건드리지 않으므로 line pointer를 완전히 돌려주는 일(`LP_UNUSED`)은 VACUUM이 해야 합니다.
+VACUUM만 dead tuple을 지우는 것은 아닙니다. 일반 쿼리가 페이지를 읽다가, 그 페이지에 지울 수 있는 옛 버전이 있다는 표시(`pd_prune_xid`)가 있고 빈 공간이 부족해 보이면(fillfactor 목표 또는 페이지의 10% 미만) 그 자리에서 페이지 안의 dead tuple을 정리합니다. 이를 **pruning**이라고 합니다([`heap_page_prune_opt()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/pruneheap.c#L193-L260)). pruning은 튜플 공간을 비우고, 인덱스가 가리키는 line pointer는 `LP_DEAD`로 남겨 둡니다. 인덱스는 건드리지 않으므로 line pointer를 완전히 돌려주는 일(`LP_UNUSED`)은 VACUUM이 해야 합니다.
 
-**HOT(Heap-Only Tuple) 업데이트**는 여기서 한 걸음 더 나갑니다. UPDATE가 인덱스 열을 바꾸지 않고 새 버전이 **같은 페이지**에 들어가면, 인덱스에 새 항목을 만들지 않고 옛 버전에서 새 버전으로 체인만 잇습니다. 인덱스는 체인의 첫 줄만 가리킵니다. 나중에 옛 버전들을 정리할 때 첫 줄은 `LP_REDIRECT`로 남아 살아 있는 버전을 가리키고, 중간 버전은 인덱스가 가리키지 않으므로 바로 `LP_UNUSED`가 됩니다(실습 5). 인덱스를 고치지 않으니 UPDATE도, VACUUM도 가벼워집니다. [3편](/posts/postgresql/03-storage-layout/)에서 본 `fillfactor`로 페이지에 여유를 남기는 이유가 HOT이 일어날 자리를 확보하는 것입니다.
+**HOT(Heap-Only Tuple) 업데이트**는 여기서 한 걸음 더 나갑니다. UPDATE가 인덱스 열을 바꾸지 않고 새 버전이 **같은 페이지**에 들어가면, 인덱스에 새 항목을 만들지 않고 옛 버전에서 새 버전으로 체인만 잇습니다. 인덱스는 체인의 첫 줄만 가리킵니다. 나중에 옛 버전들을 정리할 때 첫 줄은 `LP_REDIRECT`로 남아 살아 있는 버전을 가리키고, 중간 버전은 인덱스가 가리키지 않으므로 바로 `LP_UNUSED`가 됩니다(실습 5). 인덱스를 고치지 않으니 UPDATE도, VACUUM도 가벼워집니다. [3편](/posts/postgresql/03-storage-layout/)에서 본 `fillfactor`로 페이지에 여유를 남기는 것도 HOT가 일어날 자리를 확보하기 위해서입니다.
 
 ### Free Space Map과 Visibility Map
 
@@ -89,7 +89,7 @@ INSERT만 있는 테이블도 대상이 됩니다(freeze와 VM 갱신이 필요�
 
 > 마지막 VACUUM 이후 INSERT 수 > `autovacuum_vacuum_insert_threshold`(1000) + `autovacuum_vacuum_insert_scale_factor`(0.2) × 행 수 × **아직 freeze 안 된 페이지 비율**
 
-마지막 항(freeze 안 된 비율)도 **PG18에서 추가되었습니다.** 이 비율을 곱하면 기준값이 **낮아집니다.** 대부분 이미 얼려진 큰 테이블이라면 행 수 전체가 아니라 아직 얼리지 않은 부분만 기준으로 삼으므로, INSERT 기반 VACUUM이 예전보다 **자주, 제때** 돌게 됩니다. 이미 얼려진 페이지는 VM 덕분에 어차피 건너뜁니다.
+마지막 항(freeze 안 된 비율)도 **PG18에서 추가되었습니다.** 이 비율을 곱하면 기준값이 **낮아집니다.** 대부분 이미 얼려진 큰 테이블이라면 행 수 전체가 아니라 아직 얼리지 않은 부분만 기준으로 삼으므로, INSERT 기반 VACUUM이 예전보다 자주, 제때 돌게 됩니다. 이미 얼려진 페이지는 VM 덕분에 어차피 건너뜁니다.
 
 그 밖에 PG18의 VACUUM 관련 변화는 다음과 같습니다.
 
@@ -630,7 +630,7 @@ UPDATE가 많은 테이블이라면 HOT 비율(`n_tup_hot_upd / n_tup_upd`)을 �
 - FSM은 빈 공간을, VM은 all-visible, all-frozen을 페이지마다 기록합니다. VM 덕분에 VACUUM은 페이지를 건너뛰고, index-only scan은 힙을 읽지 않습니다.
 - autovacuum은 `50 + 0.2 × 행 수`를 넘는 dead tuple, 또는 INSERT 기준을 넘으면 돕니다. PG18에서 상한(`autovacuum_vacuum_max_threshold`)과 freeze 비율 반영, eager scanning이 추가되었습니다.
 
-다음 글에서는 VACUUM의 또 다른 중요한 임무인 **freeze**와, 이를 게을리하면 생기는 **트랜잭션 ID wraparound**를 살펴봅니다.
+다음 글에서는 VACUUM의 또 다른 임무인 **freeze**와 이를 게을리하면 생기는 **트랜잭션 ID wraparound**를 살펴봅니다.
 
 ## 참고 자료
 

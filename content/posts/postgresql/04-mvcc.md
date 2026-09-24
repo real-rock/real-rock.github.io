@@ -28,7 +28,7 @@ PostgreSQL은 이 문제를 **MVCC**(Multi-Version Concurrency Control, 다중 �
 
 ### 트랜잭션 ID와 행의 xmin, xmax
 
-트랜잭션이 처음으로 xid가 필요해질 때(데이터를 바꾸거나, `FOR UPDATE`로 행을 잠그거나, `pg_current_xact_id()`를 부를 때) PostgreSQL은 32비트 **트랜잭션 ID(xid)**를 하나 발급합니다([`GetNewTransactionId()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/varsup.c#L77)). 그 전까지, 그리고 읽기만 하는 트랜잭션은 xid 없이 가상 ID만 가집니다. xid는 1씩 커지므로, 번호가 작을수록 먼저 xid를 받은(처음으로 쓰기를 한) 트랜잭션입니다. 트랜잭션을 시작한 순서와는 다를 수 있습니다([문서](https://www.postgresql.org/docs/18/transaction-id.html)).
+트랜잭션이 처음으로 xid가 필요해질 때(데이터를 바꾸거나, `FOR UPDATE`로 행을 잠그거나, `pg_current_xact_id()`를 부를 때) PostgreSQL은 32비트 **트랜잭션 ID**(xid)를 하나 발급합니다([`GetNewTransactionId()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/varsup.c#L77)). 그 전까지, 그리고 읽기만 하는 트랜잭션은 xid 없이 가상 ID만 있습니다. xid는 1씩 커지므로, 번호가 작을수록 먼저 xid를 받은(처음으로 쓰기를 한) 트랜잭션입니다. 트랜잭션을 시작한 순서와는 다를 수 있습니다([문서](https://www.postgresql.org/docs/18/transaction-id.html)).
 
 [3편](/posts/postgresql/03-storage-layout/)에서 본 튜플 헤더에는 이 xid가 두 개 적혀 있습니다.
 
@@ -77,7 +77,7 @@ PostgreSQL은 이 문제를 **MVCC**(Multi-Version Concurrency Control, 다중 �
 
 그림에서 뺀 경우가 하나 있습니다. xmin이나 xmax가 **나 자신**이면 스냅샷 대신 명령 번호(`cmin`, `cmax`)로 판단합니다. 같은 트랜잭션 안에서 방금 넣은 행은 다음 명령부터 보이고 같은 명령 안에서는 보이지 않습니다. 반대로 내가 지운 행은 지우기 전에 시작한 명령에는 계속 보입니다([`heapam_visibility.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/heapam_visibility.c#L1119-L1126)).
 
-pg_xact를 매번 찾아보면 느리므로, 보통은 커밋 여부를 처음 확인한 쪽이 결과를 튜플의 `t_infomask`에 **hint bit**로 적어 둡니다([`SetHintBits()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/heapam_visibility.c#L114-L128)). 비동기 커밋 직후처럼 커밋 WAL이 아직 디스크에 없으면 적지 않고 넘어가는 예외도 있습니다. 다음부터는 튜플만 보고 바로 판단할 수 있습니다. [2편](/posts/postgresql/02-memory-architecture/)에서 SELECT만 했는데 페이지가 dirty가 된 이유가 이것입니다.
+pg_xact를 매번 찾아보면 느리므로, 보통은 커밋 여부를 처음 확인한 쪽이 결과를 튜플의 `t_infomask`에 **hint bit**로 적어 둡니다([`SetHintBits()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/heapam_visibility.c#L114-L128)). 다음부터는 튜플만 보고 바로 판단할 수 있습니다. [2편](/posts/postgresql/02-memory-architecture/)에서 SELECT만 했는데 페이지가 dirty가 된 이유가 이것입니다. 비동기 커밋 직후처럼 커밋 WAL이 아직 디스크에 없으면 적지 않고 넘어가는 예외도 있습니다.
 
 ### 격리 수준은 "스냅샷을 언제 찍느냐"의 차이
 
@@ -680,7 +680,7 @@ ROLLBACK;
 ROLLBACK
 ```
 
-B의 스냅샷에서 `id = 1`은 161입니다. A가 171로 바꾸고 커밋하자, B의 UPDATE는 기다리던 끝에 **`could not serialize access due to concurrent update`** 오류로 끝났습니다. B가 161을 기준으로 1을 더해 162를 쓰면 A의 변경이 사라지기 때문입니다. 이 트랜잭션은 롤백하고 처음부터 다시 해야 합니다.
+B의 스냅샷에서 `id = 1`은 161입니다. A가 171로 바꾸고 커밋하자, B의 UPDATE는 기다리다가 **`could not serialize access due to concurrent update`** 오류로 끝났습니다. B가 161을 기준으로 1을 더해 162를 쓰면 A의 변경이 사라지기 때문입니다. 이 트랜잭션은 롤백하고 처음부터 다시 해야 합니다.
 
 ### 실습 9. SELECT FOR UPDATE도 xmax에 적힌다
 
@@ -725,7 +725,7 @@ COMMIT
 [exit=0]
 ```
 
-`FOR UPDATE`로 행을 잠그기만 했는데 `xmax`가 766(잠근 트랜잭션)이 되었습니다. PostgreSQL에는 행 잠금을 담는 별도 표가 없고, **잠금도 튜플의 `xmax`에 적습니다.** 여러 트랜잭션이 같은 행을 함께 잠그면(`FOR SHARE` 등) `xmax` 자리에 여러 xid를 묶은 MultiXact ID가 들어갑니다. 대신 `HEAP_XMAX_LOCK_ONLY`로 "지운 것이 아니라 잠그기만 했다"고 표시합니다. 가시성 판단 3단계에서 "잠금만 했으면 보인다"가 이 경우입니다. `HEAP_KEYS_UPDATED`는 여기서 `FOR UPDATE`와 한 단계 약한 `FOR NO KEY UPDATE`를 구분하는 표시로, 가장 강한 잠금인 `FOR UPDATE`일 때 켭니다([`heapam.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/heapam.c#L5603-L5605)). 조회 결과에 나온 lp 3은 실습 6의 UPDATE로 옛 버전이 된 튜플입니다.
+`FOR UPDATE`로 행을 잠그기만 했는데 `xmax`가 766(잠근 트랜잭션)이 되었습니다. PostgreSQL에는 행 잠금을 담는 별도 표가 없고, **잠금도 튜플의 `xmax`에 적습니다.** 대신 `HEAP_XMAX_LOCK_ONLY`로 "지운 것이 아니라 잠그기만 했다"고 표시합니다. 가시성 판단 3단계에서 "잠금만 했으면 보인다"가 이 경우입니다. 여러 트랜잭션이 같은 행을 함께 잠그면(`FOR SHARE` 등) `xmax` 자리에 여러 xid를 묶은 MultiXact ID가 들어갑니다. `HEAP_KEYS_UPDATED`는 여기서 `FOR UPDATE`와 한 단계 약한 `FOR NO KEY UPDATE`를 구분하는 표시로, 가장 강한 잠금인 `FOR UPDATE`일 때 켭니다([`heapam.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/heapam.c#L5603-L5605)). 조회 결과에 나온 lp 3은 실습 6의 UPDATE로 옛 버전이 된 튜플입니다.
 
 ### 실습 10. hint bit: 커밋 결과를 처음 확인한 쪽이 적어 둔다
 
@@ -770,7 +770,7 @@ INSERT 직후의 새 튜플에는 `HEAP_XMAX_INVALID`만 있습니다. SELECT로
 
 ### 긴 트랜잭션이 dead tuple 정리를 막는다
 
-dead tuple은 **아무도 볼 가능성이 없어진 뒤에야** VACUUM이 지울 수 있습니다. 실습 6처럼 REPEATABLE READ 트랜잭션 하나가 오래 열려 있으면, 그 스냅샷이 볼 수도 있는 옛 버전들은 모두 남아야 합니다. READ COMMITTED라도 트랜잭션 안에서 쓰기를 한 번 하고 커밋하지 않은 채 멈춘 세션(`idle in transaction`)이 있으면 같은 문제가 생깁니다. 그 세션의 xid가 끝나지 않았으니, 그 뒤에 생긴 dead tuple은 "아직 누군가 볼 수 있는" 것으로 남습니다. 오래된 트랜잭션은 다음처럼 찾습니다.
+dead tuple은 **아무도 볼 가능성이 없어진 뒤에야** VACUUM이 지울 수 있습니다. 실습 6처럼 REPEATABLE READ 트랜잭션 하나가 오래 열려 있으면, 그 스냅샷이 볼 수도 있는 옛 버전은 모두 남아야 합니다. READ COMMITTED라도 트랜잭션 안에서 쓰기를 한 번 하고 커밋하지 않은 채 멈춘 세션(`idle in transaction`)이 있으면 같은 문제가 생깁니다. 그 세션의 xid가 끝나지 않았으니, 그 뒤에 생긴 dead tuple은 "아직 누군가 볼 수 있는" 것으로 남습니다. 오래된 트랜잭션은 다음처럼 찾습니다.
 
 ```sql
 SELECT pid, state, xact_start, backend_xid, backend_xmin, age(backend_xmin) AS xmin_age, left(query, 40)
@@ -807,7 +807,7 @@ REPEATABLE READ와 SERIALIZABLE에서는 실습 8의 직렬화 오류(SQLSTATE `
 - **스냅샷**(`xmin:xmax:xip`)은 "어떤 트랜잭션이 끝났는가"를 찍어 둔 것이고, 스냅샷 기준으로 진행 중인 트랜잭션의 변경은 보이지 않습니다.
 - 튜플이 보이는지는 xmin(태어났는가)과 xmax(아직 살아 있는가)를 스냅샷과 pg_xact로 판단하고, 결과를 hint bit로 적어 둡니다.
 - READ COMMITTED는 명령마다, REPEATABLE READ는 트랜잭션에 한 번 스냅샷을 찍습니다.
-- 같은 행을 동시에 고치면 뒤의 트랜잭션이 앞 트랜잭션의 xid 잠금을 기다리고, READ COMMITTED는 새 버전 위에서 다시 시도하며, REPEATABLE READ는 직렬화 오류를 냅니다.
+- 같은 행을 동시에 고치면 뒤의 트랜잭션이 앞 트랜잭션의 xid 잠금을 기다립니다. READ COMMITTED는 새 버전 위에서 다시 시도하고 REPEATABLE READ는 직렬화 오류를 냅니다.
 - 행 잠금(`FOR UPDATE`)도 `xmax`에 적힙니다.
 
 다음 글에서는 이렇게 쌓인 dead tuple을 정리하는 **VACUUM과 autovacuum**, 그리고 그 과정에서 쓰이는 FSM과 Visibility Map을 살펴봅니다.

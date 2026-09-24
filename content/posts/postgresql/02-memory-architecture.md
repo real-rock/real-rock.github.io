@@ -68,7 +68,7 @@ backend가 어떤 블록을 읽으려 할 때의 흐름입니다.
 
 **hit.** 매핑 해시에서 블록을 찾으면 그 칸을 pin(refcount +1)하고 usage count를 1 올립니다. 이미 5면 그대로 둡니다([`PinBuffer()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L3110-L3131)). 디스크 I/O가 전혀 없습니다.
 
-**miss.** 없으면 새 페이지를 담을 칸을 구해야 합니다([`StrategyGetBuffer()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/freelist.c#L196)). 아래에서 볼 ring buffer를 쓰는 중이면 ring에서 먼저 고르고, 아직 한 번도 쓰지 않은 칸의 목록(freelist)에 남은 칸이 있으면 그것을 씁니다. 둘 다 없을 때 **clock sweep**을 돌립니다([`freelist.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/freelist.c#L314-L350)). 서버를 띄운 직후에는 빈 칸이 많아 대부분 freelist에서 해결되고, clock sweep은 캐시가 가득 찬 뒤에 본격적으로 일합니다.
+**miss.** 없으면 새 페이지를 담을 칸을 구해야 합니다([`StrategyGetBuffer()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/freelist.c#L196)). 아래에서 볼 ring buffer를 쓰는 중이면 ring에서 먼저 고르고, 아직 한 번도 쓰지 않은 칸의 목록(freelist)에 남은 칸이 있으면 그 칸을 씁니다. 둘 다 없을 때 **clock sweep**을 돌립니다([`freelist.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/freelist.c#L314-L350)). 서버를 띄운 직후에는 빈 칸이 많아 대부분 freelist에서 해결되고, clock sweep은 캐시가 가득 찬 뒤에 본격적으로 일합니다.
 
 1. 시계 바늘처럼 칸을 하나씩 돌아가며 봅니다.
 2. pin된 칸은 건너뜁니다.
@@ -532,7 +532,7 @@ SQL
 
 - ring의 최대 크기는 backend 하나가 pin할 수 있는 칸 수입니다. `16384 / (136 + 38)` = **94칸**입니다. 136은 `MaxBackends`(max_connections + autovacuum_worker_slots + max_worker_processes + max_wal_senders + 2. 마지막 2는 autovacuum launcher와 slotsync worker 몫인 [`NUM_SPECIAL_WORKER_PROCS`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/storage/proc.h#L442-L448), [`postinit.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/init/postinit.c#L560-L561)), 38은 보조 프로세스 수([`NUM_AUXILIARY_PROCS`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/storage/proc.h#L460-L461) = 6 + io worker 최대 32)입니다.
 - PG18의 원래 계산은 256kB + 8kB × 16(`io_combine_limit` 128kB = 16블록) × 16(`effective_io_concurrency`) = 2304kB(288칸)이지만, 94칸 한도에 걸려 94칸이 됩니다.
-- 실행 계획을 보면 이 스캔은 leader와 worker 2개, 모두 3개 프로세스가 나눠 했습니다(`Workers Launched: 2`). 프로세스마다 자기 ring을 가지므로 94 × 3 = **282칸**입니다. 측정값과 정확히 같습니다. 같은 실행 계획의 `written=10086`도 10368에서 ring에 마지막까지 남은 282칸을 뺀 값이라, 계산이 서로 맞아떨어집니다.
+- 실행 계획을 보면 이 스캔은 leader와 worker 2개, 모두 3개 프로세스가 나눠 맡았습니다(`Workers Launched: 2`). 프로세스마다 ring을 따로 두므로 94 × 3 = **282칸**입니다. 측정값과 정확히 같습니다. 같은 실행 계획의 `written=10086`도 10368에서 ring에 마지막까지 남은 282칸을 뺀 값이라, 계산이 서로 맞아떨어집니다.
 
 `Buffers: shared read=10368 dirtied=10345 written=10086`도 눈여겨볼 만합니다. 실습 3과 같은 이유(처음 읽을 때 hint bit를 적음)로 읽은 페이지가 dirty가 되었고, ring의 칸을 다시 쓰려면 dirty 페이지를 먼저 디스크에 써야 해서 **읽기 쿼리가 약 10000페이지를 썼습니다.** 대량 적재 직후의 첫 SELECT가 유난히 느린 이유 중 하나입니다.
 
@@ -590,7 +590,7 @@ CHECKPOINT
 [exit=0]
 ```
 
-UPDATE로 이 테이블의 칸 1899개가 dirty가 되었습니다. 테이블 페이지(1728)보다 많은 이유는 UPDATE가 새 버전의 행을 쓰느라 테이블 끝에 페이지를 더 붙였기 때문입니다([4편](/posts/postgresql/04-mvcc/)). 빈 공간 지도(FSM, [5편](/posts/postgresql/05-vacuum/)) 같은 부가 파일의 페이지 몇 칸도 여기에 함께 세어집니다. 이 상태에서는 디스크의 파일이 아직 옛 내용이고, 최신 내용은 메모리와 WAL에만 있습니다. `CHECKPOINT` 뒤에는 dirty가 0이 되었고, checkpointer가 쓴 버퍼 수가 328에서 2227로 정확히 1899 늘었습니다.
+UPDATE로 이 테이블의 칸 1899개가 dirty가 되었습니다. 테이블 페이지(1728)보다 많은 이유는 UPDATE가 새 버전의 행을 쓰느라 테이블 끝에 페이지를 더 붙였기 때문입니다([4편](/posts/postgresql/04-mvcc/)). 빈 공간 지도(FSM, [5편](/posts/postgresql/05-vacuum/)) 같은 부가 파일의 페이지 몇 칸도 여기에 함께 잡힙니다. 이 상태에서는 디스크의 파일이 아직 옛 내용이고, 최신 내용은 메모리와 WAL에만 있습니다. `CHECKPOINT` 뒤에는 dirty가 0이 되었고, checkpointer가 쓴 버퍼 수가 328에서 2227로 정확히 1899 늘었습니다.
 
 ### 실습 8. work_mem을 넘는 정렬은 임시 파일로 간다
 
@@ -635,7 +635,7 @@ SET
 [exit=0]
 ```
 
-같은 정렬인데 `work_mem`이 4MB일 때는 `external merge  Disk: 67576kB`, 즉 약 66MB를 임시 파일에 쓰고 병합했습니다. 서버 로그에도 `temporary file: ... size 69197824`가 남았습니다(`log_temp_files = 0`은 모든 임시 파일을 로그에 남기라는 뜻입니다). 256MB로 올리자 `quicksort  Memory: 99577kB`, 즉 약 97MB를 메모리에서 정렬했습니다. 디스크에 쓴 크기(66MB)보다 메모리에서 쓴 크기(97MB)가 큰 이유는, 메모리 안에서는 행마다 포인터와 관리 정보가 붙기 때문입니다.
+같은 정렬인데 `work_mem`이 4MB일 때는 `external merge  Disk: 67576kB`, 즉 약 66MB를 임시 파일에 쓰고 병합했습니다. 서버 로그에도 `temporary file: ... size 69197824`가 남았습니다(`log_temp_files = 0`은 모든 임시 파일을 로그에 남기라는 뜻입니다). 256MB로 올리자 `quicksort  Memory: 99577kB`, 즉 약 97MB를 메모리에서 정렬했습니다. 디스크에 쓴 크기(66MB)보다 메모리에서 쓴 크기(97MB)가 큰 이유는 메모리 안에서는 행마다 포인터와 관리 정보가 붙기 때문입니다.
 
 ### 실습 9. 해시 테이블은 work_mem × hash_mem_multiplier까지 쓴다
 
@@ -878,7 +878,7 @@ psql -X -c "SELECT wal_records, pg_size_pretty(wal_bytes) AS wal_bytes, wal_buff
 
 ### shared_buffers를 무작정 키우면 안 되는 이유
 
-shared buffers가 클수록 hit가 늘어나는 것은 맞습니다. 하지만 실습 4-1에서 본 것처럼 PostgreSQL은 운영체제 페이지 캐시 위에서 동작합니다. shared buffers를 너무 크게 잡으면 운영체제가 쓸 캐시가 줄어들고, 같은 페이지를 두 곳에 들고 있는 낭비도 커집니다. 또 shared buffers는 기동할 때 한 번에 잡는 고정 영역이라, 크게 잡을수록 기동 시 메모리 확보와 체크포인트 때 내보낼 dirty 페이지 양이 늘어납니다. PostgreSQL 문서는 전용 서버에서 **메모리의 25% 정도에서 시작**하고, 40%를 넘기면 이득이 적다고 안내합니다([shared_buffers](https://www.postgresql.org/docs/18/runtime-config-resource.html#GUC-SHARED-BUFFERS)). 실제 값은 `pg_buffercache`와 hit 비율을 보면서 조정합니다.
+shared buffers가 클수록 hit가 늘어나는 것은 맞습니다. 하지만 실습 4-1에서 본 것처럼 PostgreSQL은 운영체제 페이지 캐시 위에서 동작합니다. shared buffers를 너무 크게 잡으면 운영체제가 쓸 캐시가 줄어들고, 같은 페이지를 두 곳에 들고 있는 낭비도 커집니다. 또 shared buffers는 기동할 때 한 번에 잡는 고정 영역이라, 크게 잡을수록 기동할 때 확보할 메모리와 체크포인트 때 내보낼 dirty 페이지 양이 늘어납니다. PostgreSQL 문서는 전용 서버에서 **메모리의 25% 정도에서 시작**하고, 40%를 넘기면 이득이 적다고 안내합니다([shared_buffers](https://www.postgresql.org/docs/18/runtime-config-resource.html#GUC-SHARED-BUFFERS)). 실제 값은 `pg_buffercache`와 hit 비율을 보면서 조정합니다.
 
 ### work_mem이 메모리 폭증을 부르는 경우
 
@@ -896,7 +896,7 @@ shared buffers가 클수록 hit가 늘어나는 것은 맞습니다. 하지만 �
 2026-09-24 03:09:26.736 UTC [140] LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp140.0", size 69197824
 ```
 
-`EXPLAIN (ANALYZE)`에서 `Sort Method: external merge`나 `Batches:`가 1보다 큰 해시가 보이면 `work_mem`이 부족하다는 신호입니다. 이런 쿼리만 골라 세션 단위로 `work_mem`을 올리면, 전역 메모리 위험 없이 성능을 올릴 수 있습니다.
+`EXPLAIN (ANALYZE)`에서 `Sort Method: external merge`나 `Batches:`가 1보다 큰 해시가 보이면 `work_mem`이 부족하다는 신호입니다. 이런 쿼리만 골라 세션 단위로 `work_mem`을 올리면, 전역 메모리 위험 없이 성능을 높일 수 있습니다.
 
 ### 대량 적재 직후 첫 조회가 느리다
 
@@ -904,9 +904,9 @@ shared buffers가 클수록 hit가 늘어나는 것은 맞습니다. 하지만 �
 
 ## 정리
 
-- 공유 메모리의 대부분은 shared buffers입니다. 8kB 칸 배열(Buffer Blocks), 칸마다의 descriptor, 블록을 칸 번호로 바꾸는 매핑 해시로 이루어져 있습니다.
+- 공유 메모리의 대부분은 shared buffers입니다. 8kB 칸 배열(Buffer Blocks), 칸마다 하나씩 있는 descriptor, 블록을 칸 번호로 바꾸는 매핑 해시로 이루어져 있습니다.
 - 캐시가 가득 차면 **clock sweep**이 usage count(최대 5)를 깎아 가며 내보낼 칸을 고릅니다. dirty 칸을 내보낼 때는 WAL을 먼저 디스크에 씁니다.
-- shared buffers의 1/4보다 큰 테이블을 순차 스캔하면 **ring buffer**만 씁니다. PG18에서는 ring 크기가 I/O 동시성에 따라 커지지만 pin 한도를 넘지 못하고, 병렬 스캔이면 프로세스마다 ring을 따로 가집니다.
+- shared buffers의 1/4보다 큰 테이블을 순차 스캔하면 **ring buffer**만 씁니다. PG18에서는 ring 크기가 I/O 동시성에 따라 커지지만 pin 한도를 넘지 못하고, 병렬 스캔이면 프로세스마다 ring을 따로 둡니다.
 - WAL buffers는 기본적으로 shared buffers의 1/32(최대 16MB)입니다.
 - `work_mem`은 **정렬이나 해시 노드 하나의 한도**이고, 넘치면 임시 파일을 씁니다. 해시는 `hash_mem_multiplier`배까지 씁니다.
 - backend 개인 메모리는 메모리 컨텍스트 단위로 관리되고, 수명이 끝난 컨텍스트는 통째로 해제됩니다.

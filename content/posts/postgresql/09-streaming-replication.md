@@ -13,7 +13,7 @@ description: "walsender와 walreceiver, 동기 복제, hot standby 충돌, repli
 
 [8편](/posts/postgresql/08-checkpoint-and-recovery/)에서 장애 복구는 "마지막 체크포인트부터 WAL을 다시 적용"하는 일이었고, PITR은 백업에 보관한 WAL을 적용하는 일이었습니다. 이 생각을 한 걸음 더 밀면 **스트리밍 복제**가 됩니다. 백업에서 출발한 서버가 복구를 끝내지 않고, primary가 새로 만드는 WAL을 네트워크로 계속 받아 **영원히 복구하는 상태**로 남는 것입니다. 이 서버가 **standby**입니다.
 
-standby는 primary와 똑같은 WAL을 똑같이 재생하므로, 페이지 단위까지 같은 데이터를 갖게 됩니다. 이것을 **물리 복제(physical replication)**라고 합니다. (테이블의 행 변경을 논리적으로 풀어서 보내는 논리 복제도 있지만, 이 글에서는 다루지 않습니다.)
+standby는 primary와 똑같은 WAL을 똑같이 재생하므로 데이터가 페이지 단위까지 같아집니다. 이것을 **물리 복제**(physical replication)라고 합니다. (테이블의 행 변경을 논리적으로 풀어서 보내는 논리 복제도 있지만, 이 글에서는 다루지 않습니다.)
 
 이 글에서 답할 질문은 다음과 같습니다.
 
@@ -76,7 +76,7 @@ primary의 walsender는 standby의 보고를 받아 `pg_stat_replication`에 보
 
 ### hot standby 충돌
 
-standby의 읽기 쿼리는 자기 스냅숏([4편](/posts/postgresql/04-mvcc/))으로 옛 행 버전을 보고 있을 수 있습니다. 그런데 primary에서 VACUUM(이나 페이지 정리, [5편](/posts/postgresql/05-vacuum/))이 그 버전을 지우면, 그 정리 기록이 WAL로 standby에 옵니다. standby의 startup은 이 기록을 재생해야 하는데, 재생하면 쿼리가 보던 행이 사라집니다.
+standby의 읽기 쿼리는 자기 스냅샷([4편](/posts/postgresql/04-mvcc/))으로 옛 행 버전을 보고 있을 수 있습니다. 그런데 primary에서 VACUUM(이나 페이지 정리, [5편](/posts/postgresql/05-vacuum/))이 그 버전을 지우면, 그 정리 기록이 WAL로 standby에 옵니다. standby의 startup은 이 기록을 재생해야 하는데, 재생하면 쿼리가 보던 행이 사라집니다.
 
 startup은 충돌하는 WAL을 **받은 시각부터** `max_standby_streaming_delay`(기본 30초)가 지날 때까지 쿼리가 끝나기를 기다리고, 그래도 안 끝나면 쿼리를 취소하고 재생을 계속합니다([`GetStandbyLimitTime()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/ipc/standby.c#L201), [`ResolveRecoveryConflictWithSnapshot()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/ipc/standby.c#L468)). 재생을 무한정 멈출 수는 없기 때문입니다. `hot_standby_feedback = on`으로 두면 standby가 자기 쿼리의 xmin을 primary에 알려서 primary의 VACUUM이 그 버전을 지우지 않게 할 수 있습니다([`ProcessStandbyHSFeedbackMessage()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L2633)). 대신 standby의 긴 쿼리가 primary의 VACUUM을 막아 primary에 bloat가 생깁니다([5편](/posts/postgresql/05-vacuum/)).
 
@@ -88,7 +88,7 @@ primary는 체크포인트 때 REDO 위치 이전의 WAL을 지웁니다([8편](
 
 문제는 standby가 **영영 돌아오지 않을 때**입니다. slot이 WAL을 계속 붙잡아 `pg_wal`이 끝없이 커지고, 결국 디스크가 가득 차면 primary가 멈춥니다([7편](/posts/postgresql/07-wal/)). 이를 막는 설정이 두 가지 있습니다.
 
-- **`max_slot_wal_keep_size`**: slot이 붙잡을 수 있는 WAL의 상한입니다(기본 -1, 무제한). 넘으면 체크포인트가 그 slot을 **무효화(invalidate)**하고 WAL을 지웁니다(보존 상한 계산은 [`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L8012-L8020), 무효화는 [`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7356-L7358)).
+- **`max_slot_wal_keep_size`**: slot이 붙잡을 수 있는 WAL의 상한입니다(기본 -1, 무제한). 넘으면 체크포인트가 그 slot을 **무효화**(invalidate)하고 WAL을 지웁니다(보존 상한 계산은 [`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L8012-L8020), 무효화는 [`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7356-L7358)).
 - **`idle_replication_slot_timeout`** (PG18 신규): 이 시간보다 오래 쓰이지 않은 slot을 체크포인트 때 무효화합니다(기본 0, 끔). WAL을 예약한(`restart_lsn`이 있는) slot만 대상입니다.
 
 slot의 상태는 `pg_replication_slots.wal_status`로 봅니다([`GetWALAvailability()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7907)).
@@ -463,7 +463,7 @@ psql -X -p 5433 -q -c "ALTER SYSTEM RESET max_standby_streaming_delay" -c "SELEC
 [exit=0]
 ```
 
-standby의 쿼리가 `canceling statement due to conflict with recovery`로 취소되었습니다. DETAIL은 "쿼리가 봐야 할 수도 있는 행 버전을 지워야 한다"는 뜻입니다. primary의 VACUUM이 지운 행 버전(실습 4~6에서 넣었다가 DELETE한 행)의 정리 기록을 재생하려다, 그 버전을 볼 수도 있는 쿼리의 스냅숏과 부딪혔습니다. startup은 `max_standby_streaming_delay`(3초)까지 기다린 뒤 쿼리를 취소하고 재생을 계속했고, standby의 `pg_stat_database_conflicts.confl_snapshot`이 1이 되었습니다. 기본값(30초)이었다면 이 20초짜리 쿼리는 취소되지 않았을 것입니다. 대신 쿼리가 끝날 때까지 재생이 멈춰 standby가 그만큼 뒤처졌을 것입니다.
+standby의 쿼리가 `canceling statement due to conflict with recovery`로 취소되었습니다. DETAIL은 "쿼리가 봐야 할 수도 있는 행 버전을 지워야 한다"는 뜻입니다. primary의 VACUUM이 지운 행 버전(실습 4~6에서 넣었다가 DELETE한 행)의 정리 기록을 재생하려다, 그 버전을 볼 수도 있는 쿼리의 스냅샷과 부딪혔습니다. startup은 `max_standby_streaming_delay`(3초)까지 기다린 뒤 쿼리를 취소하고 재생을 계속했고, standby의 `pg_stat_database_conflicts.confl_snapshot`이 1이 되었습니다. 기본값(30초)이었다면 이 20초짜리 쿼리는 취소되지 않았을 것입니다. 대신 쿼리가 끝날 때까지 재생이 멈춰 standby가 그만큼 뒤처졌을 것입니다.
 
 ### 실습 8. replication slot은 standby가 멈춰도 WAL을 붙잡는다
 
@@ -534,7 +534,7 @@ server started
 
 ### 실습 10. idle_replication_slot_timeout (PG18)
 
-아무도 쓰지 않는 slot `forgotten`을 만들고, 1초 이상 쉰 slot을 무효화하도록 설정합니다.
+아무도 쓰지 않는 slot `forgotten`을 만들고 1초 이상 쉰 slot을 무효화하도록 설정합니다.
 
 ```bash
 psql -X -p 5432 -c "SELECT * FROM pg_create_physical_replication_slot('forgotten', true)"
@@ -563,7 +563,7 @@ grep -E "invalidating obsolete replication slot \"forgotten\"" -A1 /home/postgre
 ```
 
 - 1초 넘게 쉰 `forgotten` slot을 체크포인트가 무효화했습니다. 원인은 `idle_timeout`이고, 로그에 쉰 시간(2s)과 설정값(1s)이 나옵니다.
-- 이 검사는 **체크포인트 때** 합니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7356-L7358)). 두 번째 인자 `true`로 slot을 만들 때 WAL을 바로 예약했기 때문에 대상이 되었습니다. 그래서 실제로 무효화되는 시점은 설정값보다 체크포인트 간격만큼 늦을 수 있습니다. 실습에서는 `CHECKPOINT`로 바로 확인했습니다.
+- 이 검사는 **체크포인트 때** 합니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7356-L7358)). 그래서 실제로 무효화되는 시점은 설정값보다 체크포인트 간격만큼 늦을 수 있습니다. 실습에서는 `CHECKPOINT`로 바로 확인했습니다. `forgotten`은 두 번째 인자 `true`로 만들 때 WAL을 바로 예약했기 때문에 검사 대상이 되었습니다.
 - slot은 한 번 무효화되면 되살릴 수 없습니다. 운영에서는 며칠처럼 넉넉한 값을 씁니다.
 
 ## 운영에서는 이렇게 나타납니다
