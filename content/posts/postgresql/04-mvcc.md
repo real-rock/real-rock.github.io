@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 4: MVCC"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "MVCC", "트랜잭션", "스냅샷"]
 weight: 4

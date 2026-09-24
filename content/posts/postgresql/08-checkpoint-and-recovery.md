@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 8: 체크포인트와 장애 복구 과정"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "체크포인트", "복구", "PITR"]
 weight: 8

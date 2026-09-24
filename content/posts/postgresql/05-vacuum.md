@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 5: VACUUM과 Autovacuum"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "VACUUM", "autovacuum", "MVCC"]
 weight: 5

@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 1: 프로세스 구조"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "프로세스", "아키텍처", "postmaster"]
 weight: 1

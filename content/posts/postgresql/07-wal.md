@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 7: WAL"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "WAL", "LSN", "full_page_writes"]
 weight: 7

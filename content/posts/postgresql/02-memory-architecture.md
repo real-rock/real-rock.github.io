@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 2: 메모리 구조"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "메모리", "shared_buffers", "work_mem"]
 weight: 2

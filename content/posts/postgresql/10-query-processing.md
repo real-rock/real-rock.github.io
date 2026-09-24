@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 10: 쿼리 처리 과정"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "쿼리", "플래너", "통계", "EXPLAIN"]
 weight: 10

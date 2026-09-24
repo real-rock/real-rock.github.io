@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 인터널 6: 트랜잭션 ID wraparound"
 date: 2026-09-24
-draft: true
+draft: false
 series: ["PostgreSQL 인터널"]
 tags: ["PostgreSQL", "wraparound", "freeze", "VACUUM"]
 weight: 6
