@@ -1,0 +1,222 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "SQL 한 줄이 결과가 되기까지 (exec_simple_query)",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "frontend": {
+     "label": "클라이언트"
+    },
+    "backend": {
+     "label": "backend 안의 단계"
+    },
+    "database": {
+     "label": "카탈로그, 통계"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "front",
+    "label": "분석",
+    "focus": [
+     "sql",
+     "parse",
+     "analyze",
+     "rewrite",
+     "catalog"
+    ],
+    "note": "파서는 문법만 보고 트리를 만들고, 분석기는 카탈로그를 보며 이름을 실제 테이블과 컬럼으로 바꿉니다. 리라이터는 뷰를 그 정의의 서브쿼리로 바꿉니다."
+   },
+   {
+    "id": "plan",
+    "label": "계획",
+    "focus": [
+     "rewrite",
+     "plan",
+     "stats"
+    ],
+    "note": "플래너는 통계로 행 수와 비용을 추정해 가장 싼 실행 방법을 고릅니다."
+   },
+   {
+    "id": "exec",
+    "label": "실행",
+    "focus": [
+     "plan",
+     "exec",
+     "result"
+    ],
+    "note": "실행기는 계획 트리의 맨 위 노드부터 한 행씩 당겨 오며 결과를 만듭니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "client",
+   "label": "클라이언트"
+  },
+  {
+   "id": "backend",
+   "label": "backend"
+  },
+  {
+   "id": "catalog",
+   "label": "카탈로그"
+  }
+ ],
+ "mainPath": [
+  "sql",
+  "parse",
+  "analyze",
+  "rewrite",
+  "plan",
+  "exec",
+  "result"
+ ],
+ "nodes": [
+  {
+   "id": "sql",
+   "lane": "client",
+   "col": 0,
+   "type": "frontend",
+   "label": "SQL 문자열",
+   "sublabel": "SELECT ...",
+   "width": 140
+  },
+  {
+   "id": "parse",
+   "lane": "backend",
+   "col": 1,
+   "type": "backend",
+   "label": "파서",
+   "sublabel": "raw_parser: 문법",
+   "width": 150
+  },
+  {
+   "id": "analyze",
+   "lane": "backend",
+   "col": 2,
+   "type": "backend",
+   "label": "분석기",
+   "sublabel": "transformStmt: Query",
+   "width": 160
+  },
+  {
+   "id": "rewrite",
+   "lane": "backend",
+   "col": 3,
+   "type": "backend",
+   "label": "리라이터",
+   "sublabel": "QueryRewrite: 뷰를 서브쿼리로",
+   "width": 170
+  },
+  {
+   "id": "plan",
+   "lane": "backend",
+   "col": 4,
+   "type": "backend",
+   "label": "플래너",
+   "sublabel": "planner: 경로, 비용",
+   "width": 160
+  },
+  {
+   "id": "exec",
+   "lane": "backend",
+   "col": 5,
+   "type": "backend",
+   "label": "실행기",
+   "sublabel": "ExecutorRun: 행 당기기",
+   "width": 170
+  },
+  {
+   "id": "result",
+   "lane": "client",
+   "col": 5,
+   "type": "frontend",
+   "label": "결과 행",
+   "sublabel": "psql에 표시",
+   "width": 140
+  },
+  {
+   "id": "catalog",
+   "lane": "catalog",
+   "col": 2,
+   "type": "database",
+   "label": "시스템 카탈로그",
+   "sublabel": "pg_class, pg_rewrite 등",
+   "width": 170
+  },
+  {
+   "id": "stats",
+   "lane": "catalog",
+   "col": 4,
+   "type": "database",
+   "label": "통계",
+   "sublabel": "pg_statistic, relpages",
+   "width": 170
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "sql",
+   "to": "parse",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "parse",
+   "to": "analyze",
+   "label": "파스 트리",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "analyze",
+   "to": "rewrite",
+   "label": "Query",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "rewrite",
+   "to": "plan",
+   "label": "Query",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "plan",
+   "to": "exec",
+   "label": "계획 트리",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e6",
+   "from": "exec",
+   "to": "result",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e7",
+   "from": "catalog",
+   "to": "analyze",
+   "label": "이름 확인"
+  },
+  {
+   "id": "e8",
+   "from": "stats",
+   "to": "plan",
+   "label": "행 수 추정"
+  },
+  {
+   "id": "e9",
+   "from": "catalog",
+   "to": "rewrite",
+   "label": "뷰 규칙"
+  }
+ ]
+}

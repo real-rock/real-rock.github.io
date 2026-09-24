@@ -1,0 +1,178 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "플래너가 스캔 방법 하나를 고르는 과정",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "database": {
+     "label": "통계"
+    },
+    "security": {
+     "label": "추정"
+    },
+    "backend": {
+     "label": "경로와 계획"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "estimate",
+    "label": "행 수 추정",
+    "focus": [
+     "colstats",
+     "sel",
+     "relstats",
+     "rows"
+    ],
+    "note": "조건의 선택도를 컬럼 통계(MCV, 히스토그램)로 구하고, 테이블의 튜플 수를 곱해 결과 행 수를 추정합니다."
+   },
+   {
+    "id": "choose",
+    "label": "비용 비교",
+    "focus": [
+     "rows",
+     "paths",
+     "cost",
+     "plan"
+    ],
+    "note": "Seq Scan, Index Scan, Bitmap Scan 같은 후보마다 비용을 계산해 가장 싼 것을 계획 트리로 만듭니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "stats",
+   "label": "통계"
+  },
+  {
+   "id": "est",
+   "label": "추정",
+   "variant": "exception"
+  },
+  {
+   "id": "path",
+   "label": "경로"
+  }
+ ],
+ "mainPath": [
+  "colstats",
+  "sel",
+  "rows",
+  "paths",
+  "cost",
+  "plan"
+ ],
+ "nodes": [
+  {
+   "id": "colstats",
+   "lane": "stats",
+   "col": 0,
+   "type": "database",
+   "label": "pg_statistic",
+   "sublabel": "MCV, 히스토그램",
+   "width": 150
+  },
+  {
+   "id": "sel",
+   "lane": "est",
+   "col": 1,
+   "type": "security",
+   "label": "선택도",
+   "sublabel": "clauselist_selectivity",
+   "width": 180
+  },
+  {
+   "id": "relstats",
+   "lane": "stats",
+   "col": 1,
+   "type": "database",
+   "label": "pg_class",
+   "sublabel": "relpages, reltuples",
+   "width": 160
+  },
+  {
+   "id": "rows",
+   "lane": "est",
+   "col": 2,
+   "type": "security",
+   "label": "행 수 추정",
+   "sublabel": "선택도 × 튜플 수",
+   "width": 160
+  },
+  {
+   "id": "paths",
+   "lane": "path",
+   "col": 3,
+   "type": "backend",
+   "label": "경로 후보",
+   "sublabel": "Seq, Index, Bitmap",
+   "width": 160
+  },
+  {
+   "id": "cost",
+   "lane": "path",
+   "col": 4,
+   "type": "backend",
+   "label": "비용 계산",
+   "sublabel": "cost_seqscan 등",
+   "width": 160
+  },
+  {
+   "id": "plan",
+   "lane": "path",
+   "col": 5,
+   "type": "backend",
+   "label": "가장 싼 경로",
+   "sublabel": "create_plan",
+   "width": 150
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "colstats",
+   "to": "sel",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "sel",
+   "to": "rows",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "relstats",
+   "to": "rows",
+   "label": "밀도 × 현재 페이지"
+  },
+  {
+   "id": "e4",
+   "from": "rows",
+   "to": "paths",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "paths",
+   "to": "cost",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e6",
+   "from": "cost",
+   "to": "plan",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e7",
+   "from": "relstats",
+   "to": "cost",
+   "label": "페이지 수"
+  }
+ ]
+}
