@@ -32,7 +32,7 @@ VACUUM(정확히는 `VACUUM FULL`이 아닌 일반 VACUUM)은 읽기와 쓰기�
 1. **dead tuple 공간 회수**: 아무도 볼 수 없게 된 옛 버전을 지우고, 그 자리를 새 행이 쓸 수 있게 합니다.
 2. **Visibility Map 갱신**: "이 페이지의 모든 행은 모두에게 보인다"를 표시합니다.
 3. **Free Space Map 갱신**: 페이지마다 빈 공간이 얼마나 있는지 기록합니다.
-4. **freeze**: 오래된 트랜잭션 ID를 "얼려서" 번호가 한 바퀴 돌아도 문제가 없게 합니다(6편).
+4. **freeze**: 오래된 트랜잭션 ID를 "얼려서" 번호가 한 바퀴 돌아도 문제가 없게 합니다([6편](/posts/postgresql/06-xid-wraparound/)).
 5. **통계 갱신**: `pg_class`의 페이지 수, 행 수 추정값을 고칩니다.
 
 [`vacuumlazy.c` 맨 위 주석](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/vacuumlazy.c#L6-L38)이 이 과정을 세 단계로 설명합니다.
@@ -73,7 +73,7 @@ VACUUM이 관리하는 지도 두 개가 있습니다. 둘 다 테이블 옆의 
 VM의 두 비트는 다음과 같습니다.
 
 - **all-visible**: 이 페이지의 모든 튜플이 모든 트랜잭션에게 보입니다. dead tuple도, 커밋 안 된 튜플도 없습니다.
-- **all-frozen**: 이 페이지의 모든 튜플이 얼려져 있습니다(6편). wraparound를 막는 VACUUM이 이 페이지를 건너뛸 수 있습니다.
+- **all-frozen**: 이 페이지의 모든 튜플이 얼려져 있습니다([6편](/posts/postgresql/06-xid-wraparound/)). wraparound를 막는 VACUUM이 이 페이지를 건너뛸 수 있습니다.
 
 페이지의 튜플이 하나라도 바뀌면 그 페이지의 비트는 바로 지워지고, 다음 VACUUM이 다시 켭니다. **index-only scan**은 인덱스에 필요한 열이 다 있어도, 행이 보이는지 확인하려면 원래 힙을 읽어야 합니다. 그런데 VM이 all-visible이면 그 확인을 건너뛸 수 있습니다(실습 4).
 
@@ -93,7 +93,7 @@ INSERT만 있는 테이블도 대상이 됩니다(freeze와 VM 갱신이 필요�
 
 그 밖에 PG18의 VACUUM 관련 변화는 다음과 같습니다.
 
-- **eager scanning**([`vacuumlazy.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/vacuumlazy.c#L48-L78)): 일반 VACUUM도 all-visible이지만 아직 얼리지 않은 페이지를 조금씩 미리 읽어 freeze합니다. 나중의 대규모 freeze 작업(6편)을 나눠 하려는 것입니다. `vacuum_max_eager_freeze_failure_rate`(기본 0.03)로 조절하고, VACUUM VERBOSE 출력의 `eagerly scanned`가 그 페이지 수입니다.
+- **eager scanning**([`vacuumlazy.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/heap/vacuumlazy.c#L48-L78)): 일반 VACUUM도 all-visible이지만 아직 얼리지 않은 페이지를 조금씩 미리 읽어 freeze합니다. 나중의 대규모 freeze 작업([6편](/posts/postgresql/06-xid-wraparound/))을 나눠 하려는 것입니다. `vacuum_max_eager_freeze_failure_rate`(기본 0.03)로 조절하고, VACUUM VERBOSE 출력의 `eagerly scanned`가 그 페이지 수입니다.
 - **`autovacuum_worker_slots`**(기본 16): autovacuum worker 자리를 미리 잡아 두는 값입니다. 이제 `autovacuum_max_workers`는 재시작 없이 이 범위 안에서 바꿀 수 있습니다.
 
 ## 직접 확인해 보기
@@ -611,8 +611,8 @@ autovacuum이 도는지, 얼마나 자주 도는지는 `pg_stat_user_tables`의 
 VACUUM 로그에 `are dead but not yet removable`이 크게 찍히면, 무언가가 `removable cutoff`를 붙잡고 있다는 뜻입니다(실습 6). 흔한 원인은 다음과 같습니다.
 
 - 오래 열린 트랜잭션, 특히 `idle in transaction` 세션: `pg_stat_activity`의 `backend_xmin`이 오래된 세션을 찾습니다.
-- 사용하지 않는 replication slot: 물리 슬롯은 `hot_standby_feedback`을 쓸 때 `xmin`이 모든 테이블의 정리를 붙잡고, 논리 슬롯은 `catalog_xmin`이 시스템 카탈로그의 정리를 붙잡습니다(9편).
-- standby의 `hot_standby_feedback = on`과 standby에서 도는 긴 쿼리(9편).
+- 사용하지 않는 replication slot: 물리 슬롯은 `hot_standby_feedback`을 쓸 때 `xmin`이 모든 테이블의 정리를 붙잡고, 논리 슬롯은 `catalog_xmin`이 시스템 카탈로그의 정리를 붙잡습니다([9편](/posts/postgresql/09-streaming-replication/)).
+- standby의 `hot_standby_feedback = on`과 standby에서 도는 긴 쿼리([9편](/posts/postgresql/09-streaming-replication/)).
 - 준비만 해 두고 끝내지 않은 prepared transaction(`pg_prepared_xacts`).
 
 이 경우 VACUUM을 아무리 돌려도 dead tuple이 줄지 않으므로, 원인을 먼저 없애야 합니다.

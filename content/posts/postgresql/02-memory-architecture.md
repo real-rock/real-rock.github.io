@@ -77,7 +77,7 @@ backend가 어떤 블록을 읽으려 할 때의 흐름입니다.
 
 자주 쓰이는 페이지는 usage count가 높아서 바늘이 여러 바퀴 돌아야 0이 됩니다. 그래서 오래 살아남습니다. 한 번 쓰고 만 페이지는 금방 0이 되어 먼저 밀려납니다. 정확한 LRU(가장 오래 안 쓴 것을 내보내기)는 아니지만 비슷한 효과를 냅니다. LRU처럼 hit할 때마다 전역 목록의 순서를 고칠 필요가 없어서, 여러 backend가 동시에 읽어도 락 경쟁이 적습니다.
 
-고른 칸이 dirty(디스크보다 새 내용)면 먼저 디스크에 써야 합니다. 이때 규칙이 하나 있습니다. **그 페이지의 변경을 기록한 WAL이 먼저 디스크에 있어야 합니다**([`FlushBuffer()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L4355-L4371)가 `XLogFlush()`를 먼저 부릅니다). 이 규칙 덕분에 장애가 나도 WAL로 데이터 파일을 복구할 수 있습니다. 7편에서 다시 다룹니다.
+고른 칸이 dirty(디스크보다 새 내용)면 먼저 디스크에 써야 합니다. 이때 규칙이 하나 있습니다. **그 페이지의 변경을 기록한 WAL이 먼저 디스크에 있어야 합니다**([`FlushBuffer()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L4355-L4371)가 `XLogFlush()`를 먼저 부릅니다). 이 규칙 덕분에 장애가 나도 WAL로 데이터 파일을 복구할 수 있습니다. [7편](/posts/postgresql/07-wal/)에서 다시 다룹니다.
 
 마지막으로 칸의 태그를 새 블록으로 바꾸고 파일에서 읽어 옵니다. PG18에서 순차 스캔처럼 여러 블록을 미리 읽어 두는 경로는 [1편](/posts/postgresql/01-process-architecture/)에서 본 io worker가 대신 읽습니다. 반면 인덱스로 행 하나를 찾을 때처럼 블록 하나가 당장 필요한 경우에는, 비동기로 넘겨 봐야 기다리기만 하므로 backend가 직접 읽습니다([`bufmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L1241-L1247)).
 
@@ -122,7 +122,7 @@ backend는 쿼리를 처리하면서 개인 메모리를 씁니다. PostgreSQL�
 
 ### 실습 환경
 
-1편과 같은 소스로 만든 이미지에 도구 몇 가지를 더한 [실습 이미지](/labs/pg-lab-image/Dockerfile)를 씁니다. 실습 전체는 [lab.sh](/labs/pg-02-memory/lab.sh)가 새 컨테이너에서 처음부터 끝까지 실행했고(공용 함수는 [labkit.sh](/labs/common/labkit.sh)), 원본 출력은 [final-run.log](/labs/pg-02-memory/final-run.log)에 있습니다.
+[1편](/posts/postgresql/01-process-architecture/)과 같은 소스로 만든 이미지에 도구 몇 가지를 더한 [실습 이미지](/labs/pg-lab-image/Dockerfile)를 씁니다. 실습 전체는 [lab.sh](/labs/pg-02-memory/lab.sh)가 새 컨테이너에서 처음부터 끝까지 실행했고(공용 함수는 [labkit.sh](/labs/common/labkit.sh)), 원본 출력은 [final-run.log](/labs/pg-02-memory/final-run.log)에 있습니다.
 
 - `bash` 블록은 컨테이너 안에서 postgres 사용자로 실행한 명령입니다.
 - `text` 블록은 stdout과 stderr를 합친 출력을 그대로 옮긴 것이고, `[exit=N]`은 종료 코드입니다.
@@ -273,7 +273,7 @@ SELECT 100000
 
 - `pg_buffercache_evict_relation`의 결과 `(1728,1725,0)`은 (내보낸 칸, 그중 먼저 디스크에 쓴 칸, 건너뛴 칸)입니다. 방금 만든 테이블이라 대부분 dirty여서 쓰고 나서 내보냈습니다.
 - 테이블을 한 번 읽자 이 테이블의 페이지 1728개가 모두 shared buffers에 올라왔습니다(`buffers_of_small`).
-- 읽기만 했는데 `buffers_dirty`가 64에서 1789로 늘었습니다. 새로 만든 행을 처음 읽을 때 PostgreSQL이 "이 행을 만든 트랜잭션은 커밋되었다"는 표시(hint bit)를 페이지에 적어 두기 때문입니다. 4편(MVCC)에서 자세히 다룹니다.
+- 읽기만 했는데 `buffers_dirty`가 64에서 1789로 늘었습니다. 새로 만든 행을 처음 읽을 때 PostgreSQL이 "이 행을 만든 트랜잭션은 커밋되었다"는 표시(hint bit)를 페이지에 적어 두기 때문입니다. [4편](/posts/postgresql/04-mvcc/)(MVCC)에서 자세히 다룹니다.
 
 ### 실습 4. 처음 읽으면 read, 다시 읽으면 hit
 
@@ -590,7 +590,7 @@ CHECKPOINT
 [exit=0]
 ```
 
-UPDATE로 이 테이블의 칸 1899개가 dirty가 되었습니다. 테이블 페이지(1728)보다 많은 이유는 UPDATE가 새 버전의 행을 쓰느라 테이블 끝에 페이지를 더 붙였기 때문입니다(4편). 빈 공간 지도(FSM, 5편) 같은 부가 파일의 페이지 몇 칸도 여기에 함께 세어집니다. 이 상태에서는 디스크의 파일이 아직 옛 내용이고, 최신 내용은 메모리와 WAL에만 있습니다. `CHECKPOINT` 뒤에는 dirty가 0이 되었고, checkpointer가 쓴 버퍼 수가 328에서 2227로 정확히 1899 늘었습니다.
+UPDATE로 이 테이블의 칸 1899개가 dirty가 되었습니다. 테이블 페이지(1728)보다 많은 이유는 UPDATE가 새 버전의 행을 쓰느라 테이블 끝에 페이지를 더 붙였기 때문입니다([4편](/posts/postgresql/04-mvcc/)). 빈 공간 지도(FSM, [5편](/posts/postgresql/05-vacuum/)) 같은 부가 파일의 페이지 몇 칸도 여기에 함께 세어집니다. 이 상태에서는 디스크의 파일이 아직 옛 내용이고, 최신 내용은 메모리와 WAL에만 있습니다. `CHECKPOINT` 뒤에는 dirty가 0이 되었고, checkpointer가 쓴 버퍼 수가 328에서 2227로 정확히 1899 늘었습니다.
 
 ### 실습 8. work_mem을 넘는 정렬은 임시 파일로 간다
 
@@ -872,7 +872,7 @@ psql -X -c "SELECT wal_records, pg_size_pretty(wal_bytes) AS wal_bytes, wal_buff
 [exit=0]
 ```
 
-두 경우 모두 `wal_buffers_full`이 5천 번대입니다(5368, 5874). 트랜잭션 하나가 46MB의 WAL을 쏟아내면 4MB든 64kB든 버퍼는 금방 차고, backend가 직접 WAL을 써서 자리를 만들어야 합니다. 이 실습에서 차이는 약 9%였습니다. WAL buffers의 크기는 대량 적재 한 건보다, **짧은 트랜잭션이 동시에 많이 커밋될 때** WAL을 모아 쓰는 효과에서 더 중요합니다. 이 실습만으로 그 효과를 보여 주지는 못했으므로, 부하 테스트는 WAL을 다루는 7편에서 이어 가겠습니다.
+두 경우 모두 `wal_buffers_full`이 5천 번대입니다(5368, 5874). 트랜잭션 하나가 46MB의 WAL을 쏟아내면 4MB든 64kB든 버퍼는 금방 차고, backend가 직접 WAL을 써서 자리를 만들어야 합니다. 이 실습에서 차이는 약 9%였습니다. WAL buffers의 크기는 대량 적재 한 건보다, **짧은 트랜잭션이 동시에 많이 커밋될 때** WAL을 모아 쓰는 효과에서 더 중요합니다. 이 실습만으로 그 효과를 보여 주지는 못했으므로, 부하 테스트는 WAL을 다루는 [7편](/posts/postgresql/07-wal/)에서 이어 가겠습니다.
 
 ## 운영에서는 이렇게 나타납니다
 
@@ -900,7 +900,7 @@ shared buffers가 클수록 hit가 늘어나는 것은 맞습니다. 하지만 �
 
 ### 대량 적재 직후 첫 조회가 느리다
 
-실습 3과 6에서 본 것처럼, 새로 쓴 행을 처음 읽는 쿼리는 hint bit를 적느라 페이지를 dirty로 만들고, 큰 테이블이면 ring buffer 때문에 그 페이지를 곧바로 디스크에 씁니다. 대량 적재 뒤에 `VACUUM`(또는 `VACUUM (FREEZE)`)을 한 번 돌려 두면 이 작업이 미리 끝나서, 사용자 쿼리가 그 비용을 떠안지 않습니다. VACUUM은 5편에서 다룹니다.
+실습 3과 6에서 본 것처럼, 새로 쓴 행을 처음 읽는 쿼리는 hint bit를 적느라 페이지를 dirty로 만들고, 큰 테이블이면 ring buffer 때문에 그 페이지를 곧바로 디스크에 씁니다. 대량 적재 뒤에 `VACUUM`(또는 `VACUUM (FREEZE)`)을 한 번 돌려 두면 이 작업이 미리 끝나서, 사용자 쿼리가 그 비용을 떠안지 않습니다. VACUUM은 [5편](/posts/postgresql/05-vacuum/)에서 다룹니다.
 
 ## 정리
 

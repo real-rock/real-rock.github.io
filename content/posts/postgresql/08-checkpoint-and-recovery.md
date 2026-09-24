@@ -40,7 +40,7 @@ description: "체크포인트가 하는 일과 장애 후 복구가 진행되는
 3. **fsync**: 쓴 파일들을 모두 fsync해서 실제로 디스크에 닿게 합니다([`ProcessSyncRequests()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7567)).
 4. **완료 기록**: `CHECKPOINT_ONLINE` 레코드를 넣고 flush합니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7249-L7252)). 이 레코드 안에 1단계의 REDO 위치, 다음 xid, 다음 OID 같은 정보가 들어 있습니다.
 5. **pg_control 갱신**: `$PGDATA/global/pg_control` 파일에 "마지막 체크포인트 레코드는 여기"라고 적습니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7289-L7302)). pg_control은 내용이 512바이트도 안 되는 작은 파일(파일 크기 8kB)로, 서버가 켜질 때 가장 먼저 읽는 곳입니다([`pg_control.h`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/catalog/pg_control.h#L247-L256)).
-6. **옛 WAL 정리**: 이제 REDO 위치 이전의 WAL은 장애 복구에 필요 없으므로, 그 세그먼트를 지우거나 이름을 바꿔 재활용합니다. 단 `wal_keep_size`, replication slot(9편)이 요구하는 몫과 아직 보관(archive)되지 않은 세그먼트는 남깁니다([`RemoveOldXlogFiles()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L3857), [7편 실습 8](/posts/postgresql/07-wal/)).
+6. **옛 WAL 정리**: 이제 REDO 위치 이전의 WAL은 장애 복구에 필요 없으므로, 그 세그먼트를 지우거나 이름을 바꿔 재활용합니다. 단 `wal_keep_size`, replication slot([9편](/posts/postgresql/09-streaming-replication/))이 요구하는 몫과 아직 보관(archive)되지 않은 세그먼트는 남깁니다([`RemoveOldXlogFiles()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L3857), [7편 실습 8](/posts/postgresql/07-wal/)).
 
 REDO 레코드와 완료 레코드를 따로 두는 이유는, 체크포인트가 몇 분씩 걸리는 동안에도 다른 세션이 WAL을 계속 쓸 수 있게 하기 위해서입니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L6902-L6917)). 서버를 정상 종료할 때 하는 **shutdown 체크포인트**는 그동안 다른 WAL이 끼어들 수 없으므로 `CHECKPOINT_SHUTDOWN` 레코드 하나가 REDO 위치이자 완료 기록입니다.
 
@@ -93,7 +93,7 @@ dirty 페이지 수천, 수만 개를 한꺼번에 쓰면 그동안 디스크가
 - **WAL 보관(archiving)**: `archive_mode = on`이면 archiver 프로세스가 다 쓴 세그먼트를 `archive_command`로 다른 곳에 복사합니다. 체크포인트가 옛 WAL을 지워도 보관본은 남습니다.
 - **복원**: 백업을 풀고 `recovery.signal` 파일을 만든 뒤 켜면, `restore_command`로 보관한 WAL을 하나씩 가져와 적용합니다. `recovery_target_time`, `recovery_target_lsn`, `recovery_target_name` 등으로 멈출 지점을 정하면 거기서 멈춥니다([`recoveryStopsAfter()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlogrecovery.c#L2763)).
 
-복원한 서버가 멈춘 지점부터 새 WAL을 쓰기 시작하면, 원래 서버가 그 뒤로 쓴 WAL과 번호가 겹칩니다. 그래서 복구를 끝낼 때 **새 타임라인 ID**를 골라([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L5986)) 이후 WAL 파일 이름의 앞 8자리를 바꾸고, 어디서 갈라졌는지를 `.history` 파일에 남깁니다([Timelines](https://www.postgresql.org/docs/18/continuous-archiving.html#BACKUP-TIMELINES)). standby를 승격할 때도 같은 일이 일어납니다(9편).
+복원한 서버가 멈춘 지점부터 새 WAL을 쓰기 시작하면, 원래 서버가 그 뒤로 쓴 WAL과 번호가 겹칩니다. 그래서 복구를 끝낼 때 **새 타임라인 ID**를 골라([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L5986)) 이후 WAL 파일 이름의 앞 8자리를 바꾸고, 어디서 갈라졌는지를 `.history` 파일에 남깁니다([Timelines](https://www.postgresql.org/docs/18/continuous-archiving.html#BACKUP-TIMELINES)). standby를 승격할 때도 같은 일이 일어납니다([9편](/posts/postgresql/09-streaming-replication/)).
 
 ## 직접 확인해 보기
 
@@ -245,7 +245,7 @@ REDO=0/6C91478 CHECKPOINT=0/6C914D0
 [exit=0]
 ```
 
-REDO 위치 `0/6C91478`에 `CHECKPOINT_REDO`가 있고, 완료 기록 `CHECKPOINT_ONLINE`은 `0/6C914D0`에 있습니다. 완료 기록의 설명에 있는 `redo 0/6C91478`이 REDO 위치를 다시 가리킵니다. 둘 사이의 `RUNNING_XACTS`는 체크포인트가 완료 기록 직전에 standby를 위해 남기는 "지금 실행 중인 트랜잭션 목록"입니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7239), 9편).
+REDO 위치 `0/6C91478`에 `CHECKPOINT_REDO`가 있고, 완료 기록 `CHECKPOINT_ONLINE`은 `0/6C914D0`에 있습니다. 완료 기록의 설명에 있는 `redo 0/6C91478`이 REDO 위치를 다시 가리킵니다. 둘 사이의 `RUNNING_XACTS`는 체크포인트가 완료 기록 직전에 standby를 위해 남기는 "지금 실행 중인 트랜잭션 목록"입니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7239), [9편](/posts/postgresql/09-streaming-replication/)).
 
 이번에는 다른 세션이 없어 레코드가 셋뿐이지만, 바쁜 서버라면 체크포인트가 페이지를 쓰는 동안 생긴 모든 변경 레코드가 REDO와 완료 기록 사이에 들어갑니다. 완료 기록에는 `xid 0:756`(다음에 줄 xid), `oid 24576`(다음에 줄 OID) 같은 값도 담겨 있어서, 복구를 마친 서버가 번호를 이어서 쓸 수 있습니다.
 

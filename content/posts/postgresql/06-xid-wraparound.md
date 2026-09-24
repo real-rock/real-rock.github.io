@@ -452,7 +452,7 @@ WARNING이 보이면 이미 한계까지 4000만 개 남은 상태입니다. 초
 
 1. 오래된 트랜잭션: `pg_stat_activity`에서 `backend_xid`, `backend_xmin`의 age가 큰 세션을 찾아 끝냅니다.
 2. prepared transaction: `pg_prepared_xacts`에 오래된 것이 있으면 `COMMIT PREPARED` 또는 `ROLLBACK PREPARED`합니다.
-3. replication slot: `pg_replication_slots`에서 `xmin`, `catalog_xmin`이 오래된 비활성 슬롯을 지웁니다(9편).
+3. replication slot: `pg_replication_slots`에서 `xmin`, `catalog_xmin`이 오래된 비활성 슬롯을 지웁니다([9편](/posts/postgresql/09-streaming-replication/)).
 4. 그다음 superuser로 `VACUUM (VERBOSE)`를 돌립니다. 가장 age가 큰 테이블부터 해도 됩니다. 이때 `FREEZE`나 `FULL` 옵션은 필요한 것보다 많은 일을 하므로 쓰지 않습니다([문서](https://www.postgresql.org/docs/18/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND)).
 
 원인을 없애지 않고 VACUUM만 돌리면, 실습 5-7처럼 VACUUM이 끝나도 datfrozenxid가 움직이지 않습니다.

@@ -48,7 +48,7 @@ DB 내부를 처음 보는 개발자도 따라올 수 있도록, 용어가 처�
 > **용어 정리**
 > - **프로세스**: 운영체제가 따로 메모리 공간을 주고 실행하는 프로그램 단위입니다. `ps` 명령에 한 줄씩 보이는 것이 프로세스입니다.
 > - **fork**: 실행 중인 프로세스가 자신을 그대로 복제해 자식 프로세스를 만드는 유닉스 시스템 콜입니다. 부모가 열어 둔 파일, 메모리 매핑 같은 것을 자식이 물려받습니다.
-> - **WAL(Write-Ahead Log)**: 데이터 파일을 고치기 전에 "무엇을 바꿀지"를 먼저 적어 두는 로그입니다. 장애가 나면 이 로그를 다시 재생해서 복구합니다. 7편에서 자세히 다룹니다.
+> - **WAL(Write-Ahead Log)**: 데이터 파일을 고치기 전에 "무엇을 바꿀지"를 먼저 적어 두는 로그입니다. 장애가 나면 이 로그를 다시 재생해서 복구합니다. [7편](/posts/postgresql/07-wal/)에서 자세히 다룹니다.
 
 ### postmaster: 문을 지키고 자식을 감시하는 프로세스
 
@@ -121,7 +121,7 @@ postmaster에게 일을 시키는 방법은 유닉스 시그널입니다. 시그
 
 `max_connections` 제한이 실제로 걸리는 곳도 여기입니다. postmaster가 fork 전에 확인하는 자식 슬롯은 [`2 × (max_connections + max_wal_senders)`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/pmchild.c#L100)개로 넉넉하게 잡혀 있습니다. 인증 도중에 실패하거나 먼저 나가는 세션이 있기 때문입니다. 정확한 제한은 PGPROC 자리가 모자랄 때 [`sorry, too many clients already`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/lmgr/proc.c#L457)로 걸립니다. 그래서 **거절될 접속도 일단 fork는 됩니다.** 실습 6에서 확인합니다.
 
-**3. 쿼리 처리.** 준비가 끝나면 backend는 [`PostgresMain()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4188)의 [메인 루프](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4520)에 들어갑니다. 클라이언트에 "준비됐다(ReadyForQuery)"를 보내고, 다음 명령을 기다리고, 받은 쿼리를 파싱, 계획, 실행하고, 결과를 돌려주는 일을 반복합니다. 쿼리 처리 과정은 10편에서 다룹니다.
+**3. 쿼리 처리.** 준비가 끝나면 backend는 [`PostgresMain()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4188)의 [메인 루프](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/tcop/postgres.c#L4520)에 들어갑니다. 클라이언트에 "준비됐다(ReadyForQuery)"를 보내고, 다음 명령을 기다리고, 받은 쿼리를 파싱, 계획, 실행하고, 결과를 돌려주는 일을 반복합니다. 쿼리 처리 과정은 [10편](/posts/postgresql/10-query-processing/)에서 다룹니다.
 
 **4. 종료.** 클라이언트가 Terminate 메시지를 보내거나 연결이 끊기면 backend 프로세스가 끝납니다. 운영체제는 부모인 postmaster에게 `SIGCHLD`를 보내고, postmaster는 [`CleanupBackend()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L2565)에서 슬롯을 돌려받습니다.
 
@@ -173,7 +173,7 @@ PostgreSQL 18에는 비동기 I/O(AIO)가 들어왔고, 그 기본 구현이 `io
 
 프로세스는 원래 서로의 메모리를 볼 수 없습니다. PostgreSQL 프로세스들이 협업하는 방법은 세 가지입니다.
 
-**공유 메모리.** postmaster는 기동할 때 [`CreateSharedMemoryAndSemaphores()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L1003)로 큰 공유 메모리 영역을 만듭니다. 자식은 fork할 때 이 매핑을 그대로 물려받으므로, **모든 프로세스가 같은 가상 주소에서 같은 메모리를 봅니다**(실습 9). shared buffers, WAL buffers, 락 테이블, PGPROC 배열, PG18의 I/O 큐가 모두 여기에 있습니다. 크기는 `shared_memory_size`로 확인할 수 있습니다. 공유 메모리의 구성은 2편에서 자세히 다룹니다.
+**공유 메모리.** postmaster는 기동할 때 [`CreateSharedMemoryAndSemaphores()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L1003)로 큰 공유 메모리 영역을 만듭니다. 자식은 fork할 때 이 매핑을 그대로 물려받으므로, **모든 프로세스가 같은 가상 주소에서 같은 메모리를 봅니다**(실습 9). shared buffers, WAL buffers, 락 테이블, PGPROC 배열, PG18의 I/O 큐가 모두 여기에 있습니다. 크기는 `shared_memory_size`로 확인할 수 있습니다. 공유 메모리의 구성은 [2편](/posts/postgresql/02-memory-architecture/)에서 자세히 다룹니다.
 
 **시그널과 latch.** "일이 생겼으니 깨어나라"는 알림은 시그널로 보냅니다. 받는 쪽은 latch라는 장치로 잠들어 있다가 깨어납니다. 앞에서 본 `ServerLoop`의 `WaitEventSetWait()`가 latch를 기다리는 부분입니다. 자식이 postmaster에게 부탁할 때도 같은 방식을 씁니다. 예를 들어 autovacuum launcher는 worker가 필요하면 [`SendPostmasterSignal(PMSIGNAL_START_AUTOVAC_WORKER)`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/autovacuum.c#L1271)로 요청만 보내고, fork는 postmaster가 [`StartAutovacuumWorker()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L4026)에서 합니다. 그래서 autovacuum worker의 부모 프로세스는 launcher가 아니라 postmaster입니다(실습 5).
 
@@ -709,7 +709,7 @@ lifecycle 그림의 상태 변화가 로그 한 줄 한 줄에 대응합니다.
 | `invalid record length ...` | WAL의 끝에 도달했다는 뜻으로, 복구 중에 흔히 보이는 정상 메시지 |
 | `database system is ready to accept connections` | PM_RUN 복귀 |
 
-크래시부터 복귀까지 약 50ms가 걸렸습니다. 재생할 WAL이 156kB뿐이라 빨랐던 것이고, 쓰기가 많은 운영 서버라면 마지막 체크포인트 이후 쌓인 WAL 양만큼 오래 걸립니다(8편에서 다룹니다).
+크래시부터 복귀까지 약 50ms가 걸렸습니다. 재생할 WAL이 156kB뿐이라 빨랐던 것이고, 쓰기가 많은 운영 서버라면 마지막 체크포인트 이후 쌓인 WAL 양만큼 오래 걸립니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)에서 다룹니다).
 
 아무 잘못이 없던 옆 세션(367번)의 클라이언트는 다음 메시지를 받았습니다.
 
@@ -1022,7 +1022,7 @@ server started
 접속 하나가 프로세스 하나이므로, 커넥션 수는 곧 프로세스 수입니다. 실습에서 확인한 비용은 다음과 같습니다.
 
 - **접속할 때마다 드는 비용**: 실습 3에서 접속 준비에 약 1ms(fork 약 0.15ms)가 걸렸습니다. 로컬 소켓에 `trust` 인증을 쓴 가장 가벼운 조건입니다. 네트워크 왕복, TLS, 비밀번호 인증이 붙으면 더 걸립니다. 요청마다 새로 접속하는 애플리케이션이라면 이 비용을 요청마다 냅니다.
-- **프로세스마다 드는 메모리**: idle backend 하나의 개인 메모리(`RssAnon`)는 약 1.8MB였습니다. 쿼리를 실행하면 카탈로그 캐시와 정렬, 해시에 쓰는 작업 메모리(`work_mem`)가 여기에 더해집니다. 작업 메모리는 2편에서 다룹니다.
+- **프로세스마다 드는 메모리**: idle backend 하나의 개인 메모리(`RssAnon`)는 약 1.8MB였습니다. 쿼리를 실행하면 카탈로그 캐시와 정렬, 해시에 쓰는 작업 메모리(`work_mem`)가 여기에 더해집니다. 작업 메모리는 [2편](/posts/postgresql/02-memory-architecture/)에서 다룹니다.
 - **공유 자원 경쟁**: 모든 backend가 같은 공유 메모리의 락과 PGPROC 배열을 씁니다. 프로세스가 많아지면 그만큼 경쟁과 문맥 전환(context switch)이 늘어납니다.
 
 그래서 수천 개의 애플리케이션 커넥션을 그대로 PostgreSQL에 붙이지 않고, **PgBouncer 같은 커넥션 풀러**를 앞에 둡니다. 풀러는 애플리케이션의 접속은 많이 받고, PostgreSQL에는 적은 수의 접속만 유지하면서 backend를 돌려 씁니다. fork와 인증 비용은 한 번만 내고, 프로세스 수도 일정하게 유지됩니다.

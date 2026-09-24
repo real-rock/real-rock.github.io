@@ -41,7 +41,7 @@ description: "페이지 레이아웃, 튜플 구조, TOAST"
 | fsm | `16430_fsm` | 페이지마다 빈 공간이 얼마나 있는지(Free Space Map). INSERT가 넣을 곳을 찾을 때 씁니다. |
 | vm | `16430_vm` | 페이지의 모든 행이 모두에게 보이는지(Visibility Map). VACUUM과 index-only scan이 씁니다. |
 
-fsm과 vm은 5편(VACUUM)에서 자세히 다룹니다.
+fsm과 vm은 [5편](/posts/postgresql/05-vacuum/)(VACUUM)에서 자세히 다룹니다.
 
 ### 8kB 페이지의 구조
 
@@ -78,7 +78,7 @@ line pointer를 한 단계 거치는 이유가 있습니다. 행의 주소(ctid)
 |---|---|---|
 | 0 | `LP_UNUSED` | 비어 있어 다시 쓸 수 있음 |
 | 1 | `LP_NORMAL` | 정상 튜플을 가리킴 |
-| 2 | `LP_REDIRECT` | HOT 업데이트로 다른 line pointer로 넘겨 줌 (5편) |
+| 2 | `LP_REDIRECT` | HOT 업데이트로 다른 line pointer로 넘겨 줌 ([5편](/posts/postgresql/05-vacuum/)) |
 | 3 | `LP_DEAD` | 죽은 튜플. 공간 회수 대기 |
 
 ### 튜플 하나의 구조
@@ -95,7 +95,7 @@ line pointer를 한 단계 거치는 이유가 있습니다. 행의 주소(ctid)
 | `t_infomask` | 2 | NULL이 있는지, 가변 길이 열이 있는지, xmin/xmax가 커밋되었는지 등 ([`htup_details.h`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/htup_details.h#L190-L219)) |
 | `t_hoff` | 1 | 헤더 전체 크기. 데이터가 시작하는 위치 |
 
-`t_xmin`, `t_xmax`는 4편(MVCC)의 주인공입니다. "누가 만들었고 누가 지웠는지"가 행마다 헤더에 적혀 있기 때문에, PostgreSQL은 행을 제자리에서 고치지 않고도 트랜잭션마다 다른 버전을 보여 줄 수 있습니다.
+`t_xmin`, `t_xmax`는 [4편](/posts/postgresql/04-mvcc/)(MVCC)의 주인공입니다. "누가 만들었고 누가 지웠는지"가 행마다 헤더에 적혀 있기 때문에, PostgreSQL은 행을 제자리에서 고치지 않고도 트랜잭션마다 다른 버전을 보여 줄 수 있습니다.
 
 헤더 뒤에는 NULL 비트맵이 올 수 있습니다. 한 열이라도 NULL이면 열 개수만큼의 비트를 두고, 값이 있으면 1, NULL이면 0을 적습니다. NULL인 열은 데이터 영역에 아무 바이트도 차지하지 않습니다. 비트맵은 열 8개까지는 23바이트 헤더 뒤의 빈 1바이트에 들어가서 추가 비용이 없고, 열이 그보다 많으면 헤더가 8바이트 단위로 늘어납니다.
 
@@ -437,7 +437,7 @@ INSERT 0 10000
 ```
 
 - 행 하나는 헤더 24 + 데이터 4 = 28바이트, 8의 배수로 올려 32바이트에 line pointer 4바이트를 더해 36바이트입니다. (8192 − 24) ÷ 36 = 226.9라 페이지당 226행이 들어갑니다. `lower = 24 + 226 × 4 = 928`, `upper = 8192 − 226 × 32 = 960`으로 계산과 정확히 맞습니다. 남은 32바이트로는 한 행(36바이트)을 더 넣을 수 없습니다.
-- `fillfactor = 50`은 INSERT할 때 페이지를 절반까지만 채우라는 뜻입니다. 페이지당 113행, 페이지 수는 두 배(45 → 89)입니다. 남겨 둔 공간은 나중에 UPDATE가 새 버전을 **같은 페이지에** 넣는 데 씁니다(HOT 업데이트, 5편).
+- `fillfactor = 50`은 INSERT할 때 페이지를 절반까지만 채우라는 뜻입니다. 페이지당 113행, 페이지 수는 두 배(45 → 89)입니다. 남겨 둔 공간은 나중에 UPDATE가 새 버전을 **같은 페이지에** 넣는 데 씁니다(HOT 업데이트, [5편](/posts/postgresql/05-vacuum/)).
 
 ### 실습 8. 큰 값은 TOAST로
 
@@ -598,7 +598,7 @@ TOAST로 나간 값을 UPDATE하면 TOAST 테이블에도 새 조각이 생기�
 
 ### 체크섬이 켜진 PG18 클러스터
 
-PG18부터 새로 만드는 클러스터는 체크섬이 기본으로 켜집니다. 체크섬이 있으면 디스크에서 읽은 페이지가 깨졌을 때 [`invalid page in block ...`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L7361) 오류로 바로 알 수 있습니다. 대신 페이지를 쓸 때마다 체크섬을 계산하는 CPU 비용이 조금 들고, 더 눈에 띄는 비용은 WAL입니다. 체크섬이 켜져 있으면 hint bit만 바꿔도, 체크포인트 뒤 그 페이지를 처음 고칠 때 페이지 전체 이미지(full-page image)를 WAL에 남깁니다([`XLogHintBitIsNeeded()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlog.h#L120)). 읽기 위주 작업에서도 WAL이 늘 수 있다는 뜻입니다(7편). 기존 클러스터(체크섬 꺼짐)를 `pg_upgrade`로 올릴 때는 새 클러스터도 체크섬 설정이 같아야 하므로([`controldata.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/bin/pg_upgrade/controldata.c#L745-L750)), 18에서 initdb할 때 `--no-data-checksums`를 주거나 기존 클러스터에서 서버를 내린 상태에서 `pg_checksums --enable`로 먼저 켜야 합니다(모든 데이터 파일을 다시 쓰므로 시간이 걸립니다).
+PG18부터 새로 만드는 클러스터는 체크섬이 기본으로 켜집니다. 체크섬이 있으면 디스크에서 읽은 페이지가 깨졌을 때 [`invalid page in block ...`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L7361) 오류로 바로 알 수 있습니다. 대신 페이지를 쓸 때마다 체크섬을 계산하는 CPU 비용이 조금 들고, 더 눈에 띄는 비용은 WAL입니다. 체크섬이 켜져 있으면 hint bit만 바꿔도, 체크포인트 뒤 그 페이지를 처음 고칠 때 페이지 전체 이미지(full-page image)를 WAL에 남깁니다([`XLogHintBitIsNeeded()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlog.h#L120)). 읽기 위주 작업에서도 WAL이 늘 수 있다는 뜻입니다([7편](/posts/postgresql/07-wal/)). 기존 클러스터(체크섬 꺼짐)를 `pg_upgrade`로 올릴 때는 새 클러스터도 체크섬 설정이 같아야 하므로([`controldata.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/bin/pg_upgrade/controldata.c#L745-L750)), 18에서 initdb할 때 `--no-data-checksums`를 주거나 기존 클러스터에서 서버를 내린 상태에서 `pg_checksums --enable`로 먼저 켜야 합니다(모든 데이터 파일을 다시 쓰므로 시간이 걸립니다).
 
 ## 정리
 

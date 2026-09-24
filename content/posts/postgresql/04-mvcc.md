@@ -48,7 +48,7 @@ PostgreSQL은 이 문제를 **MVCC**(Multi-Version Concurrency Control, 다중 �
 
 마지막 줄이 중요합니다. PostgreSQL의 ROLLBACK은 페이지를 되돌리지 않습니다. 대신 **각 트랜잭션이 커밋되었는지 롤백되었는지를 따로 기록**해 두고, 튜플을 읽을 때마다 그 기록을 봅니다. 이 기록이 `$PGDATA/pg_xact` 디렉터리입니다. 트랜잭션 하나당 [2비트](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/clog.c#L62-L64)로 [네 가지 상태](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/clog.h#L27-L30)(진행 중, 커밋, 롤백, 하위 트랜잭션 커밋)를 적으므로, 8kB 페이지 하나에 트랜잭션 32768개의 상태가 들어갑니다.
 
-지워지거나 옛 버전이 된 튜플(**dead tuple**)은 아무도 볼 일이 없어진 뒤 VACUUM이 정리합니다. 5편에서 다룹니다.
+지워지거나 옛 버전이 된 튜플(**dead tuple**)은 아무도 볼 일이 없어진 뒤 VACUUM이 정리합니다. [5편](/posts/postgresql/05-vacuum/)에서 다룹니다.
 
 ### 스냅샷: "어느 시점까지를 볼 것인가"
 
@@ -215,7 +215,7 @@ COMMIT
 
 - lp 1(옛 버전): `t_xmax = 756`, `t_ctid = (0,5)`. 트랜잭션 756이 지웠고, 새 버전은 5번에 있다는 뜻입니다.
 - lp 5(새 버전): `t_xmin = 756`. `HEAP_UPDATED`는 UPDATE로 생긴 버전이라는 표시입니다.
-- 옛 버전의 `HEAP_HOT_UPDATED`와 새 버전의 `HEAP_ONLY_TUPLE`은 이 UPDATE가 **HOT**(Heap-Only Tuple) 업데이트였다는 뜻입니다. 새 버전이 같은 페이지에 들어갔고 인덱스 열(`id`)이 바뀌지 않아서, 인덱스를 고치지 않고 버전 체인만 이었습니다. 5편에서 자세히 다룹니다.
+- 옛 버전의 `HEAP_HOT_UPDATED`와 새 버전의 `HEAP_ONLY_TUPLE`은 이 UPDATE가 **HOT**(Heap-Only Tuple) 업데이트였다는 뜻입니다. 새 버전이 같은 페이지에 들어갔고 인덱스 열(`id`)이 바뀌지 않아서, 인덱스를 고치지 않고 버전 체인만 이었습니다. [5편](/posts/postgresql/05-vacuum/)에서 자세히 다룹니다.
 
 ### 실습 3. DELETE와 ROLLBACK도 튜플을 지우지 않는다
 
@@ -779,7 +779,7 @@ WHERE (backend_xmin IS NOT NULL OR backend_xid IS NOT NULL) AND pid <> pg_backen
 ORDER BY xact_start;
 ```
 
-`idle_in_transaction_session_timeout`으로 이런 세션을 자동으로 끊을 수 있습니다. VACUUM이 무엇을 기준으로 지울 수 있는지 판단하는지는 5편에서 자세히 봅니다.
+`idle_in_transaction_session_timeout`으로 이런 세션을 자동으로 끊을 수 있습니다. VACUUM이 무엇을 기준으로 지울 수 있는지 판단하는지는 [5편](/posts/postgresql/05-vacuum/)에서 자세히 봅니다.
 
 ### UPDATE가 많은 테이블은 커진다
 

@@ -33,7 +33,7 @@ standby는 primary와 똑같은 WAL을 똑같이 재생하므로, 페이지 단�
 
 - **walsender** (primary): standby가 복제 연결을 맺으면 postmaster가 띄우는 backend의 한 종류입니다([1편](/posts/postgresql/01-process-architecture/)). 보낼 WAL이 아직 WAL buffers(공유 메모리)에 남아 있으면 거기서, 없으면 `pg_wal` 파일에서 읽어 보냅니다(버퍼에서 먼저 읽는 것은 PG17부터, [`XLogSendPhysical()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L3140)). 보내는 것은 primary에서 **flush까지 끝난** WAL뿐입니다([`walsender.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L3244)). 아직 primary 디스크에도 없는 WAL을 standby가 먼저 갖는 일은 없습니다.
 - **walreceiver** (standby): primary에 접속해서 WAL을 받아 standby의 `pg_wal`에 쓰고([`XLogWalRcvWrite()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walreceiver.c#L976)) fsync합니다([`XLogWalRcvFlush()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walreceiver.c#L1071)). 그리고 어디까지 썼고(write), 디스크에 확정했고(flush), 재생했는지(apply)를 같은 연결로 primary에 보고합니다([`XLogWalRcvSendReply()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walreceiver.c#L1178)).
-- **startup** (standby): 8편의 장애 복구를 하던 그 프로세스입니다. standby에서는 복구를 끝내지 않고, walreceiver가 fsync까지 끝낸 WAL을 이어서 재생합니다.
+- **startup** (standby): [8편](/posts/postgresql/08-checkpoint-and-recovery/)의 장애 복구를 하던 그 프로세스입니다. standby에서는 복구를 끝내지 않고, walreceiver가 fsync까지 끝낸 WAL을 이어서 재생합니다.
 
 standby는 `standby.signal` 파일이 있는 데이터 디렉터리로 시작하며, `primary_conninfo`에 적힌 primary로 접속합니다. `pg_basebackup -R`이 이 두 가지를 만들어 줍니다(실습 1). `hot_standby`(기본 on)이면 재생하는 동안에도 읽기 전용 쿼리를 받습니다.
 
@@ -82,7 +82,7 @@ startup은 충돌하는 WAL을 **받은 시각부터** `max_standby_streaming_de
 
 ### replication slot: WAL을 붙잡아 두는 약속
 
-primary는 체크포인트 때 REDO 위치 이전의 WAL을 지웁니다(8편). standby가 잠시 끊겼다가 돌아왔는데 그동안 필요한 WAL이 지워졌다면, standby는 더 따라갈 수 없고 백업부터 다시 만들어야 합니다.
+primary는 체크포인트 때 REDO 위치 이전의 WAL을 지웁니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)). standby가 잠시 끊겼다가 돌아왔는데 그동안 필요한 WAL이 지워졌다면, standby는 더 따라갈 수 없고 백업부터 다시 만들어야 합니다.
 
 **replication slot**은 "이 standby가 아직 받지 못한 WAL은 지우지 말라"는 약속입니다. slot에는 standby가 flush했다고 보고한 위치가 `restart_lsn`으로 기록되고([`PhysicalConfirmReceivedLocation()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L2412)), 체크포인트는 모든 slot의 `restart_lsn` 가운데 가장 오래된 것 이후의 WAL을 남깁니다([`KeepLogSeg()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7991-L8001)). slot은 standby가 끊겨 있어도 유지됩니다.
 
@@ -174,7 +174,7 @@ server started
 [exit=0]
 ```
 
-- `pg_basebackup -R -C -S standby1`은 베이스 백업을 뜨면서(8편) primary에 `standby1`이라는 slot을 만들고(`-C -S`), standby로 시작하는 데 필요한 설정을 적어 줍니다(`-R`).
+- `pg_basebackup -R -C -S standby1`은 베이스 백업을 뜨면서([8편](/posts/postgresql/08-checkpoint-and-recovery/)) primary에 `standby1`이라는 slot을 만들고(`-C -S`), standby로 시작하는 데 필요한 설정을 적어 줍니다(`-R`).
 - `standby.signal` 파일이 있으면 서버는 복구를 끝내지 않고 standby로 남습니다. `postgresql.auto.conf`에는 primary 접속 정보(`primary_conninfo`)와 쓸 slot 이름(`primary_slot_name`)이 들어갔습니다.
 - standby 로그를 보면 `entering standby mode`로 시작해 백업의 REDO 위치부터 재생하고(`redo starts at 0/6000028`), 백업이 끝난 위치에서 일관된 상태가 되자(`consistent recovery state reached`) 읽기 접속을 받기 시작합니다. 그리고 walreceiver가 `0/7000000`부터 스트리밍을 시작했습니다.
 
@@ -530,7 +530,7 @@ server started
 
 - `max_slot_wal_keep_size`를 128MB로 정하고 체크포인트하자, checkpointer가 `invalidating obsolete replication slot "standby1"`을 남기고 slot을 무효화했습니다. DETAIL은 `restart_lsn`이 상한을 419085328바이트(약 400MB) 넘었다는 뜻입니다.
 - slot은 `lost`, 원인은 `wal_removed`가 되었고 `restart_lsn`은 비었습니다. `pg_wal`은 65MB로 줄었습니다.
-- standby를 다시 켜도 walreceiver가 `can no longer access replication slot`으로 실패합니다. WAL 아카이브(8편)가 없다면 이 standby는 새 베이스 백업으로 다시 만들어야 합니다. primary의 디스크를 지키는 대신 standby를 포기한 것입니다.
+- standby를 다시 켜도 walreceiver가 `can no longer access replication slot`으로 실패합니다. WAL 아카이브([8편](/posts/postgresql/08-checkpoint-and-recovery/))가 없다면 이 standby는 새 베이스 백업으로 다시 만들어야 합니다. primary의 디스크를 지키는 대신 standby를 포기한 것입니다.
 
 ### 실습 10. idle_replication_slot_timeout (PG18)
 
@@ -584,7 +584,7 @@ grep -E "invalidating obsolete replication slot \"forgotten\"" -A1 /home/postgre
 
 ### 복제 지연은 나눠서 본다
 
-`pg_stat_replication`의 네 위치로 지연이 어디서 생기는지 먼저 나눕니다. `replay_lsn`만 뒤처진다면 standby의 재생이 느린 것이고, 원인은 standby의 I/O 부족이나 실습 7 같은 쿼리 충돌 대기인 경우가 많습니다. 재생은 startup 프로세스 하나가 순서대로 하므로(8편), primary에서 여러 세션이 병렬로 만든 WAL을 standby가 따라잡지 못할 수도 있습니다.
+`pg_stat_replication`의 네 위치로 지연이 어디서 생기는지 먼저 나눕니다. `replay_lsn`만 뒤처진다면 standby의 재생이 느린 것이고, 원인은 standby의 I/O 부족이나 실습 7 같은 쿼리 충돌 대기인 경우가 많습니다. 재생은 startup 프로세스 하나가 순서대로 하므로([8편](/posts/postgresql/08-checkpoint-and-recovery/)), primary에서 여러 세션이 병렬로 만든 WAL을 standby가 따라잡지 못할 수도 있습니다.
 
 ## 정리
 

@@ -33,7 +33,7 @@ WAL은 클러스터가 만들어진(initdb) 이래 끝없이 이어지는 하나
 LSN은 여러 곳에 쓰입니다.
 
 - **페이지 LSN**: 모든 데이터 페이지의 헤더(`pd_lsn`, [3편](/posts/postgresql/03-storage-layout/))에는 그 페이지를 마지막으로 바꾼 WAL 레코드의 끝 위치가 적혀 있습니다. dirty 페이지를 디스크에 쓰기 전에 **그 LSN까지 WAL이 디스크에 있는지** 확인합니다.
-- **복제와 복구의 진행 위치**: standby가 어디까지 받았는지, 복구가 어디까지 재생했는지도 LSN으로 표시합니다(8편, 9편).
+- **복제와 복구의 진행 위치**: standby가 어디까지 받았는지, 복구가 어디까지 재생했는지도 LSN으로 표시합니다([8편](/posts/postgresql/08-checkpoint-and-recovery/), [9편](/posts/postgresql/09-streaming-replication/)).
 
 WAL 위치는 세 가지로 나눠 볼 수 있습니다.
 
@@ -45,7 +45,7 @@ WAL 위치는 세 가지로 나눠 볼 수 있습니다.
 
 ### WAL 파일(세그먼트)
 
-WAL은 `$PGDATA/pg_wal` 아래에 **16MB짜리 파일(세그먼트)**로 나뉘어 저장됩니다. 파일 이름은 24자리 16진수로, 타임라인 ID 8자리, LSN 상위 32비트 8자리, 그리고 그 4GB 구간 안의 세그먼트 순번 8자리(16MB 세그먼트면 `00`~`FF`)입니다([`XLogFileName()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlog_internal.h#L166-L171)). LSN을 보면 몇 번 파일의 몇 번째 바이트인지 바로 계산할 수 있고, `pg_walfile_name()`이 그 계산을 해 줍니다. 타임라인은 복구나 standby 승격 때 WAL의 "갈래"를 나누는 번호입니다(8편).
+WAL은 `$PGDATA/pg_wal` 아래에 **16MB짜리 파일(세그먼트)**로 나뉘어 저장됩니다. 파일 이름은 24자리 16진수로, 타임라인 ID 8자리, LSN 상위 32비트 8자리, 그리고 그 4GB 구간 안의 세그먼트 순번 8자리(16MB 세그먼트면 `00`~`FF`)입니다([`XLogFileName()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlog_internal.h#L166-L171)). LSN을 보면 몇 번 파일의 몇 번째 바이트인지 바로 계산할 수 있고, `pg_walfile_name()`이 그 계산을 해 줍니다. 타임라인은 복구나 standby 승격 때 WAL의 "갈래"를 나누는 번호입니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)).
 
 다 쓴 세그먼트는 체크포인트 뒤에 필요가 없어지면, 지우는 대신 **앞으로 쓸 번호의 이름으로 바꿔 재활용**합니다(실습 8). 파일을 새로 만드는 비용을 아끼려는 것입니다.
 
@@ -81,7 +81,7 @@ WAL은 `$PGDATA/pg_wal` 아래에 **16MB짜리 파일(세그먼트)**로 나뉘�
 3. COMMIT하면 커밋 레코드를 넣고, [`XLogFlush()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L2777)로 그 위치까지 WAL을 디스크에 쓰고 fsync합니다([`RecordTransactionCommit()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xact.c#L1498-L1502)). 이게 끝나야 클라이언트에 "커밋 완료"를 돌려줍니다. 데이터 페이지는 아직 메모리에만 있습니다.
 4. 나중에 checkpointer나 bgwriter가 dirty 페이지를 쓸 때, 그 페이지 LSN까지 WAL이 디스크에 있는지 확인하고(없으면 먼저 flush) 씁니다([2편](/posts/postgresql/02-memory-architecture/)).
 
-`synchronous_commit = off`로 두면 3단계의 `XLogFlush()`를 아예 건너뛰고 바로 "커밋 완료"를 돌려줍니다. WAL을 쓰고 fsync하는 일은 walwriter가 곧 합니다. (동기 복제를 쓰면 커밋은 standby의 응답도 기다리는데, 이것은 9편에서 다룹니다.) 문서에 따르면 위험 구간은 최대 `wal_writer_delay`(기본 200ms)의 세 배입니다([Asynchronous Commit](https://www.postgresql.org/docs/18/wal-async-commit.html)). 빠르지만, 그 짧은 사이에 서버가 죽으면 **이미 커밋 완료를 받은 트랜잭션이 사라질 수 있습니다.** 데이터가 깨지지는 않고, 마지막 몇 개의 커밋만 없던 일이 됩니다.
+`synchronous_commit = off`로 두면 3단계의 `XLogFlush()`를 아예 건너뛰고 바로 "커밋 완료"를 돌려줍니다. WAL을 쓰고 fsync하는 일은 walwriter가 곧 합니다. (동기 복제를 쓰면 커밋은 standby의 응답도 기다리는데, 이것은 [9편](/posts/postgresql/09-streaming-replication/)에서 다룹니다.) 문서에 따르면 위험 구간은 최대 `wal_writer_delay`(기본 200ms)의 세 배입니다([Asynchronous Commit](https://www.postgresql.org/docs/18/wal-async-commit.html)). 빠르지만, 그 짧은 사이에 서버가 죽으면 **이미 커밋 완료를 받은 트랜잭션이 사라질 수 있습니다.** 데이터가 깨지지는 않고, 마지막 몇 개의 커밋만 없던 일이 됩니다.
 
 ## 직접 확인해 보기
 
@@ -525,13 +525,13 @@ ls $PGDATA/pg_wal | grep -v -e archive_status -e summaries | tr '\n' ' '; echo
 
 - 대량 INSERT로 WAL이 늘자 세그먼트가 4개에서 10개(160MB)가 되었습니다.
 - 체크포인트 뒤 파일 수는 그대로 10개인데, 이름이 `…01`-`…0A`에서 `…0A`-`…13`으로 바뀌었습니다. 다 쓴 `…01`-`…09`를 지우지 않고 **앞으로 쓸 `…0B`-`…13`으로 이름을 바꿔** 준비해 둔 것입니다.
-- 이렇게 남겨 두는 양은 `min_wal_size`(80MB)와 최근 WAL 사용량으로 정하고, 체크포인트 사이의 WAL은 대략 `max_wal_size`(1GB)를 넘지 않도록 체크포인트를 앞당깁니다(8편).
+- 이렇게 남겨 두는 양은 `min_wal_size`(80MB)와 최근 WAL 사용량으로 정하고, 체크포인트 사이의 WAL은 대략 `max_wal_size`(1GB)를 넘지 않도록 체크포인트를 앞당깁니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)).
 
 ## 운영에서는 이렇게 나타납니다
 
 ### 체크포인트 직후 WAL이 치솟는다
 
-실습 3, 4에서 본 것처럼, 체크포인트 직후에는 모든 페이지가 "처음 고치는 페이지"라 페이지 이미지가 쏟아집니다. 쓰기가 많은 시스템에서 체크포인트마다 WAL 생성량이 톱니 모양으로 치솟는 것이 이 때문입니다. 체크포인트 간격(`checkpoint_timeout`, `max_wal_size`)을 늘리면 이미지가 덜 생기고, `wal_compression`을 켜면 크기가 줄어듭니다. 대신 체크포인트 간격이 길수록 장애 복구 시간은 길어집니다(8편).
+실습 3, 4에서 본 것처럼, 체크포인트 직후에는 모든 페이지가 "처음 고치는 페이지"라 페이지 이미지가 쏟아집니다. 쓰기가 많은 시스템에서 체크포인트마다 WAL 생성량이 톱니 모양으로 치솟는 것이 이 때문입니다. 체크포인트 간격(`checkpoint_timeout`, `max_wal_size`)을 늘리면 이미지가 덜 생기고, `wal_compression`을 켜면 크기가 줄어듭니다. 대신 체크포인트 간격이 길수록 장애 복구 시간은 길어집니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)).
 
 ### 읽기만 하는데 WAL이 생긴다
 
@@ -543,7 +543,7 @@ ls $PGDATA/pg_wal | grep -v -e archive_status -e summaries | tr '\n' ' '; echo
 
 ### WAL 디렉터리가 가득 차면 서버가 멈춘다
 
-WAL을 쓸 자리가 없으면 PostgreSQL은 PANIC으로 멈춥니다. 보통은 체크포인트가 오래된 세그먼트를 재활용하므로 `max_wal_size`(soft limit) 이하로 유지되지만, **아카이빙이 실패하거나(`archive_command`), replication slot이 오래된 WAL을 붙잡거나(9편), `wal_keep_size`가 크면** 지울 수 없는 WAL이 계속 쌓입니다. 커밋된 트랜잭션을 잃지는 않지만, 공간을 비울 때까지 서버를 다시 켤 수 없습니다([Continuous Archiving](https://www.postgresql.org/docs/18/continuous-archiving.html#BACKUP-ARCHIVING-WAL)). `pg_wal` 디렉터리의 크기와 `pg_stat_archiver`의 `failed_count`를 모니터링해야 합니다.
+WAL을 쓸 자리가 없으면 PostgreSQL은 PANIC으로 멈춥니다. 보통은 체크포인트가 오래된 세그먼트를 재활용하므로 `max_wal_size`(soft limit) 이하로 유지되지만, **아카이빙이 실패하거나(`archive_command`), replication slot이 오래된 WAL을 붙잡거나([9편](/posts/postgresql/09-streaming-replication/)), `wal_keep_size`가 크면** 지울 수 없는 WAL이 계속 쌓입니다. 커밋된 트랜잭션을 잃지는 않지만, 공간을 비울 때까지 서버를 다시 켤 수 없습니다([Continuous Archiving](https://www.postgresql.org/docs/18/continuous-archiving.html#BACKUP-ARCHIVING-WAL)). `pg_wal` 디렉터리의 크기와 `pg_stat_archiver`의 `failed_count`를 모니터링해야 합니다.
 
 ## 정리
 

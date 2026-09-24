@@ -608,7 +608,7 @@ psql -X -c "EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHER
 - 조건이 여러 개면 독립이라고 가정하고 선택도를 곱합니다. 컬럼 사이에 관계가 있으면 **확장 통계**로 알려 줘야 합니다.
 - 느린 쿼리를 보면 `EXPLAIN (ANALYZE)`에서 추정과 실제 행 수의 차이부터 찾습니다.
 
-이것으로 PostgreSQL 인터널 시리즈를 마칩니다. 프로세스와 메모리에서 시작해, 데이터가 페이지에 저장되고(3편), 여러 버전으로 동시에 읽히고(4편), 정리되고(5편, 6편), WAL로 지켜지고(7편, 8편), 다른 서버로 복제되고(9편), 마지막으로 쿼리로 꺼내지는(10편) 과정을 소스 코드와 실제 실행 결과로 따라가 봤습니다.
+이것으로 PostgreSQL 인터널 시리즈를 마칩니다. 프로세스와 메모리에서 시작해, 데이터가 페이지에 저장되고([3편](/posts/postgresql/03-storage-layout/)), 여러 버전으로 동시에 읽히고([4편](/posts/postgresql/04-mvcc/)), 정리되고([5편](/posts/postgresql/05-vacuum/), [6편](/posts/postgresql/06-xid-wraparound/)), WAL로 지켜지고([7편](/posts/postgresql/07-wal/), [8편](/posts/postgresql/08-checkpoint-and-recovery/)), 다른 서버로 복제되고([9편](/posts/postgresql/09-streaming-replication/)), 마지막으로 쿼리로 꺼내지는(10편) 과정을 소스 코드와 실제 실행 결과로 따라가 봤습니다.
 
 ## 참고 자료
 
