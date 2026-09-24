@@ -1,0 +1,282 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "WAL 레코드 하나의 구조 (실습 3의 UPDATE 레코드)",
+  "quality_profile": "standard",
+  "viewBox": [
+   1320,
+   560
+  ],
+  "repository": {
+   "url": "https://github.com/postgres/postgres",
+   "provider": "github",
+   "link_mode": "web",
+   "revision": "39a0db101105eab3f4044d11c609c58b9459ea16"
+  },
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "security": {
+     "label": "고정 헤더"
+    },
+    "frontend": {
+     "label": "블록 참조 헤더"
+    },
+    "database": {
+     "label": "데이터"
+    },
+    "external": {
+     "label": "내용 없음"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "headers",
+    "label": "헤더 영역",
+    "focus": [
+     "rec",
+     "bh0",
+     "img",
+     "loc",
+     "bh1",
+     "dh"
+    ],
+    "note": "고정 헤더 뒤에 이 레코드가 건드린 블록마다 블록 헤더가 붙습니다. 페이지 이미지가 있으면 이미지 헤더가 따라옵니다."
+   },
+   {
+    "id": "payload",
+    "label": "데이터 영역",
+    "focus": [
+     "image",
+     "bd1",
+     "main"
+    ],
+    "note": "헤더가 모두 끝난 뒤, 블록 헤더 순서대로 블록 데이터가 오고 마지막에 main data가 옵니다. 페이지 이미지는 빈 구간(hole)을 빼고 저장합니다."
+   }
+  ]
+ },
+ "components": [
+  {
+   "id": "rec",
+   "type": "security",
+   "label": "XLogRecord (24바이트)",
+   "sublabel": "전체 길이, xid, 이전 LSN, rmgr, CRC",
+   "pos": [
+    30,
+    120
+   ],
+   "size": [
+    190,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/include/access/xlogrecord.h",
+     "line": 41,
+     "end_line": 53,
+     "label": "XLogRecord"
+    }
+   ]
+  },
+  {
+   "id": "bh0",
+   "type": "frontend",
+   "label": "블록 헤더 #0",
+   "sublabel": "id, fork, 플래그 HAS_IMAGE",
+   "pos": [
+    250,
+    120
+   ],
+   "size": [
+    190,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/include/access/xlogrecord.h",
+     "line": 103,
+     "end_line": 113,
+     "label": "XLogRecordBlockHeader"
+    }
+   ]
+  },
+  {
+   "id": "img",
+   "type": "frontend",
+   "label": "이미지 헤더",
+   "sublabel": "길이 3500, hole 위치 340",
+   "pos": [
+    470,
+    120
+   ],
+   "size": [
+    190,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/include/access/xlogrecord.h",
+     "line": 141,
+     "end_line": 159,
+     "label": "XLogRecordBlockImageHeader"
+    }
+   ]
+  },
+  {
+   "id": "loc",
+   "type": "frontend",
+   "label": "파일 위치 + 블록 번호",
+   "sublabel": "1663/5/16391, blk 5",
+   "pos": [
+    690,
+    120
+   ],
+   "size": [
+    190,
+    72
+   ]
+  },
+  {
+   "id": "bh1",
+   "type": "frontend",
+   "label": "블록 헤더 #1",
+   "sublabel": "같은 파일, blk 0",
+   "pos": [
+    910,
+    120
+   ],
+   "size": [
+    170,
+    72
+   ]
+  },
+  {
+   "id": "dh",
+   "type": "security",
+   "label": "main data 헤더",
+   "sublabel": "id 255, 길이",
+   "pos": [
+    1110,
+    120
+   ],
+   "size": [
+    180,
+    72
+   ]
+  },
+  {
+   "id": "image",
+   "type": "database",
+   "label": "블록 #0: blk 5 페이지 이미지",
+   "sublabel": "3500바이트, 튜플 데이터는 생략",
+   "pos": [
+    1060,
+    330
+   ],
+   "size": [
+    230,
+    72
+   ]
+  },
+  {
+   "id": "bd1",
+   "type": "external",
+   "label": "블록 #1: 데이터 없음",
+   "sublabel": "옛 버전(blk 0)은 참조만",
+   "pos": [
+    760,
+    330
+   ],
+   "size": [
+    230,
+    72
+   ]
+  },
+  {
+   "id": "main",
+   "type": "database",
+   "label": "main data",
+   "sublabel": "rmgr별 내용: offset, xmax 등",
+   "pos": [
+    460,
+    330
+   ],
+   "size": [
+    230,
+    72
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "헤더: 어떤 블록을 건드렸나",
+   "wraps": [
+    "rec",
+    "bh0",
+    "img",
+    "loc",
+    "bh1",
+    "dh"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "데이터: 헤더 순서대로 이어짐",
+   "wraps": [
+    "image",
+    "bd1",
+    "main"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "c1",
+   "from": "rec",
+   "to": "bh0"
+  },
+  {
+   "id": "c2",
+   "from": "bh0",
+   "to": "img"
+  },
+  {
+   "id": "c3",
+   "from": "img",
+   "to": "loc"
+  },
+  {
+   "id": "c4",
+   "from": "loc",
+   "to": "bh1"
+  },
+  {
+   "id": "c5",
+   "from": "bh1",
+   "to": "dh"
+  },
+  {
+   "id": "c6",
+   "from": "dh",
+   "to": "image",
+   "label": "블록 #0 데이터부터",
+   "fromSide": "bottom",
+   "toSide": "top"
+  },
+  {
+   "id": "c7",
+   "from": "image",
+   "to": "bd1",
+   "label": "블록 #1"
+  },
+  {
+   "id": "c8",
+   "from": "bd1",
+   "to": "main",
+   "label": "마지막"
+  }
+ ]
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "UPDATE 한 건이 커밋되기까지 WAL이 지나는 길",
+    "quality_profile": "showcase",
+    "viewBox": [1085, 520],
+    "column_fit": "spread",
+    "legend": { "mode": "auto", "entries": { "emphasis": { "label": "WAL 기록, flush" }, "default": { "label": "메모리 작업" }, "return": { "label": "응답" }, "dashed": { "label": "나중에 비동기로" } } },
+    "views": [
+      { "id": "write", "label": "변경", "focus": ["client", "backend", "page", "walbuf"], "note": "페이지를 고치고, 같은 순간 WAL 레코드를 WAL buffers에 넣고, 페이지 LSN을 그 레코드 위치로 올립니다." },
+      { "id": "commit", "label": "커밋", "focus": ["backend", "walbuf", "walfile", "client"], "note": "커밋은 WAL이 디스크에 닿을 때까지 기다립니다. 데이터 페이지는 아직 메모리에만 있습니다." },
+      { "id": "later", "label": "나중에", "focus": ["ckpt", "walfile", "page"], "note": "dirty 페이지를 쓰기 전에 그 페이지 LSN까지 WAL이 디스크에 있는지 확인합니다." }
+    ]
+  },
+  "participants": [
+    { "id": "client", "type": "external", "label": "클라이언트", "sublabel": "psql" },
+    { "id": "backend", "type": "backend", "label": "backend", "sublabel": "XLogInsert" },
+    { "id": "page", "type": "database", "label": "데이터 페이지", "sublabel": "shared buffers" },
+    { "id": "walbuf", "type": "database", "label": "WAL buffers", "sublabel": "공유 메모리" },
+    { "id": "walfile", "type": "database", "label": "WAL 파일", "sublabel": "pg_wal" },
+    { "id": "ckpt", "type": "backend", "label": "checkpointer", "sublabel": "또는 bgwriter" }
+  ],
+  "segments": [
+    { "from": 160, "to": 270, "label": "변경" },
+    { "from": 276, "to": 380, "label": "커밋" },
+    { "from": 386, "to": 440, "label": "나중에" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "client", "to": "backend", "y": 172, "label": "UPDATE", "variant": "emphasis" },
+    { "id": "m2", "from": "backend", "to": "page", "y": 200, "label": "튜플 수정 (dirty)", "variant": "default" },
+    { "id": "m3", "from": "backend", "to": "walbuf", "y": 228, "label": "레코드 복사 (첫 수정이면 FPI)", "variant": "emphasis" },
+    { "id": "m4", "from": "backend", "to": "page", "y": 256, "label": "페이지 LSN 갱신", "variant": "default" },
+    { "id": "m5", "from": "client", "to": "backend", "y": 288, "label": "COMMIT", "variant": "emphasis" },
+    { "id": "m6", "from": "backend", "to": "walbuf", "y": 316, "label": "COMMIT 레코드", "variant": "emphasis" },
+    { "id": "m7", "from": "backend", "to": "walfile", "y": 344, "label": "backend가 XLogFlush: write + fsync", "variant": "emphasis" },
+    { "id": "m8", "from": "backend", "to": "client", "y": 372, "label": "COMMIT 완료", "variant": "return" },
+    { "id": "m9", "from": "ckpt", "to": "walfile", "y": 400, "label": "페이지 LSN까지 flush 확인", "variant": "dashed" },
+    { "id": "m10", "from": "ckpt", "to": "page", "y": 428, "label": "페이지를 데이터 파일로 write", "variant": "dashed" }
+  ]
+}
