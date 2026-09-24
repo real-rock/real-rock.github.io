@@ -1,0 +1,170 @@
+{
+ "schema_version": 1,
+ "diagram_type": "lifecycle",
+ "meta": {
+  "title": "line pointer 하나의 일생",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1030,
+   566
+  ],
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "start": {
+     "label": "살아 있는 튜플"
+    },
+    "active": {
+     "label": "정리 전 상태"
+    },
+    "waiting": {
+     "label": "HOT 체인의 시작"
+    },
+    "success": {
+     "label": "재사용 가능"
+    },
+    "failure": {
+     "label": "파일에서 제거"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "die",
+    "label": "죽는 과정",
+    "focus": [
+     "live",
+     "recent",
+     "dead"
+    ],
+    "note": "UPDATE, DELETE로 xmax가 커밋되어도, 옛 스냅샷이 남아 있는 동안은 지울 수 없습니다."
+   },
+   {
+    "id": "cleanup",
+    "label": "정리와 재사용",
+    "focus": [
+     "dead",
+     "lpdead",
+     "unused",
+     "live"
+    ],
+    "note": "pruning이 튜플 공간을 비우고 LP_DEAD로 만들고, VACUUM이 인덱스를 정리한 뒤 LP_UNUSED로 돌려놓습니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "main",
+   "label": "lp_flags와 튜플 상태"
+  },
+  {
+   "id": "side",
+   "label": "HOT, truncate"
+  },
+  {
+   "id": "terminal",
+   "label": "끝"
+  }
+ ],
+ "states": [
+  {
+   "id": "live",
+   "type": "start",
+   "label": "LP_NORMAL",
+   "sublabel": "살아 있는 튜플",
+   "lane": "main",
+   "col": 0,
+   "step": "01"
+  },
+  {
+   "id": "recent",
+   "type": "active",
+   "label": "LP_NORMAL",
+   "sublabel": "옛 스냅샷엔 보임",
+   "lane": "main",
+   "col": 1,
+   "step": "02"
+  },
+  {
+   "id": "dead",
+   "type": "active",
+   "label": "LP_NORMAL",
+   "sublabel": "dead tuple",
+   "lane": "main",
+   "col": 2,
+   "step": "03"
+  },
+  {
+   "id": "lpdead",
+   "type": "active",
+   "label": "LP_DEAD",
+   "sublabel": "튜플 공간은 비움",
+   "lane": "main",
+   "col": 3,
+   "step": "04"
+  },
+  {
+   "id": "unused",
+   "type": "success",
+   "label": "LP_UNUSED",
+   "sublabel": "다시 쓸 수 있음",
+   "lane": "main",
+   "col": 4,
+   "step": "05"
+  },
+  {
+   "id": "redirect",
+   "type": "waiting",
+   "label": "LP_REDIRECT",
+   "sublabel": "HOT 체인 첫 줄",
+   "lane": "side",
+   "col": 0
+  },
+  {
+   "id": "gone",
+   "type": "failure",
+   "label": "파일에서 잘림",
+   "sublabel": "테이블 끝 페이지",
+   "lane": "side",
+   "col": 2
+  }
+ ],
+ "transitions": [
+  {
+   "id": "t-reuse",
+   "from": "unused",
+   "to": "live",
+   "label": "INSERT가 재사용",
+   "variant": "emphasis",
+   "route": "top-channel"
+  },
+  {
+   "id": "t-hot",
+   "from": "dead",
+   "to": "redirect",
+   "label": "HOT 체인이면",
+   "variant": "dashed",
+   "route": "straight",
+   "fromSide": "bottom",
+   "toSide": "top",
+   "labelAt": [
+    402,
+    202
+   ]
+  },
+  {
+   "id": "t-trunc",
+   "from": "unused",
+   "to": "gone",
+   "label": "끝부분이면",
+   "variant": "security",
+   "route": "straight",
+   "fromSide": "bottom",
+   "toSide": "top",
+   "labelAt": [
+    710,
+    202
+   ]
+  }
+ ]
+}

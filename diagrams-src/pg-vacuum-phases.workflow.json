@@ -1,0 +1,200 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "VACUUM 한 번이 하는 일",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "힙 작업"
+    },
+    "database": {
+     "label": "인덱스 작업"
+    },
+    "messagebus": {
+     "label": "지도, 통계 갱신"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "p1",
+    "label": "1단계: 힙 스캔",
+    "focus": [
+     "scan",
+     "prune",
+     "tids"
+    ],
+    "note": "VM으로 건너뛸 페이지를 고르고, 페이지마다 pruning과 freeze를 하면서 지울 line pointer 목록을 모읍니다."
+   },
+   {
+    "id": "p23",
+    "label": "2, 3단계",
+    "focus": [
+     "tids",
+     "index",
+     "reap"
+    ],
+    "note": "인덱스에서 그 주소들을 지운 다음에야 힙의 LP_DEAD를 LP_UNUSED로 바꿀 수 있습니다."
+   },
+   {
+    "id": "finish",
+    "label": "마무리",
+    "focus": [
+     "reap",
+     "maps",
+     "truncate",
+     "stats"
+    ],
+    "note": "FSM과 VM을 갱신하고, 끝에 빈 페이지가 있으면 파일을 줄이고, pg_class 통계를 고칩니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "heap",
+   "label": "힙 (테이블)"
+  },
+  {
+   "id": "idx",
+   "label": "인덱스"
+  },
+  {
+   "id": "meta",
+   "label": "FSM, VM, 통계"
+  }
+ ],
+ "mainPath": [
+  "scan",
+  "prune",
+  "tids",
+  "index",
+  "reap",
+  "maps"
+ ],
+ "nodes": [
+  {
+   "id": "scan",
+   "lane": "heap",
+   "col": 0,
+   "type": "backend",
+   "label": "페이지 고르기",
+   "sublabel": "VM의 all-visible은 건너뜀",
+   "width": 170
+  },
+  {
+   "id": "prune",
+   "lane": "heap",
+   "col": 1,
+   "type": "backend",
+   "label": "prune, freeze",
+   "sublabel": "dead 튜플 → LP_DEAD",
+   "width": 160
+  },
+  {
+   "id": "tids",
+   "lane": "heap",
+   "col": 2,
+   "type": "backend",
+   "label": "dead TID 모음",
+   "sublabel": "maintenance_work_mem까지",
+   "width": 180
+  },
+  {
+   "id": "index",
+   "lane": "idx",
+   "col": 3,
+   "type": "database",
+   "label": "인덱스 정리",
+   "sublabel": "그 TID를 가리키는 항목 삭제",
+   "width": 190
+  },
+  {
+   "id": "reap",
+   "lane": "heap",
+   "col": 4,
+   "type": "backend",
+   "label": "LP_DEAD → LP_UNUSED",
+   "sublabel": "힙 2차 방문",
+   "width": 180
+  },
+  {
+   "id": "maps",
+   "lane": "meta",
+   "col": 4,
+   "type": "messagebus",
+   "label": "FSM, VM 갱신",
+   "sublabel": "빈 공간, all-visible 표시",
+   "width": 180
+  },
+  {
+   "id": "truncate",
+   "lane": "heap",
+   "col": 5,
+   "type": "backend",
+   "label": "끝 페이지 잘라 내기",
+   "sublabel": "비어 있을 때만",
+   "width": 170
+  },
+  {
+   "id": "stats",
+   "lane": "meta",
+   "col": 5,
+   "type": "messagebus",
+   "label": "pg_class 갱신",
+   "sublabel": "relpages, reltuples, relfrozenxid",
+   "width": 190
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "scan",
+   "to": "prune",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "prune",
+   "to": "tids",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "tids",
+   "to": "index",
+   "label": "2단계",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "index",
+   "to": "reap",
+   "label": "3단계",
+   "variant": "emphasis",
+   "fromSide": "right",
+   "toSide": "left"
+  },
+  {
+   "id": "e5",
+   "from": "reap",
+   "to": "maps",
+   "variant": "emphasis",
+   "fromSide": "bottom",
+   "toSide": "top"
+  },
+  {
+   "id": "e6",
+   "from": "maps",
+   "to": "stats"
+  },
+  {
+   "id": "e7",
+   "from": "reap",
+   "to": "truncate",
+   "role": "branch"
+  }
+ ]
+}
