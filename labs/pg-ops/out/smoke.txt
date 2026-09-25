@@ -1,0 +1,22 @@
+$ docker run -d --init --name pgops-smoke --hostname pgops-smoke  pg-ops:rocky9-pg18 sleep infinity
+1582f442771faf7ffa10ffbd600bf52b20446488a51d94439f1c15a67c614fce
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
