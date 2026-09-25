@@ -1,0 +1,608 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+25d06672c9e6e2ca07b8aa4084523755e8c7580ef4d285cc733f7bb050e14d9d
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+
+######## 1. 설치 직후의 로그 관련 설정
+
+postgres=# SELECT name, setting FROM pg_settings
+postgres-# WHERE name IN ('logging_collector', 'log_directory', 'log_filename',
+postgres-#                'log_line_prefix', 'log_lock_waits', 'log_autovacuum_min_duration',
+postgres-#                'log_checkpoints', 'log_temp_files', 'log_min_duration_statement',
+postgres-#                'track_io_timing', 'shared_preload_libraries', 'deadlock_timeout')
+postgres-# ORDER BY name;
+            name             |      setting      
+-----------------------------+-------------------
+ deadlock_timeout            | 1000
+ log_autovacuum_min_duration | 600000
+ log_checkpoints             | on
+ log_directory               | log
+ log_filename                | postgresql-%a.log
+ logging_collector           | on
+ log_line_prefix             | %m [%p] 
+ log_lock_waits              | off
+ log_min_duration_statement  | -1
+ log_temp_files              | -1
+ shared_preload_libraries    | 
+ track_io_timing             | off
+(12 rows)
+
+
+$ ls -l $PGDATA/log
+total 4
+-rw------- 1 postgres postgres 693 Sep 25 23:04 postgresql-Fri.log
+[exit=0]
+
+
+######## 2. 진단용 설정 켜기
+
+postgres=# ALTER SYSTEM SET log_lock_waits = on;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_temp_files = 0;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_min_duration_statement = '500ms';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_autovacuum_min_duration = 0;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET track_io_timing = on;
+ALTER SYSTEM
+
+# 흔한 실수: 목록 전체를 따옴표 하나로 묶는다
+
+postgres=# ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_statements, auto_explain';
+ALTER SYSTEM
+
+# 실습에서 autovacuum 로그를 빨리 보려고 naptime을 줄인다 (운영 권장값 아님)
+
+postgres=# ALTER SYSTEM SET autovacuum_naptime = '10s';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# SELECT name, setting, pending_restart FROM pg_settings
+postgres-# WHERE name IN ('log_lock_waits', 'log_temp_files', 'shared_preload_libraries')
+postgres-# ORDER BY name;
+           name           | setting | pending_restart 
+--------------------------+---------+-----------------
+ log_lock_waits           | on      | f
+ log_temp_files           | 0       | f
+ shared_preload_libraries |         | t
+(3 rows)
+
+
+$ grep shared_preload_libraries $PGDATA/postgresql.auto.conf
+shared_preload_libraries = '"pg_stat_statements, auto_explain"'
+[exit=0]
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... stopped waiting
+pg_ctl: could not start server
+Examine the log output.
+[exit=1]
+
+$ tail -n 3 /var/lib/pgsql/startup.log
+2026-09-25 23:04:31.090 UTC [26] HINT:  Future log output will appear in directory "log".
+2026-09-25 23:04:32.163 UTC [145] FATAL:  could not access file "pg_stat_statements, auto_explain": No such file or directory
+2026-09-25 23:04:32.163 UTC [145] LOG:  database system is shut down
+[exit=0]
+
+# 서버가 뜨지 않으니 ALTER SYSTEM을 쓸 수 없다. postgresql.auto.conf에서 그 줄을 지우고 띄운다
+
+$ sed -i '/^shared_preload_libraries/d' $PGDATA/postgresql.auto.conf
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+waiting for server to start.... done
+server started
+[exit=0]
+
+# 목록은 따옴표 없이 쉼표로 나열한다
+
+postgres=# ALTER SYSTEM SET shared_preload_libraries = pg_stat_statements, auto_explain;
+ALTER SYSTEM
+
+$ grep shared_preload_libraries $PGDATA/postgresql.auto.conf
+shared_preload_libraries = 'pg_stat_statements, auto_explain'
+[exit=0]
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+postgres=# ALTER SYSTEM SET auto_explain.log_min_duration = '500ms';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# CREATE EXTENSION pg_stat_statements;
+CREATE EXTENSION
+
+postgres=# SELECT name, setting, pending_restart FROM pg_settings
+postgres-# WHERE name IN ('shared_preload_libraries', 'track_io_timing', 'auto_explain.log_min_duration', 'log_line_prefix')
+postgres-# ORDER BY name;
+             name              |             setting              | pending_restart 
+-------------------------------+----------------------------------+-----------------
+ auto_explain.log_min_duration | 500                              | f
+ log_line_prefix               | %m [%p] %q%u@%d/%a               | f
+ shared_preload_libraries      | pg_stat_statements, auto_explain | f
+ track_io_timing               | on                               | f
+(4 rows)
+
+
+$ cat $PGDATA/postgresql.auto.conf
+# Do not edit this file manually!
+# It will be overwritten by the ALTER SYSTEM command.
+log_lock_waits = 'on'
+log_temp_files = '0'
+log_min_duration_statement = '500ms'
+log_autovacuum_min_duration = '0'
+log_line_prefix = '%m [%p] %q%u@%d/%a '
+track_io_timing = 'on'
+autovacuum_naptime = '10s'
+shared_preload_libraries = 'pg_stat_statements, auto_explain'
+auto_explain.log_min_duration = '500ms'
+[exit=0]
+
+
+######## 3. pg_stat_activity: 누가 무엇을 기다리는가
+
+postgres=# CREATE TABLE t (id int PRIMARY KEY, v int);
+CREATE TABLE
+
+postgres=# INSERT INTO t VALUES (1, 0), (2, 0);
+INSERT 0 2
+
+# 세션 A 시작: psql -X -v application_name=app_a
+
+# 세션 B 시작: psql -X -v application_name=app_b
+
+A=# SET application_name = 'app_a';
+SET
+
+B=# SET application_name = 'app_b';
+SET
+
+A=# BEGIN;
+BEGIN
+
+A=# UPDATE t SET v = v + 1 WHERE id = 1;
+UPDATE 1
+
+B=# UPDATE t SET v = v + 10 WHERE id = 1;
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type, wait_event,
+postgres-#        pg_blocking_pids(pid) AS blocked_by, left(query, 40) AS query
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY pid;
+ pid |  app  |        state        | wait_event_type |  wait_event   | blocked_by |                 query                 
+-----+-------+---------------------+-----------------+---------------+------------+---------------------------------------
+ 268 | app_a | idle in transaction | Client          | ClientRead    | {}         | UPDATE t SET v = v + 1 WHERE id = 1;
+ 283 | app_b | active              | Lock            | transactionid | {268}      | UPDATE t SET v = v + 10 WHERE id = 1;
+(2 rows)
+
+
+postgres=# SELECT pid, now() - xact_start AS xact_age, now() - state_change AS in_state
+postgres-# FROM pg_stat_activity
+postgres-# WHERE application_name IN ('app_a', 'app_b')
+postgres-# ORDER BY pid;
+ pid |    xact_age     |    in_state     
+-----+-----------------+-----------------
+ 268 | 00:00:05.147249 | 00:00:04.14015
+ 283 | 00:00:03.030712 | 00:00:03.030708
+(2 rows)
+
+
+$ ps -u postgres -o pid,cmd | grep 'postgres:' | grep -v grep
+    195 postgres: logger 
+    196 postgres: io worker 0
+    197 postgres: io worker 1
+    198 postgres: io worker 2
+    199 postgres: checkpointer 
+    200 postgres: background writer 
+    202 postgres: walwriter 
+    203 postgres: autovacuum launcher 
+    204 postgres: logical replication launcher 
+    268 postgres: postgres postgres [local] idle in transaction
+    283 postgres: postgres postgres [local] UPDATE waiting
+[exit=0]
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'still waiting|Process holding|Wait queue|STATEMENT'
+2026-09-25 23:04:41.491 UTC [283] postgres@postgres/app_b LOG:  process 283 still waiting for ShareLock on transaction 766 after 1000.192 ms
+2026-09-25 23:04:41.491 UTC [283] postgres@postgres/app_b DETAIL:  Process holding the lock: 268. Wait queue: 283.
+2026-09-25 23:04:41.491 UTC [283] postgres@postgres/app_b STATEMENT:  UPDATE t SET v = v + 10 WHERE id = 1;
+[exit=0]
+
+A=# ROLLBACK;
+ROLLBACK
+
+# 세션 B: 앞 명령의 결과를 기다림
+UPDATE 1
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'acquired'
+2026-09-25 23:04:44.390 UTC [283] postgres@postgres/app_b LOG:  process 283 acquired ShareLock on transaction 766 after 3899.452 ms
+[exit=0]
+
+
+######## 4. pgbench 부하와 pg_stat_statements
+
+$ pgbench -i -s 10 -q postgres 2>&1 | tail -n 3
+vacuuming...
+creating primary keys...
+done in 0.47 s (drop tables 0.00 s, create tables 0.00 s, client-side generate 0.34 s, vacuum 0.03 s, primary keys 0.10 s).
+[exit=0]
+
+postgres=# SELECT pg_stat_statements_reset() IS NOT NULL AS reset;
+ reset 
+-------
+ t
+(1 row)
+
+
+$ nohup pgbench -c 8 -j 2 -T 30 postgres > /var/lib/pgsql/bench.log 2>&1 &
+[exit=0]
+
+# 부하 중 wait event 표본 (세 번)
+
+postgres=# SELECT wait_event_type, wait_event, state, count(*)
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+ wait_event_type |  wait_event   |        state        | count 
+-----------------+---------------+---------------------+-------
+ Lock            | transactionid | active              |     2
+ LWLock          | WALWrite      | active              |     2
+                 |               | idle in transaction |     2
+ IO              | WalSync       | active              |     1
+                 |               | idle                |     1
+(5 rows)
+
+
+postgres=# SELECT wait_event_type, wait_event, state, count(*)
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+ wait_event_type |  wait_event   |        state        | count 
+-----------------+---------------+---------------------+-------
+                 |               | active              |     2
+                 |               | idle in transaction |     2
+ Client          | ClientRead    | idle in transaction |     1
+ IO              | WalSync       | active              |     1
+ Lock            | transactionid | active              |     1
+ Lock            | tuple         | active              |     1
+(6 rows)
+
+
+postgres=# SELECT wait_event_type, wait_event, state, count(*)
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+ wait_event_type |  wait_event   |        state        | count 
+-----------------+---------------+---------------------+-------
+ Client          | ClientRead    | active              |     2
+ Client          | ClientRead    | idle                |     1
+ IO              | WalSync       | active              |     1
+ Lock            | transactionid | active              |     1
+ LWLock          | ProcArray     | active              |     1
+ LWLock          | WALWrite      | idle in transaction |     1
+                 |               | idle in transaction |     1
+(7 rows)
+
+
+# 부하 중 OS 지표
+
+$ top -b -n 1 -u postgres | head -n 20
+top - 23:04:59 up 54 min,  0 users,  load average: 2.22, 1.40, 0.89
+Tasks:  24 total,   7 running,  17 sleeping,   0 stopped,   0 zombie
+%Cpu(s): 13.7 us, 13.7 sy,  0.0 ni, 63.7 id,  4.7 wa,  0.0 hi,  4.2 si,  0.0 st
+MiB Mem :  32041.5 total,  19414.5 free,   2150.6 used,  11484.6 buff/cache
+MiB Swap:   1024.0 total,   1024.0 free,      0.0 used.  29890.9 avail Mem 
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+    517 postgres  20   0   87976   5280   4240 S 100.0   0.0   0:11.54 pgbench
+    521 postgres  20   0  227492 155080 151904 R  40.0   0.5   0:03.97 postgres
+    524 postgres  20   0  227492 155044 151864 S  40.0   0.5   0:03.83 postgres
+    520 postgres  20   0  227492 155092 151916 R  33.3   0.5   0:03.94 postgres
+    523 postgres  20   0  227500 155132 151956 R  33.3   0.5   0:03.91 postgres
+    525 postgres  20   0  227492 155116 151944 S  33.3   0.5   0:03.81 postgres
+    526 postgres  20   0  227492 155072 151896 R  33.3   0.5   0:03.75 postgres
+    527 postgres  20   0  227492 155136 151964 R  33.3   0.5   0:03.79 postgres
+    522 postgres  20   0  227500 155152 151972 R  26.7   0.5   0:03.88 postgres
+      1 postgres  20   0     872    504    460 S   0.0   0.0   0:00.00 docker-+
+      7 postgres  20   0    7836   2612   2404 S   0.0   0.0   0:00.00 sleep
+    194 postgres  20   0  225160  32676  30584 S   0.0   0.1   0:00.02 postgres
+    195 postgres  20   0   69508   8448   6384 S   0.0   0.0   0:00.00 postgres
+[exit=0]
+
+$ iostat -x 1 3
+Linux 7.0.12-linuxkit (pgops) 	09/25/2026 	_aarch64_	(14 CPU)
+
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle
+           1.65    0.11    1.45    0.35    0.00   96.45
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+vda              2.26     27.32     3.27  59.21    0.12    12.11  702.16   9721.19   101.71  12.65    0.46    13.84   20.88 240577.78     0.00   0.00    0.06 11520.56  333.00    0.07    0.35   3.30
+vdb              0.23    106.53     0.00   0.27    0.35   460.19    0.00      0.00     0.00   0.00    0.00     0.00    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.00   0.00
+
+
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle
+          12.80    0.00   16.51    4.95    0.00   65.75
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+vda              0.00      0.00     0.00   0.00    0.00     0.00 15198.00  66400.00     0.00   0.00    0.05     4.37    0.00      0.00     0.00   0.00    0.00     0.00 7597.00    0.05    1.12  68.70
+vdb              0.00      0.00     0.00   0.00    0.00     0.00    0.00      0.00     0.00   0.00    0.00     0.00    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.00   0.00
+
+
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle
+          12.75    0.00   15.94    5.00    0.00   66.30
+
+Device            r/s     rkB/s   rrqm/s  %rrqm r_await rareq-sz     w/s     wkB/s   wrqm/s  %wrqm w_await wareq-sz     d/s     dkB/s   drqm/s  %drqm d_await dareq-sz     f/s f_await  aqu-sz  %util
+vda              0.00      0.00     0.00   0.00    0.00     0.00 15803.00 105572.00    48.00   0.30    0.18     6.68    0.00      0.00     0.00   0.00    0.00     0.00 7447.00    0.05    3.16  70.80
+vdb              0.00      0.00     0.00   0.00    0.00     0.00    0.00      0.00     0.00   0.00    0.00     0.00    0.00      0.00     0.00   0.00    0.00     0.00    0.00    0.00    0.00   0.00
+
+
+[exit=0]
+
+$ free -m
+$ df -h $PGDATA
+               total        used        free      shared  buff/cache   available
+Mem:           32041        2162       19384         631       11503       29879
+Swap:           1023           0        1023
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         911G  219G  647G  26% /
+[exit=0]
+
+$ cat /var/lib/pgsql/bench.log
+pgbench (18.6)
+starting vacuum...end.
+transaction type: <builtin: TPC-B (sort of)>
+scaling factor: 10
+query mode: simple
+number of clients: 8
+number of threads: 2
+maximum number of tries: 1
+duration: 30 s
+number of transactions actually processed: 398216
+number of failed transactions: 0 (0.000%)
+latency average = 0.603 ms
+initial connection time = 4.005 ms
+tps = 13275.145506 (without initial connection time)
+[exit=0]
+
+postgres=# SELECT left(query, 60) AS query, calls,
+postgres-#        round(total_exec_time::numeric, 1) AS total_ms,
+postgres-#        round(mean_exec_time::numeric, 3) AS mean_ms,
+postgres-#        rows, shared_blks_hit, shared_blks_read
+postgres-# FROM pg_stat_statements
+postgres-# ORDER BY total_exec_time DESC
+postgres-# LIMIT 5;
+                            query                             | calls  | total_ms | mean_ms |  rows  | shared_blks_hit | shared_blks_read 
+--------------------------------------------------------------+--------+----------+---------+--------+-----------------+------------------
+ UPDATE pgbench_branches SET bbalance = bbalance + $1 WHERE b | 398216 |  30711.7 |   0.077 | 398216 |         2581335 |               62
+ UPDATE pgbench_tellers SET tbalance = tbalance + $1 WHERE ti | 398216 |   6579.6 |   0.017 | 398216 |         2209982 |               76
+ UPDATE pgbench_accounts SET abalance = abalance + $1 WHERE a | 398216 |   3593.8 |   0.009 | 398216 |         2471682 |            93908
+ SELECT abalance FROM pgbench_accounts WHERE aid = $1         | 398216 |   1100.8 |   0.003 | 398216 |         1621139 |                0
+ INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VA | 398216 |    833.6 |   0.002 | 398216 |          403750 |               11
+(5 rows)
+
+
+
+######## 5. temp file, 느린 쿼리, auto_explain
+
+postgres=# SET work_mem = '4MB';
+postgres-# EXPLAIN (ANALYZE, BUFFERS)
+postgres-# SELECT * FROM pgbench_accounts ORDER BY filler, aid;
+SET
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge  (cost=83989.70..200955.94 rows=1004291 width=97) (actual time=141.154..249.502 rows=1000000.00 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=10205 read=6729 dirtied=6752 written=5639, temp read=13097 written=13132
+   I/O Timings: shared read=4.154 write=8.566, temp read=5.540 write=23.312
+   ->  Sort  (cost=82989.68..84035.82 rows=418455 width=97) (actual time=137.966..161.734 rows=333333.33 loops=3)
+         Sort Key: filler, aid
+         Sort Method: external merge  Disk: 35736kB
+         Buffers: shared hit=10205 read=6729 dirtied=6752 written=5639, temp read=13097 written=13132
+         I/O Timings: shared read=4.154 write=8.566, temp read=5.540 write=23.312
+         Worker 0:  Sort Method: external merge  Disk: 33048kB
+         Worker 1:  Sort Method: external merge  Disk: 35992kB
+         ->  Parallel Seq Scan on pgbench_accounts  (cost=0.00..21030.55 rows=418455 width=97) (actual time=0.024..37.605 rows=333333.33 loops=3)
+               Buffers: shared hit=10117 read=6729 dirtied=6752 written=5639
+               I/O Timings: shared read=4.154 write=8.566
+ Planning:
+   Buffers: shared hit=72 read=13 dirtied=1
+   I/O Timings: shared read=0.065
+ Planning Time: 0.217 ms
+ Execution Time: 271.698 ms
+(20 rows)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 3 -E 'temporary file' | tail -n 12
+2026-09-25 23:05:21.837 UTC [600] LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp600.0", size 33841152
+2026-09-25 23:05:21.837 UTC [600] STATEMENT:  SET work_mem = '4MB';
+	EXPLAIN (ANALYZE, BUFFERS)
+	SELECT * FROM pgbench_accounts ORDER BY filler, aid;
+2026-09-25 23:05:21.838 UTC [599] LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp599.0", size 36855808
+2026-09-25 23:05:21.838 UTC [599] STATEMENT:  SET work_mem = '4MB';
+	EXPLAIN (ANALYZE, BUFFERS)
+	SELECT * FROM pgbench_accounts ORDER BY filler, aid;
+2026-09-25 23:05:21.842 UTC [598] postgres@postgres/psql LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp598.0", size 36593664
+2026-09-25 23:05:21.842 UTC [598] postgres@postgres/psql STATEMENT:  SET work_mem = '4MB';
+	EXPLAIN (ANALYZE, BUFFERS)
+	SELECT * FROM pgbench_accounts ORDER BY filler, aid;
+[exit=0]
+
+# 500ms를 넘기는 쿼리: 느린 쿼리 로그와 auto_explain
+
+postgres=# SET max_parallel_workers_per_gather = 0;
+postgres-# SELECT count(DISTINCT md5(filler || aid)) FROM pgbench_accounts;
+SET
+  count  
+---------
+ 1000000
+(1 row)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 14 -E 'duration: [0-9.]+ ms' | tail -n 30
+	  ->  Index Scan using t_pkey on t  (cost=0.15..8.17 rows=1 width=10)
+	        Index Cond: (id = 1)
+2026-09-25 23:04:44.391 UTC [283] postgres@postgres/app_b LOG:  duration: 3901.274 ms  statement: UPDATE t SET v = v + 10 WHERE id = 1;
+2026-09-25 23:04:47.651 UTC [502] postgres@postgres/pgbench LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp502.1.fileset/1.0", size 8192
+2026-09-25 23:04:47.651 UTC [502] postgres@postgres/pgbench STATEMENT:  alter table pgbench_accounts add primary key (aid)
+2026-09-25 23:04:47.651 UTC [502] postgres@postgres/pgbench LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp502.1.fileset/0.0", size 8192
+2026-09-25 23:04:47.651 UTC [502] postgres@postgres/pgbench STATEMENT:  alter table pgbench_accounts add primary key (aid)
+2026-09-25 23:04:47.651 UTC [502] postgres@postgres/pgbench LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp502.0.fileset/1.0", size 9756672
+2026-09-25 23:04:47.651 UTC [502] postgres@postgres/pgbench STATEMENT:  alter table pgbench_accounts add primary key (aid)
+2026-09-25 23:04:47.652 UTC [502] postgres@postgres/pgbench LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp502.0.fileset/0.0", size 10297344
+2026-09-25 23:04:47.652 UTC [502] postgres@postgres/pgbench STATEMENT:  alter table pgbench_accounts add primary key (aid)
+2026-09-25 23:04:48.066 UTC [528] LOG:  automatic aggressive vacuum of table "template1.pg_catalog.pg_statistic": index scans: 1
+	pages: 0 removed, 26 remain, 26 scanned (100.00% of total), 0 eagerly scanned
+	tuples: 127 removed, 412 remain, 0 are dead but not yet removable
+	removable cutoff: 4282, which was 12 XIDs old when operation ended
+	new relfrozenxid: 4282, which is 3538 XIDs ahead of previous value
+	frozen: 14 pages from table (53.85% of total) had 166 tuples frozen
+--
+2026-09-25 23:05:23.571 UTC [619] postgres@postgres/psql LOG:  duration: 1599.144 ms  plan:
+	Query Text: SET max_parallel_workers_per_gather = 0;
+	SELECT count(DISTINCT md5(filler || aid)) FROM pgbench_accounts;
+	Aggregate  (cost=247564.50..247564.51 rows=1 width=8)
+	  ->  Sort  (cost=229989.40..232500.13 rows=1004291 width=89)
+	        Sort Key: (md5(((filler)::text || (aid)::text)))
+	        ->  Seq Scan on pgbench_accounts  (cost=0.00..26888.91 rows=1004291 width=89)
+2026-09-25 23:05:23.579 UTC [619] postgres@postgres/psql LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp619.0", size 135331840
+2026-09-25 23:05:23.579 UTC [619] postgres@postgres/psql STATEMENT:  SET max_parallel_workers_per_gather = 0;
+	SELECT count(DISTINCT md5(filler || aid)) FROM pgbench_accounts;
+2026-09-25 23:05:23.579 UTC [619] postgres@postgres/psql LOG:  duration: 1607.813 ms  statement: SET max_parallel_workers_per_gather = 0;
+	SELECT count(DISTINCT md5(filler || aid)) FROM pgbench_accounts;
+[exit=0]
+
+postgres=# SELECT datname, temp_files, pg_size_pretty(temp_bytes) AS temp_bytes
+postgres-# FROM pg_stat_database WHERE datname = 'postgres';
+ datname  | temp_files | temp_bytes 
+----------+------------+------------
+ postgres |          8 | 251 MB
+(1 row)
+
+
+
+######## 6. pg_stat_io
+
+postgres=# SELECT backend_type, object, context, reads, pg_size_pretty(read_bytes) AS read,
+postgres-#        round(read_time::numeric, 1) AS read_ms, writes, extends, hits, evictions
+postgres-# FROM pg_stat_io
+postgres-# WHERE reads > 0 OR writes > 0 OR extends > 0
+postgres-# ORDER BY coalesce(reads, 0) + coalesce(writes, 0) + coalesce(extends, 0) DESC
+postgres-# LIMIT 10;
+    backend_type    |  object  |  context  | reads |  read   | read_ms | writes | extends |  hits   | evictions 
+--------------------+----------+-----------+-------+---------+---------+--------+---------+---------+-----------
+ client backend     | wal      | normal    |     0 | 0 bytes |     0.0 | 236872 |         |         |          
+ client backend     | relation | normal    | 94855 | 742 MB  |   244.7 |  68507 |    3187 | 9315139 |     84399
+ autovacuum worker  | relation | vacuum    | 12885 | 189 MB  |    45.8 |  16714 |       0 |   55795 |      2177
+ background writer  | relation | normal    |       |         |         |  16370 |         |         |          
+ client backend     | relation | bulkwrite |     0 | 0 bytes |     0.0 |  14404 |     261 |   16135 |         0
+ background worker  | relation | bulkread  |  3413 | 88 MB   |     1.4 |   3685 |         |    7792 |      4247
+ client backend     | relation | bulkread  |  3987 | 104 MB  |     3.9 |   1990 |         |   17755 |      2298
+ standalone backend | relation | normal    |   479 | 4336 kB |     0.0 |   1037 |     597 |   91773 |         0
+ autovacuum worker  | relation | normal    |   626 | 6280 kB |     5.7 |    458 |      13 |   31217 |       569
+ client backend     | relation | vacuum    |   904 | 113 MB  |     0.3 |      0 |       0 |    2113 |         0
+(10 rows)
+
+
+
+######## 7. autovacuum과 checkpoint 로그
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 8 -E 'automatic (vacuum|analyze) of table' | tail -n 30
+	I/O timings: read: 0.272 ms, write: 0.044 ms
+	avg read rate: 84.635 MB/s, avg write rate: 2.604 MB/s
+	buffer usage: 175 hits, 65 reads, 2 dirtied
+	WAL usage: 4 records, 0 full page images, 598 bytes, 0 buffers full
+	system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-09-25 23:05:23.237 UTC [620] LOG:  automatic analyze of table "postgres.public.pgbench_history"
+	I/O timings: read: 0.111 ms, write: 0.041 ms
+	avg read rate: 138.700 MB/s, avg write rate: 9.907 MB/s
+	buffer usage: 220 hits, 2450 reads, 175 dirtied
+	WAL usage: 8 records, 0 full page images, 3871 bytes, 0 buffers full
+	system usage: CPU: user: 0.02 s, system: 0.00 s, elapsed: 0.13 s
+2026-09-25 23:05:23.238 UTC [620] LOG:  automatic vacuum of table "postgres.public.pgbench_tellers": index scans: 0
+	pages: 0 removed, 103 remain, 12 scanned (11.65% of total), 0 eagerly scanned
+	tuples: 932 removed, 188 remain, 0 are dead but not yet removable
+	removable cutoff: 399009, which was 2 XIDs old when operation ended
+	new relfrozenxid: 398505, which is 40614 XIDs ahead of previous value
+	frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+	visibility map: 11 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+	index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+	I/O timings: read: 0.055 ms, write: 0.000 ms
+--
+2026-09-25 23:05:23.241 UTC [620] LOG:  automatic analyze of table "postgres.public.pgbench_tellers"
+	I/O timings: read: 0.229 ms, write: 0.014 ms
+	avg read rate: 181.641 MB/s, avg write rate: 3.906 MB/s
+	buffer usage: 65 hits, 93 reads, 2 dirtied
+	WAL usage: 8 records, 0 full page images, 1329 bytes, 0 buffers full
+	system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-09-25 23:05:23.571 UTC [619] postgres@postgres/psql LOG:  duration: 1599.144 ms  plan:
+	Query Text: SET max_parallel_workers_per_gather = 0;
+	SELECT count(DISTINCT md5(filler || aid)) FROM pgbench_accounts;
+[exit=0]
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'checkpoint (starting|complete)' | tail -n 4
+2026-09-25 23:05:38.865 UTC [199] LOG:  checkpoint starting: immediate force wait
+2026-09-25 23:05:38.989 UTC [199] LOG:  checkpoint complete: wrote 11796 buffers (72.0%), wrote 46 SLRU buffers; 0 WAL file(s) added, 0 removed, 18 recycled; write=0.036 s, sync=0.072 s, total=0.124 s; sync files=94, longest=0.057 s, average=0.001 s; distance=302875 kB, estimate=302875 kB; lsn=0/13F22160, redo lsn=0/13F22108
+[exit=0]
+
+postgres=# SELECT relname, n_live_tup, n_dead_tup, last_autovacuum, autovacuum_count
+postgres-# FROM pg_stat_user_tables ORDER BY relname;
+     relname      | n_live_tup | n_dead_tup |        last_autovacuum        | autovacuum_count 
+------------------+------------+------------+-------------------------------+------------------
+ pgbench_accounts |     998270 |      11868 | 2026-09-25 23:04:55.748958+00 |                1
+ pgbench_branches |         10 |          0 | 2026-09-25 23:05:23.092994+00 |                4
+ pgbench_history  |     398216 |          0 | 2026-09-25 23:05:14.652764+00 |                3
+ pgbench_tellers  |        100 |          0 | 2026-09-25 23:05:23.238021+00 |                4
+ t                |          2 |          2 |                               |                0
+(5 rows)
+
+
