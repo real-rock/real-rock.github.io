@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 3: 데이터 저장 구조"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "페이지", "튜플", "TOAST"]
 weight: 3
 summary: "테이블의 행은 디스크에 어떤 모양으로 저장되는가"

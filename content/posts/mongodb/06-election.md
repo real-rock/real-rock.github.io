@@ -3,6 +3,8 @@ title: "MongoDB 인터널 6: Primary 선출 과정"
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
+categories: ["MongoDB"]
+subcategory: "인터널"
 tags: ["MongoDB", "선출", "레플리카셋", "고가용성"]
 weight: 6
 summary: "primary가 죽으면 누가, 어떻게 새 primary가 되는가"

@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 5: VACUUM과 Autovacuum"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "VACUUM", "autovacuum", "MVCC"]
 weight: 5
 summary: "dead tuple은 누가 언제 어떻게 정리하는가"

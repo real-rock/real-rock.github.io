@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 1: 프로세스 구조"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "프로세스", "아키텍처", "postmaster"]
 weight: 1
 summary: "postmaster와 backend, 백그라운드 프로세스가 각각 무슨 일을 하는지"

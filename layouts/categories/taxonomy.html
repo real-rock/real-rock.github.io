@@ -1,0 +1,18 @@
+{{- /* 카테고리 목록(/categories/) */ -}}
+{{- define "main" }}
+<header class="page-head">
+  <h1>{{ .Title }}</h1>
+  {{- with .Description }}<p>{{ . }}</p>{{ end }}
+</header>
+<div class="rows rows-wide">
+  {{- range partial "categories.html" }}
+  <a class="row" href="{{ .RelPermalink }}">
+    <span class="row-main">
+      <span class="row-title">{{ .Title }}</span>
+      {{- with .Description }}<span class="row-sum">{{ . }}</span>{{ end }}
+    </span>
+    <span class="row-n">{{ len .Pages }}개</span>
+  </a>
+  {{- end }}
+</div>
+{{- end }}

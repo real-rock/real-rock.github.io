@@ -2,6 +2,7 @@
 title: "블로그를 시작합니다"
 date: 2026-09-23
 draft: false
+categories: ["공지"]
 tags: ["공지"]
 summary: "이 블로그에서 다룰 두 연재와 글을 읽는 방법"
 description: "PostgreSQL 인터널과 MongoDB 인터널, 두 연재를 소개합니다"

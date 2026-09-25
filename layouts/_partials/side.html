@@ -1,0 +1,76 @@
+{{- /*
+  홈과 카테고리 페이지의 오른쪽 사이드바: 프로필, 연재 진행, 카테고리, 태그.
+  인자: dict "cur" 현재 카테고리 RelPermalink(홈이면 "") "total" 전체 글 수
+*/ -}}
+{{- $cur := .cur }}
+{{- $cats := partial "categories.html" }}
+{{- $catNames := slice }}{{ range $cats }}{{ $catNames = $catNames | append .Title }}{{ end }}
+<aside class="side" aria-label="블로그 안내">
+  <section class="side-box">
+    <div class="prof">
+      <span class="avatar" aria-hidden="true">{{ substr site.Params.author 0 1 }}</span>
+      <div>
+        <strong>{{ site.Params.author }}</strong>
+        {{- with site.Params.profile }}<p>{{ . }}</p>{{ end }}
+      </div>
+    </div>
+    <div class="prof-links">
+      <a href="{{ "about/" | relURL }}"><i class="ph ph-user" aria-hidden="true"></i>소개</a>
+      <a href="{{ "index.xml" | relURL }}"><i class="ph ph-rss" aria-hidden="true"></i>RSS</a>
+    </div>
+  </section>
+
+  {{- with sort (site.GetPage "/series").Pages "Params.order" }}
+  <section class="side-box">
+    <h2 class="side-h">연재<a href="{{ "series/" | relURL }}">전체</a></h2>
+    <ul class="side-series">
+      {{- range . }}
+      {{- $ch := partial "series_chapters.html" . }}
+      {{- $total := len $ch }}
+      {{- $pub := 0 }}{{ range $ch }}{{ if .page }}{{ $pub = add $pub 1 }}{{ end }}{{ end }}
+      {{- $pct := 0.0 }}{{ if $total }}{{ $pct = div (mul $pub 100.0) $total }}{{ end }}
+      <li>
+        <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+        <span class="bar" aria-hidden="true"><i style="{{ printf "width: %.1f%%" $pct | safeCSS }}"></i></span>
+        <span class="side-series-m">
+          <span>{{ if eq $pub 0 }}준비 중{{ else if eq $pub $total }}{{ $total }}편 완결{{ else }}{{ $pub }} / {{ $total }}편{{ end }}</span>
+          {{- with .Params.version }}<span>{{ . }}</span>{{ end }}
+        </span>
+      </li>
+      {{- end }}
+    </ul>
+  </section>
+  {{- end }}
+
+  <section class="side-box side-tree">
+    <h2 class="side-h">카테고리</h2>
+    <ul class="tree">
+      <li><a href="{{ site.Home.RelPermalink }}"{{ if not $cur }} class="is-cur" aria-current="page"{{ end }}>분류 전체보기<em>{{ .total }}</em></a></li>
+      {{- range $cats }}
+      {{- $term := . }}
+      <li>
+        <a href="{{ .RelPermalink }}"{{ if eq .RelPermalink $cur }} class="is-cur" aria-current="page"{{ end }}>{{ .Title }}<em>{{ len .Pages }}</em></a>
+        {{- $subs := slice }}{{ range .Pages }}{{ with .Params.subcategory }}{{ $subs = $subs | append . }}{{ end }}{{ end }}
+        {{- with $subs | uniq }}
+        <ul>
+          {{- range . }}
+          <li><a href="{{ $term.RelPermalink }}?sub={{ . }}" data-sub="{{ . }}">{{ . }}<em>{{ len (where $term.Pages "Params.subcategory" .) }}</em></a></li>
+          {{- end }}
+        </ul>
+        {{- end }}
+      </li>
+      {{- end }}
+    </ul>
+  </section>
+
+  {{- $tags := slice }}
+  {{- range site.Taxonomies.tags.ByCount }}{{ if and (not (in $catNames .Page.Title)) (lt (len $tags) 12) }}{{ $tags = $tags | append .Page }}{{ end }}{{ end }}
+  {{- with $tags }}
+  <section class="side-box">
+    <h2 class="side-h">태그<a href="{{ "tags/" | relURL }}">전체</a></h2>
+    <div class="tcloud">
+      {{- range . }}<a href="{{ .RelPermalink }}">{{ .Title }}</a>{{ end }}
+    </div>
+  </section>
+  {{- end }}
+</aside>

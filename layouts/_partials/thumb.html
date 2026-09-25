@@ -1,0 +1,22 @@
+{{- /*
+  글 썸네일. 이미지 대신 카테고리 색 바탕에 글자로 그린 표지입니다.
+  큰 글자는 front matter의 thumb, 없으면 짧은 제목(short_title)을 씁니다.
+  작은 글자는 subcategory이고, 연재 글이면 편 번호가 붙습니다 ("인터널 01").
+  색은 카테고리 _index.md의 color (assets/css/extended/home.css의 .c-*)
+*/ -}}
+{{- $p := . }}
+{{- $cat := "" }}
+{{- $color := "nt" }}
+{{- with $p.GetTerms "categories" }}{{ with index . 0 }}
+  {{- $cat = .Title }}
+  {{- $color = .Params.color | default "nt" }}
+{{- end }}{{ end }}
+{{- $label := $p.Params.subcategory | default "" }}
+{{- if and ($p.GetTerms "series") $p.Weight }}
+  {{- $label = printf "%s %02d" $label $p.Weight | strings.TrimSpace }}
+{{- end }}
+{{- $word := $p.Params.thumb | default (partial "short_title.html" $p) }}
+<span class="thumb c-{{ $color }}" aria-hidden="true">
+  <span class="thumb-cat">{{ $cat }}</span>
+  <span class="thumb-word">{{ with $label }}<small>{{ . }}</small>{{ end }}{{ $word }}</span>
+</span>

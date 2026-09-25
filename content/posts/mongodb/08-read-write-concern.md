@@ -3,6 +3,8 @@ title: "MongoDB 인터널 8: Read/Write Concern이 실제로 보장하는 것"
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
+categories: ["MongoDB"]
+subcategory: "인터널"
 tags: ["MongoDB", "write concern", "read concern", "일관성"]
 weight: 8
 summary: "MongoDB는 무엇을 언제까지 보장하는가"

@@ -13,6 +13,7 @@ enableEmoji = true
 [taxonomies]
   tag = "tags"
   series = "series"
+  category = "categories"
 
 [outputs]
   home = ["HTML", "RSS", "JSON"]   # JSON은 블로그 내 검색용
@@ -22,6 +23,7 @@ enableEmoji = true
   description = "MongoDB·PostgreSQL DBA Jin이 데이터베이스에 관한 이야기를 기록하는 블로그"
   defaultTheme = "dark"      # 기본 다크, 헤더 버튼으로 라이트 전환
   ShowCodeCopyButtons = true
+  profile = "MongoDB와 PostgreSQL을 다루는 DBA"   # 홈 사이드바 프로필 한 줄
 
   [params.homeInfoParams]
     Title = "Jin's 블로그"

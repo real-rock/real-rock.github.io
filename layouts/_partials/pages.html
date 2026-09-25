@@ -1,0 +1,11 @@
+{{- /* 번호가 있는 페이지 이동. 인자: paginator */ -}}
+{{- $pg := . }}
+{{- if gt $pg.TotalPages 1 }}
+<nav class="pages" aria-label="페이지">
+  {{- with $pg.Prev }}<a href="{{ .URL }}" aria-label="이전 페이지"><i class="ph ph-caret-left" aria-hidden="true"></i></a>{{ end }}
+  {{- range $pg.Pagers }}
+  <a href="{{ .URL }}"{{ if eq .PageNumber $pg.PageNumber }} class="is-cur" aria-current="page"{{ end }}>{{ .PageNumber }}</a>
+  {{- end }}
+  {{- with $pg.Next }}<a href="{{ .URL }}" aria-label="다음 페이지"><i class="ph ph-caret-right" aria-hidden="true"></i></a>{{ end }}
+</nav>
+{{- end }}

@@ -3,6 +3,8 @@ title: "MongoDB 인터널 5: oplog와 레플리카셋 복제"
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
+categories: ["MongoDB"]
+subcategory: "인터널"
 tags: ["MongoDB", "oplog", "복제", "레플리카셋"]
 weight: 5
 summary: "secondary는 primary의 변경을 어떻게 따라가는가"

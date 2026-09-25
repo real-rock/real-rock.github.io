@@ -1,0 +1,47 @@
+{{- /* 카테고리 페이지(/categories/postgresql/). ?sub=운영 이면 하위 분류만 걸러 보여 줍니다 */ -}}
+{{- define "main" }}
+{{- $pages := .Pages.ByDate.Reverse }}
+{{- $total := len (where site.RegularPages "Type" "in" site.Params.mainSections) }}
+<div class="with-side is-term">
+  <div class="list-col">
+    {{ partial "cat_chips.html" (dict "cur" .RelPermalink) }}
+    <header class="list-head">
+      <h1 id="list-title">{{ .Title }}</h1>
+      <span class="list-count" id="list-count">{{ len $pages }}개</span>
+    </header>
+    {{- with .Description }}<p class="list-desc">{{ . }}</p>{{ end }}
+    <div class="items" id="items">
+      {{- range $pages }}{{ partial "post_item.html" . }}{{ end }}
+    </div>
+  </div>
+  {{ partial "side.html" (dict "cur" .RelPermalink "total" $total) }}
+</div>
+<script>
+(function () {
+  var sub = new URLSearchParams(location.search).get("sub");
+  if (!sub) return;
+  var items = [].slice.call(document.querySelectorAll("#items .item"));
+  var shown = items.filter(function (el) { return el.dataset.sub === sub; });
+  if (!shown.length) return;
+  items.forEach(function (el) { el.hidden = shown.indexOf(el) < 0; });
+
+  var title = document.getElementById("list-title");
+  var crumb = document.createElement("span");
+  crumb.className = "crumb";
+  crumb.textContent = title.textContent + " ›";
+  title.textContent = " " + sub;
+  title.prepend(crumb);
+  document.getElementById("list-count").textContent = shown.length + "개";
+
+  var cur = document.querySelector(".tree a.is-cur");
+  var link = cur && [].slice.call(cur.parentNode.querySelectorAll("a[data-sub]"))
+    .filter(function (a) { return a.dataset.sub === sub; })[0];
+  if (link) {
+    cur.classList.remove("is-cur");
+    cur.removeAttribute("aria-current");
+    link.classList.add("is-cur");
+    link.setAttribute("aria-current", "page");
+  }
+})();
+</script>
+{{- end }}

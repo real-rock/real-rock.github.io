@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 7: WAL"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "WAL", "LSN", "full_page_writes"]
 weight: 7
 summary: "모든 변경은 왜 먼저 WAL에 적히고, WAL 레코드에는 무엇이 들어 있는가"

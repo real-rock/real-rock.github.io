@@ -1,0 +1,4 @@
+{{- /* 글이 하나 이상 있는 카테고리를 order 순으로 반환합니다(초안만 있는 카테고리는 운영 빌드에서 빠짐) */ -}}
+{{- $out := slice }}
+{{- range sort (site.GetPage "/categories").Pages "Params.order" }}{{ if .Pages }}{{ $out = $out | append . }}{{ end }}{{ end }}
+{{- return $out }}

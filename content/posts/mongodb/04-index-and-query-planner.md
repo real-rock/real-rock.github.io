@@ -3,6 +3,8 @@ title: "MongoDB 인터널 4: 인덱스 구조와 쿼리 플래너의 계획 선�
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
+categories: ["MongoDB"]
+subcategory: "인터널"
 tags: ["MongoDB", "인덱스", "쿼리 플래너", "explain"]
 weight: 4
 summary: "MongoDB는 여러 실행 계획 중 하나를 어떻게 고르는가"

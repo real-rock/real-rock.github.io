@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 6: 트랜잭션 ID wraparound"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "wraparound", "freeze", "VACUUM"]
 weight: 6
 summary: "32비트 트랜잭션 ID가 한 바퀴 돌면 무슨 일이 생기고, PostgreSQL은 어떻게 막는가"

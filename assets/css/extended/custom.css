@@ -186,32 +186,7 @@ time {
     border-radius: var(--radius);
 }
 
-/* ---------- 홈 ---------- */
-.intro {
-    display: grid;
-    grid-template-columns: 7fr 5fr;
-    gap: 48px;
-    align-items: end;
-    padding: 80px 0 64px;
-}
-
-.intro h1 {
-    margin: 0;
-    font-size: clamp(40px, 5.2vw, 60px);
-    font-weight: 800;
-    line-height: 1.1;
-    letter-spacing: -0.045em;
-    text-wrap: balance;
-}
-
-.intro p {
-    margin: 0 0 8px;
-    max-width: 34em;
-    font-size: 17px;
-    line-height: 1.75;
-    color: var(--tx-2);
-}
-
+/* ---------- 연재 목차 블록 (시리즈 페이지) ---------- */
 .series-pair {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -326,21 +301,6 @@ a.ch-title:hover {
     color: var(--ac);
 }
 
-.split {
-    display: grid;
-    grid-template-columns: 3fr 9fr;
-    gap: 48px;
-    padding: 48px 0 24px;
-    border-top: 1px solid var(--strong);
-}
-
-.split h2 {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 800;
-    letter-spacing: -0.03em;
-}
-
 /* ---------- 글 목록 ---------- */
 .rows {
     display: flex;
@@ -354,10 +314,6 @@ a.ch-title:hover {
     padding: 14px 0;
     color: var(--tx);
     text-decoration: none;
-}
-
-.split .row:first-child {
-    padding-top: 0;
 }
 
 .row-main {
@@ -1213,18 +1169,8 @@ a.ch-title:hover {
         --gap: 20px;
     }
 
-    .intro,
-    .series-pair,
-    .split {
-        grid-template-columns: 1fr;
-        gap: 32px;
-    }
-
-    .intro {
-        padding: 48px 0 40px;
-    }
-
     .series-pair {
+        grid-template-columns: 1fr;
         gap: 48px;
     }
 

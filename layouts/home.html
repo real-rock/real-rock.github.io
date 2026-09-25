@@ -1,25 +1,32 @@
 {{- define "main" }}
 {{- $info := site.Params.homeInfoParams }}
-{{- $series := sort (site.GetPage "/series").Pages "Params.order" }}
-{{- $recent := (where site.RegularPages "Type" "in" site.Params.mainSections).ByDate.Reverse }}
+{{- $posts := (where site.RegularPages "Type" "in" site.Params.mainSections).ByDate.Reverse }}
+{{- $pager := .Paginate $posts }}
 
-<section class="intro">
-  <h1>{{ $info.Title | default site.Title }}</h1>
-  <p>{{ $info.Content | default site.Params.description | markdownify }}</p>
-</section>
-
-{{- with $series }}
-<section class="series-pair" aria-label="연재">
-  {{- range . }}{{ partial "series_block.html" (dict "term" . "limit" 5) }}{{ end }}
-</section>
-{{- end }}
-
-{{- with $recent }}
-<section class="split">
-  <h2>최근 글</h2>
-  <div class="rows">
-    {{- range first 6 . }}{{ partial "post_row.html" (dict "page" .) }}{{ end }}
+<section class="cover">
+  <div class="cover-text">
+    <h1>{{ $info.Title | default site.Title }}</h1>
+    <p>{{ $info.Content | default site.Params.description | markdownify }}</p>
   </div>
+  <p class="cover-stat">
+    <span><b>{{ len $posts }}</b>글</span>
+    <span><b>{{ len (site.GetPage "/series").Pages }}</b>연재</span>
+    <span><b>{{ len (partial "categories.html") }}</b>카테고리</span>
+  </p>
 </section>
-{{- end }}
+
+<div class="with-side">
+  <div class="list-col">
+    {{ partial "cat_chips.html" (dict "cur" "") }}
+    <header class="list-head">
+      <h2>전체 글</h2>
+      <span class="list-count">{{ len $posts }}개</span>
+    </header>
+    <div class="items">
+      {{- range $pager.Pages }}{{ partial "post_item.html" . }}{{ end }}
+    </div>
+    {{ partial "pages.html" $pager }}
+  </div>
+  {{ partial "side.html" (dict "cur" "" "total" (len $posts)) }}
+</div>
 {{- end }}

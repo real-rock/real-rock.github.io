@@ -1,0 +1,8 @@
+{{- /* 좁은 화면에서 사이드바 카테고리 대신 목록 위에 보이는 가로 칩. 인자: dict "cur" 현재 카테고리 RelPermalink(홈이면 "") */ -}}
+{{- $cur := .cur }}
+<nav class="cat-chips" aria-label="카테고리">
+  <a href="{{ site.Home.RelPermalink }}"{{ if not $cur }} class="is-cur" aria-current="page"{{ end }}>전체</a>
+  {{- range partial "categories.html" }}
+  <a href="{{ .RelPermalink }}"{{ if eq .RelPermalink $cur }} class="is-cur" aria-current="page"{{ end }}>{{ .Title }}</a>
+  {{- end }}
+</nav>

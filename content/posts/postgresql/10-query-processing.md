@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 10: 쿼리 처리 과정"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "쿼리", "플래너", "통계", "EXPLAIN"]
 weight: 10
 summary: "SQL 한 줄이 결과가 되기까지: 파서, 플래너, 실행기와 통계 정보"

@@ -3,6 +3,8 @@ title: "MongoDB 인터널 2: 체크포인트와 저널"
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
+categories: ["MongoDB"]
+subcategory: "인터널"
 tags: ["MongoDB", "체크포인트", "저널"]
 weight: 2
 summary: "MongoDB는 장애 후 어떻게 데이터를 복구하는가"

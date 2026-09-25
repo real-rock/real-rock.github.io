@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 2: 메모리 구조"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "메모리", "shared_buffers", "work_mem"]
 weight: 2
 summary: "shared buffers, work_mem, WAL buffers는 어디에 어떻게 쓰이는가"

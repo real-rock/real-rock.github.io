@@ -29,6 +29,8 @@ hugo server -D                                              # http://localhost:1
 - 글은 `draft: true` 상태로 생성됩니다. 공개하려면 `draft: false`로 바꾸고 push 하세요.
 - 시리즈는 `series: ["PostgreSQL 인터널"]`처럼 지정하면 시리즈 페이지에 자동으로 묶입니다.
 - 시리즈 목차는 `content/series/<시리즈>/_index.md`의 `chapters`에서 관리합니다. n번째 항목은 `weight: n`인 글과 연결되고, 글이 공개되기 전에는 "준비 중"으로 표시됩니다.
+- 카테고리는 `categories: ["PostgreSQL"]`(DB 하나)와 `subcategory: "운영"`(하위 분류)로 지정합니다. 새 DB를 추가할 때는 `content/categories/<이름>/_index.md`에 `order`(사이드바 순서)와 `color`(썸네일 색: pg, mg, my, rd, cm, nt)를 적습니다.
+- 홈 썸네일의 큰 글자는 `thumb`로 바꿀 수 있고, 비우면 짧은 제목을 씁니다.
 - 다이어그램은 ` ```mermaid ` 코드 블록으로 작성하면 그림으로 표시됩니다.
 - 이미지는 `static/images/` 에 넣고 `![설명](/images/파일명.png)` 로 사용합니다.
 - 날짜가 미래인 글은 표시되지 않습니다.

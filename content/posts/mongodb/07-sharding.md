@@ -3,6 +3,8 @@ title: "MongoDB 인터널 7: 샤딩 구조"
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
+categories: ["MongoDB"]
+subcategory: "인터널"
 tags: ["MongoDB", "샤딩", "mongos", "balancer"]
 weight: 7
 summary: "MongoDB는 데이터를 여러 샤드에 어떻게 나누는가"

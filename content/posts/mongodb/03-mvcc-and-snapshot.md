@@ -3,6 +3,8 @@ title: "MongoDB 인터널 3: WiredTiger의 MVCC와 스냅샷"
 date: 2026-09-23
 draft: true
 series: ["MongoDB 인터널"]
+categories: ["MongoDB"]
+subcategory: "인터널"
 tags: ["MongoDB", "MVCC", "스냅샷", "트랜잭션"]
 weight: 3
 summary: "동시에 읽고 쓸 때 MongoDB 내부에서 일어나는 일"

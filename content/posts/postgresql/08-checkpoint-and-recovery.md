@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 8: 체크포인트와 장애 복구 과정"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "체크포인트", "복구", "PITR"]
 weight: 8
 summary: "장애가 나도 커밋한 데이터가 사라지지 않는 이유, 그리고 복구는 어디서부터 시작하는가"

@@ -1,0 +1,26 @@
+{{- /* 썸네일이 붙은 글 목록 항목(홈, 카테고리 페이지). 인자: 글 */ -}}
+{{- $p := . }}
+{{- $cat := "" }}
+{{- with $p.GetTerms "categories" }}{{ $cat = (index . 0).Title }}{{ end }}
+{{- /* 카테고리와 같은 이름의 태그는 빼고 3개까지 */ -}}
+{{- $tags := slice }}
+{{- range $p.GetTerms "tags" }}{{ if and (ne .Title $cat) (lt (len $tags) 3) }}{{ $tags = $tags | append .Title }}{{ end }}{{ end }}
+<a class="item" href="{{ $p.RelPermalink }}" data-sub="{{ $p.Params.subcategory }}">
+  <span class="item-main">
+    <span class="item-cat">
+      <span>{{ $cat }}{{ with $p.Params.subcategory }} · {{ . }}{{ end }}</span>
+      {{- with $p.GetTerms "series" }}{{ with index . 0 }}
+      {{- $total := len (.Params.chapters | default .Pages) }}
+      <span class="item-series"><i class="ph ph-books" aria-hidden="true"></i>{{ .Title }} {{ $p.Weight }}/{{ $total }}</span>
+      {{- end }}{{ end }}
+      {{- if $p.Draft }}<span class="item-state">초안</span>{{ end }}
+    </span>
+    <span class="item-title">{{ $p.Title }}</span>
+    {{- with $p.Summary }}<span class="item-sum">{{ . | plainify | htmlUnescape }}</span>{{ end }}
+    <span class="item-meta">
+      <time datetime="{{ $p.Date.Format "2006-01-02" }}">{{ $p.Date.Format "2006.01.02" }}</time>
+      {{- range $tags }}<span>#{{ . }}</span>{{ end }}
+    </span>
+  </span>
+  {{ partial "thumb.html" $p }}
+</a>

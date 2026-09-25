@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 4: MVCC"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "MVCC", "트랜잭션", "스냅샷"]
 weight: 4
 summary: "PostgreSQL은 어떻게 읽기와 쓰기가 서로를 막지 않게 하는가"

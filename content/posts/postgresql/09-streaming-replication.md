@@ -3,6 +3,8 @@ title: "PostgreSQL 인터널 9: 스트리밍 복제와 Replication Slot"
 date: 2026-09-24
 draft: false
 series: ["PostgreSQL 인터널"]
+categories: ["PostgreSQL"]
+subcategory: "인터널"
 tags: ["PostgreSQL", "복제", "replication slot", "standby"]
 weight: 9
 summary: "standby는 primary의 변경을 어떻게 따라가고, replication slot은 왜 디스크를 채우는가"
