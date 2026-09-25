@@ -58,7 +58,6 @@
       {{- if eq .Type "posts" }}
       <p class="post-meta">
         <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006년 1월 2일" }}</time>
-        <span>{{ .ReadingTime }}분 분량</span>
         {{- if .Draft }}<span>초안</span>{{ end }}
       </p>
       {{- end }}

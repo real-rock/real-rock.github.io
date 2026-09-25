@@ -1,0 +1,16 @@
+{{- /* 터미널 세션 블록: "$ "와 이어지는 줄 "> " 뒤만 bash로 하이라이팅하고, 나머지 줄은 결과(go)로 표시한다.
+       Chroma의 console 렉서는 "#"으로 시작하는 결과 줄(설정 파일의 주석 등)을 root 프롬프트로 읽어서 직접 나눈다. */ -}}
+{{- $out := slice -}}
+{{- range split (strings.TrimRight "\n" .Inner) "\n" -}}
+  {{- $m := findRESubmatch `^([$>]) (.*)$` . 1 -}}
+  {{- if $m -}}
+    {{- $m = index $m 0 -}}
+    {{- $cmd := transform.Highlight (index $m 2) "bash" "hl_inline=true" | replaceRE `^<code[^>]*>|</code>$` "" -}}
+    {{- $out = $out | append (printf `<span class="line"><span class="cl"><span class="gp">%s</span> %s
+</span></span>` (index $m 1) $cmd) -}}
+  {{- else -}}
+    {{- $out = $out | append (printf `<span class="line"><span class="cl"><span class="go">%s
+</span></span></span>` (htmlEscape .)) -}}
+  {{- end -}}
+{{- end -}}
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-console" data-lang="console">{{ delimit $out "" | safeHTML }}</code></pre></div>

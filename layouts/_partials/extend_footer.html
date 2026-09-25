@@ -2,6 +2,24 @@
 (function () {
   var root = document.documentElement;
 
+  /* 터미널·psql 세션 블록의 복사 버튼은 출력과 프롬프트를 빼고 명령만 복사한다 */
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest(".copy-code");
+    var code = btn && btn.parentNode.querySelector("code.language-console, code.language-psql");
+    if (!code || !navigator.clipboard) return;
+    e.stopPropagation();
+    var cmds = [].slice.call(code.querySelectorAll(".line")).filter(function (l) {
+      return l.querySelector(".gp");
+    }).map(function (l) {
+      var c = l.cloneNode(true);
+      c.querySelector(".gp").remove();
+      return c.textContent.replace(/^ /, "").replace(/\n$/, "");
+    });
+    navigator.clipboard.writeText(cmds.join("\n"));
+    btn.textContent = "{{ i18n "code_copied" | default "copied!" }}";
+    setTimeout(function () { btn.textContent = "{{ i18n "code_copy" | default "copy" }}"; }, 2000);
+  }, true);
+
   /* 연재 목차 접기/펴기 */
   var buttons = document.querySelectorAll("[data-rail-toggle]");
   var rail = document.getElementById("rail-series");

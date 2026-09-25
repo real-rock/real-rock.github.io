@@ -923,6 +923,21 @@ a.ch-title:hover {
     color: var(--tx-3);
 }
 
+.post-content .chroma .nv,
+.post-content .chroma .nt {
+    color: var(--m);
+}
+
+/* 터미널 세션(console): 프롬프트는 흐리게 두고 선택되지 않게, 출력은 명령보다 한 단계 흐리게 */
+.post-content .chroma .gp {
+    color: var(--tx-3);
+    user-select: none;
+}
+
+.post-content .chroma .go {
+    color: var(--tx-2);
+}
+
 .post-content .chroma .hl {
     background: color-mix(in srgb, var(--ac) 14%, transparent);
 }
