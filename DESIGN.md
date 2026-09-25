@@ -84,6 +84,7 @@ Jin's 블로그의 화면 규칙입니다. 값은 모두 `assets/css/extended/cu
 | 오른쪽 이 글의 목차 | `single.html` | Hugo `.TableOfContents`. 읽는 소제목은 강조색 |
 | 이전·다음 글 | `_partials/post_nav_links.html` | 연재 글은 연재 순서로 연결. 아이콘 없이 "이전 글/다음 글" |
 | 표 | `_markup/render-table.html` | 좁은 화면에서 표 안에서만 가로 스크롤 |
+| 파비콘 | `static/favicon.svg` 외, `hugo.toml` `params.assets`, `_partials/extend_head.html` | `--bg-2` 둥근 사각형(모서리 14/64)에 JetBrains Mono ExtraBold `J`(`--tx` 다크값)와 강조색 밑줄 커서. J는 글꼴에서 윤곽선으로 뽑은 path. 세로획과 커서는 16px에서 2px로 픽셀 격자에 맞춤. apple-touch-icon만 모서리 없이 꽉 채움 |
 | 다이어그램 | `_partials/extend_head.html` | Mermaid `base` 테마를 다크/라이트 토큰에 맞춤 |
 
 ## 모션

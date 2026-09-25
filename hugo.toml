@@ -25,6 +25,16 @@ enableEmoji = true
   ShowCodeCopyButtons = true
   profile = "MongoDB와 PostgreSQL을 다루는 DBA"   # 홈 사이드바 프로필 한 줄
 
+  # 파비콘: static/ 아래 파일. 원본은 favicon.svg(JetBrains Mono J + 강조색 커서)
+  [params.assets]
+    favicon = "favicon.ico"
+    favicon16x16 = "favicon-16x16.png"
+    favicon32x32 = "favicon-32x32.png"
+    apple_touch_icon = "apple-touch-icon.png"
+    safari_pinned_tab = "safari-pinned-tab.svg"
+    theme_color = "#101113"
+    msapplication_TileColor = "#101113"
+
   [params.homeInfoParams]
     Title = "Jin's 블로그"
     Content = "MongoDB와 PostgreSQL을 다루는 DBA입니다. DB를 운영하며 배우고 궁금했던 것들을 이곳에 정리합니다."

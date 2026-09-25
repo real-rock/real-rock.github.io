@@ -6,6 +6,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap">
 
+{{- /* 파비콘: ico·png는 테마 head.html이 넣고, 여기서는 SVG와 안드로이드 홈 화면용 manifest만 더합니다 */ -}}
+<link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | absURL }}">
+<link rel="manifest" href="{{ "site.webmanifest" | absURL }}">
+
 {{- /* 연재 목차를 접어 둔 상태를 화면이 그려지기 전에 적용 */ -}}
 <script>try { if (localStorage.getItem("rail-series") === "off") document.documentElement.dataset.rail = "off"; } catch (e) {}</script>
 
