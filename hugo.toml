@@ -19,13 +19,13 @@ enableEmoji = true
 
 [params]
   author = "Jin"
-  description = "Jin이 일하고 공부하면서 배운 것을 기록하는 개인 블로그"
+  description = "MongoDB·PostgreSQL DBA Jin이 데이터베이스에 관한 이야기를 기록하는 블로그"
   defaultTheme = "dark"      # 기본 다크, 헤더 버튼으로 라이트 전환
   ShowCodeCopyButtons = true
 
   [params.homeInfoParams]
     Title = "Jin's 블로그"
-    Content = "일하면서 배우고 궁금했던 것들을 정리해 둡니다. 지금은 PostgreSQL과 MongoDB의 내부 구조를 연재하고 있습니다."
+    Content = "MongoDB와 PostgreSQL을 다루는 DBA입니다. DB를 운영하며 배우고 궁금했던 것들을 이곳에 정리합니다."
 
   [params.fuseOpts]
     keys = ["title", "summary", "content"]
