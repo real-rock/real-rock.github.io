@@ -1,4 +1,4 @@
-# DB 인터널 노트
+# Jin's 블로그
 
 Hugo + PaperMod 테마로 만든 GitHub Pages 블로그입니다.
 

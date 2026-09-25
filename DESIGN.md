@@ -1,6 +1,6 @@
 # Design
 
-DB 인터널 노트의 화면 규칙입니다. 값은 모두 `assets/css/extended/custom.css`에 있는 그대로입니다. 새 화면이나 요소를 만들 때 이 문서를 먼저 봅니다.
+Jin's 블로그의 화면 규칙입니다. 값은 모두 `assets/css/extended/custom.css`에 있는 그대로입니다. 새 화면이나 요소를 만들 때 이 문서를 먼저 봅니다.
 
 ## 방향
 

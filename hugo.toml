@@ -2,7 +2,7 @@ baseURL = "https://jinlog.dev/"
 languageCode = "ko-kr"
 defaultContentLanguage = "ko"
 hasCJKLanguage = true
-title = "DB 인터널 노트"
+title = "Jin's 블로그"
 theme = "PaperMod"
 enableRobotsTXT = true
 enableEmoji = true
@@ -19,13 +19,13 @@ enableEmoji = true
 
 [params]
   author = "Jin"
-  description = "PostgreSQL과 MongoDB의 내부 구조를 운영 관점에서 풀어 쓰는 블로그"
+  description = "Jin이 일하고 공부하면서 배운 것을 기록하는 개인 블로그"
   defaultTheme = "dark"      # 기본 다크, 헤더 버튼으로 라이트 전환
   ShowCodeCopyButtons = true
 
   [params.homeInfoParams]
-    Title = "DB 인터널 노트"
-    Content = "PostgreSQL과 MongoDB가 내부에서 어떻게 동작하는지, 그리고 그 구조가 운영에서 어떤 현상으로 나타나는지 기록합니다."
+    Title = "Jin's 블로그"
+    Content = "일하면서 배우고 궁금했던 것들을 정리해 둡니다. 지금은 PostgreSQL과 MongoDB의 내부 구조를 연재하고 있습니다."
 
   [params.fuseOpts]
     keys = ["title", "summary", "content"]
