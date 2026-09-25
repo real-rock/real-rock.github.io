@@ -20,7 +20,8 @@ DB 연재는 운영 현장 관점. 내부 구조 설명을 실제 장애·성능
 
 ## Operating Context
 - 한국어 글, 기술 용어는 영어 원문 유지.
-- 두 연재: PostgreSQL 인터널(10편, PostgreSQL 18 기준, REL_18_STABLE 소스), MongoDB 인터널(8편, MongoDB 8.0 기준). 뒤의 개념이 앞의 개념 위에 쌓이는 순서.
+- 세 연재: PostgreSQL 인터널(10편, PostgreSQL 18 기준, REL_18_STABLE 소스), MongoDB 인터널(8편, MongoDB 8.0 기준), PostgreSQL 운영(12편, 장애/증상별, PostgreSQL 18 PGDG RPM + Rocky Linux 9 컨테이너 실측). 인터널 연재는 뒤의 개념이 앞의 개념 위에 쌓이는 순서.
+- 운영 연재 글 템플릿: 개요 → 먼저 확인할 것 → 원인별 진단 → 조치 → 재발 방지 → 정리 → 참고 자료. 실습 파일은 labs/pg-ops/(비공개)에 두고 본문 출력은 그 캡처에서만 가져온다.
 - 글 템플릿: 개요 → 동작 원리 → 직접 확인해 보기 → 운영에서는 이렇게 나타납니다 → 정리 → 참고 자료.
 - 본문에는 긴 코드/쿼리 출력(psql, explain, 로그), Mermaid 다이어그램, 표, 긴 설명 글이 모두 들어간다.
 

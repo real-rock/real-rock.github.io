@@ -1,7 +1,7 @@
 # PostgreSQL 운영 연재 설계
 
 - 작성일: 2026-09-26
-- 상태: 사용자 검토 대기
+- 상태: 승인됨 (2026-09-26)
 
 ## 목적
 
@@ -43,7 +43,7 @@ PostgreSQL 인터널 연재(10편)가 "왜 이렇게 동작하는가"를 다뤘�
 ## 사이트 구성
 
 - 시리즈: `content/series/postgresql-운영/_index.md`
-  - `title: "PostgreSQL 운영"`, `version: "PostgreSQL 18"`, `order: 2`
+  - `title: "PostgreSQL 운영"`, `version: "PostgreSQL 18"`, `order: 3` (MongoDB 인터널이 2)
   - `chapters`에 위 12편을 넣는다. 쓰기 전인 편은 기존 동작대로 "준비 중"으로 보인다.
 - 글: `content/posts/postgresql-ops/NN-<slug>.md`
   - `series: ["PostgreSQL 운영"]`, `categories: ["PostgreSQL"]`, `subcategory: "운영"`, `weight: NN`
@@ -104,10 +104,10 @@ PostgreSQL 인터널 연재(10편)가 "왜 이렇게 동작하는가"를 다뤘�
 인터널 연재에서는 실습 파일을 `static/labs/`에 두어 사이트에 공개했다가 커밋 `932c6b5`에서 지웠다. 운영 연재는 다음과 같이 한다.
 
 - 실습 파일은 저장소 루트의 `labs/pg-ops/`에 둔다. Hugo 빌드 대상이 아니므로 사이트에 공개되지 않고, 본문에서 링크하지 않는다.
-  - `Dockerfile`, `compose.yaml`
+  - `Dockerfile` (standby가 필요한 편에서 `compose.yaml` 추가)
   - `scenarios/NN-<slug>/reproduce.sh`: 장애를 재현하는 스크립트
   - `scenarios/NN-<slug>/out/`: 캡처한 원본 출력
-- 이 위치는 사용자 검토 항목이다. 저장소에 남기지 않기로 하면 `labs/`를 `.gitignore`에 넣고 로컬에만 둔다.
+- 사용자 결정(2026-09-26): 저장소에 둔다.
 
 ## 태그
 
