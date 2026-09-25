@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "8kB 힙 페이지 한 장 (실습의 fruit 테이블 블록 0)",
+    "title": "8kB 힙 페이지 한 장 (fruit 테이블 블록 0)",
     "quality_profile": "standard",
     "viewBox": [1120, 640],
     "repository": {

@@ -2,7 +2,7 @@
  "schema_version": 1,
  "diagram_type": "sequence",
  "meta": {
-  "title": "두 세션의 스냅샷 (실습 5)",
+  "title": "두 세션의 스냅샷",
   "quality_profile": "showcase",
   "viewBox": [
    1085,

@@ -2,7 +2,7 @@
  "schema_version": 1,
  "diagram_type": "architecture",
  "meta": {
-  "title": "WAL 레코드 하나의 구조 (실습 3의 UPDATE 레코드)",
+  "title": "WAL 레코드 하나의 구조 (UPDATE 레코드)",
   "quality_profile": "standard",
   "viewBox": [
    1320,

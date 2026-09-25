@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "sequence",
   "meta": {
-    "title": "오래된 트랜잭션 하나가 wraparound 정지까지 가는 과정 (실습 5-8)",
+    "title": "오래된 트랜잭션 하나가 wraparound 정지까지 가는 과정",
     "quality_profile": "showcase",
     "viewBox": [1085, 566],
     "column_fit": "spread",
