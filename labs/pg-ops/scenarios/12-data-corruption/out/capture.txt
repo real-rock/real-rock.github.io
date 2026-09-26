@@ -1,0 +1,293 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+506416d69627442a79dd633ce5c1b7f24d262650713a5d1f79a8cbc90262d05b
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# SHOW data_checksums;
+ data_checksums 
+----------------
+ on
+(1 row)
+
+
+postgres=# CREATE EXTENSION amcheck;
+CREATE EXTENSION
+
+postgres=# CREATE TABLE t (id int PRIMARY KEY, v text);
+CREATE TABLE
+
+postgres=# INSERT INTO t SELECT g, 'row-' || g || '-' || repeat('a', 100) FROM generate_series(1, 1000) g;
+INSERT 0 1000
+
+postgres=# CREATE TABLE w (id int PRIMARY KEY, v text);
+CREATE TABLE
+
+postgres=# INSERT INTO w SELECT g, 'row-' || g || '-' || repeat('a', 100) FROM generate_series(1, 1000) g;
+INSERT 0 1000
+
+postgres=# CREATE TABLE u (id int PRIMARY KEY, v text);
+CREATE TABLE
+
+postgres=# INSERT INTO u SELECT g, 'u-' || g FROM generate_series(1, 1000) g;
+INSERT 0 1000
+
+postgres=# SELECT (ctid::text::point)[0]::int AS block, count(*), min(id), max(id)
+postgres-# FROM t GROUP BY 1 ORDER BY 1 LIMIT 3;
+ block | count | min | max 
+-------+-------+-----+-----
+     0 |    58 |   1 |  58
+     1 |    57 |  59 | 115
+     2 |    55 | 116 | 170
+(3 rows)
+
+
+postgres=# SELECT 't' AS rel, pg_relation_filepath('t') AS path
+postgres-# UNION ALL SELECT 'w', pg_relation_filepath('w')
+postgres-# UNION ALL SELECT 'u_pkey', pg_relation_filepath('u_pkey');
+  rel   |     path     
+--------+--------------
+ t      | base/5/16394
+ w      | base/5/16402
+ u_pkey | base/5/16416
+(3 rows)
+
+
+postgres=# SELECT count(*) FROM t;
+ count 
+-------
+  1000
+(1 row)
+
+
+
+######## 1. (실습용) 서버를 멈추고 페이지 일부를 덮어쓴다
+
+$ psql -XAtc "SELECT pg_relation_filepath('t')" > /tmp/t_path
+$ psql -XAtc "SELECT pg_relation_filepath('w')" > /tmp/w_path
+$ psql -XAtc "SELECT pg_relation_filepath('u_pkey')" > /tmp/u_pkey_path
+$ psql -Xqc "CHECKPOINT"
+$ pg_ctl -D $PGDATA -w stop -m fast
+waiting for server to shut down.... done
+server stopped
+[exit=0]
+
+$ printf 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' | dd of=$PGDATA/$(cat /tmp/t_path) bs=1 seek=$((8192 * 1 + 8192 - 40)) conv=notrunc status=none
+$ printf 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' | dd of=$PGDATA/$(cat /tmp/w_path) bs=1 seek=$((8192 * 1 + 8192 - 40)) conv=notrunc status=none
+$ printf 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' | dd of=$PGDATA/$(cat /tmp/u_pkey_path) bs=1 seek=$((8192 * 1 + 8192 - 40)) conv=notrunc status=none
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 2. 증상
+
+postgres=# SELECT count(*) FROM t;
+ERROR:  invalid page in block 1 of relation "base/5/16394"
+
+postgres=# SELECT * FROM t WHERE id = 1;
+ id |                                                     v                                                      
+----+------------------------------------------------------------------------------------------------------------
+  1 | row-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+(1 row)
+
+
+postgres=# SELECT * FROM t WHERE id = 100;
+ERROR:  invalid page in block 1 of relation "base/5/16394"
+
+postgres=# SELECT * FROM u WHERE id = 10;
+ERROR:  invalid page in block 1 of relation "base/5/16416"
+
+postgres=# SELECT count(*) FROM u;
+ count 
+-------
+  1000
+(1 row)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'page verification failed|invalid page' | tail -n 4
+2026-09-26 10:56:18.567 UTC [201] postgres@postgres/psql ERROR:  invalid page in block 1 of relation "base/5/16394"
+2026-09-26 10:56:18.615 UTC [208] postgres@postgres/psql LOG:  page verification failed, calculated checksum 1188 but expected 7419
+2026-09-26 10:56:18.615 UTC [208] postgres@postgres/psql LOG:  invalid page in block 1 of relation "base/5/16416"
+2026-09-26 10:56:18.615 UTC [208] postgres@postgres/psql ERROR:  invalid page in block 1 of relation "base/5/16416"
+[exit=0]
+
+postgres=# SELECT datname, checksum_failures, checksum_last_failure FROM pg_stat_database WHERE datname = 'postgres';
+ datname  | checksum_failures |     checksum_last_failure     
+----------+-------------------+-------------------------------
+ postgres |                 3 | 2026-09-26 10:56:18.615407+00
+(1 row)
+
+
+
+######## 3. 손상 범위 파악
+
+$ pg_amcheck -d postgres 2>&1 | head -n 20
+btree index "postgres.public.u_pkey":
+    ERROR:  invalid page in block 1 of relation "base/5/16416"
+heap table "postgres.public.t":
+    ERROR:  invalid page in block 1 of relation "base/5/16394"
+heap table "postgres.public.w":
+    ERROR:  invalid page in block 1 of relation "base/5/16402"
+[exit=0]
+
+$ pg_ctl -D $PGDATA -w stop -m fast
+$ pg_checksums --check -D $PGDATA 2>&1 | tail -n 10
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+waiting for server to shut down.... done
+server stopped
+pg_checksums: error: checksum verification failed in file "/var/lib/pgsql/18/data/base/5/16416", block 1: calculated checksum 4A4 but block contains 1CFB
+pg_checksums: error: checksum verification failed in file "/var/lib/pgsql/18/data/base/5/16394", block 1: calculated checksum D55D but block contains 1E3C
+pg_checksums: error: checksum verification failed in file "/var/lib/pgsql/18/data/base/5/16402", block 1: calculated checksum 7D3C but block contains 84DD
+Checksum operation completed
+Files scanned:   965
+Blocks scanned:  2954
+Bad checksums:  3
+Data checksum version: 1
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 4. 인덱스만 망가졌다면: REINDEX
+
+postgres=# SELECT bt_index_check('u_pkey');
+ERROR:  invalid page in block 1 of relation "base/5/16416"
+
+postgres=# REINDEX INDEX u_pkey;
+REINDEX
+
+postgres=# SELECT bt_index_check('u_pkey');
+ bt_index_check 
+----------------
+ 
+(1 row)
+
+
+postgres=# SELECT * FROM u WHERE id = 10;
+ id |  v   
+----+------
+ 10 | u-10
+(1 row)
+
+
+
+######## 5. 테이블 페이지: 살릴 수 있는 것을 먼저 꺼낸다 (ignore_checksum_failure)
+
+postgres=# SET ignore_checksum_failure = on;
+postgres-# SELECT count(*) FROM t;
+WARNING:  ignoring checksum failure in block 1 of relation "base/5/16394"
+SET
+ count 
+-------
+  1000
+(1 row)
+
+
+postgres=# SET ignore_checksum_failure = on;
+postgres-# CREATE TABLE t_rescue AS SELECT * FROM t;
+SET
+SELECT 1000
+
+postgres=# SELECT id, right(v, 35) AS tail FROM t_rescue WHERE id IN (58, 59, 60) ORDER BY id;
+ id |                tail                 
+----+-------------------------------------
+ 58 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ 59 | XXXXXXXXXXXXXXXXXXXXXXXXXaaaaaaaaaa
+ 60 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+(3 rows)
+
+
+# 재시작한 뒤 t를 다시 읽는다
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+postgres=# SELECT count(*) FROM t;
+ERROR:  invalid page in block 1 of relation "base/5/16394"
+
+postgres=# SELECT id, right(v, 35) AS tail FROM t WHERE id = 59;
+ERROR:  invalid page in block 1 of relation "base/5/16394"
+
+$ pg_amcheck -d postgres 2>&1 | head -n 10
+heap table "postgres.public.t":
+    ERROR:  invalid page in block 1 of relation "base/5/16394"
+heap table "postgres.public.w":
+    ERROR:  invalid page in block 1 of relation "base/5/16402"
+[exit=0]
+
+
+######## 6. 테이블 페이지: 망가진 페이지를 버린다 (zero_damaged_pages)
+
+postgres=# SET zero_damaged_pages = on;
+postgres-# SELECT count(*) FROM w;
+WARNING:  invalid page in block 1 of relation "base/5/16402"; zeroing out page
+SET
+ count 
+-------
+   943
+(1 row)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'zeroing out page' | tail -n 1
+2026-09-26 10:56:20.078 UTC [362] postgres@postgres/psql WARNING:  invalid page in block 1 of relation "base/5/16402"; zeroing out page
+[exit=0]
+
+postgres=# SELECT count(*) FROM w;
+ count 
+-------
+   943
+(1 row)
+
+
+postgres=# VACUUM w;
+VACUUM
+
+postgres=# SELECT * FROM verify_heapam('w');
+ blkno | offnum | attnum | msg 
+-------+--------+--------+-----
+(0 rows)
+
+
+postgres=# SELECT count(*) AS missing, min(g) AS first_id, max(g) AS last_id
+postgres-# FROM generate_series(1, 1000) g WHERE NOT EXISTS (SELECT 1 FROM w WHERE w.id = g);
+ missing | first_id | last_id 
+---------+----------+---------
+      57 |       59 |     115
+(1 row)
+
+
