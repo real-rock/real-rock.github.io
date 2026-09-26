@@ -26,7 +26,7 @@ description: "공유 라이브러리와 fork 같은 OS 배경지식부터 CREATE
 
 C extension의 동작은 공유 라이브러리, 심볼, `dlopen`, `fork` 같은 운영체제 개념 위에 서 있습니다. 이 개념들을 먼저 짧게 정리하고 시작합니다. 설명에는 직접 만든 작은 extension `demo_ext`를 씁니다.
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16)(18.6 개발 버전). [PostgreSQL 인터널 연재](/series/postgresql-인터널/)와 같은 커밋이고, 소스 링크는 모두 이 커밋에 고정했습니다. 실습은 Rocky Linux 9.3(aarch64) 컨테이너에서 이 소스를 gcc 11.5로 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16)(18.6 개발 버전). [PostgreSQL 인터널 연재](/series/postgresql-인터널/)와 같은 커밋이고, 소스 링크는 모두 이 커밋에 고정했습니다. 실습은 Rocky Linux 9.8(aarch64) 컨테이너에서 이 소스를 gcc 11.5로 빌드해 실행한 결과입니다.
 
 먼저 결론부터 정리하면 이렇습니다.
 
@@ -52,8 +52,8 @@ C 소스를 컴파일하면 기계어와 함께 **심볼 표**가 나옵니다. 
 
 ```console
 $ make
-gcc ... -O2 -fPIC -fvisibility=hidden -I. -I./ -I/usr/local/pgsql/include/server -I/usr/local/pgsql/include/internal -D_GNU_SOURCE -c -o demo_ext.o demo_ext.c
-gcc ... -O2 -fPIC -fvisibility=hidden demo_ext.o -L/usr/local/pgsql/lib -Wl,--as-needed -Wl,-rpath,'/usr/local/pgsql/lib',--enable-new-dtags -fvisibility=hidden -shared -o demo_ext.so
+gcc -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Werror=vla -Wendif-labels -Wmissing-format-attribute -Wimplicit-fallthrough=3 -Wcast-function-type -Wshadow=compatible-local -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -O2 -fPIC -fvisibility=hidden -I. -I./ -I/usr/local/pgsql/include/server -I/usr/local/pgsql/include/internal -D_GNU_SOURCE      -c -o demo_ext.o demo_ext.c
+gcc -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Werror=vla -Wendif-labels -Wmissing-format-attribute -Wimplicit-fallthrough=3 -Wcast-function-type -Wshadow=compatible-local -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -O2 -fPIC -fvisibility=hidden demo_ext.o -L/usr/local/pgsql/lib   -Wl,--as-needed -Wl,-rpath,'/usr/local/pgsql/lib',--enable-new-dtags -fvisibility=hidden -shared -o demo_ext.so
 ```
 
 `-fvisibility=hidden`은 기본적으로 모든 심볼을 라이브러리 밖에서 안 보이게 숨기는 옵션입니다. 밖에서 찾아야 하는 심볼만 PostgreSQL 매크로(`PG_FUNCTION_INFO_V1`, `PG_MODULE_MAGIC`)가 `PGDLLEXPORT`로 내보냅니다([`fmgr.h`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/fmgr.h#L415)).
@@ -64,7 +64,7 @@ gcc ... -O2 -fPIC -fvisibility=hidden demo_ext.o -L/usr/local/pgsql/lib -Wl,--as
 
 ```console
 $ file demo_ext.so
-demo_ext.so: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, BuildID[sha1]=9efc37a4abe862b984d72d5b9523d12c3a68e337, not stripped
+demo_ext.so: ELF 64-bit LSB shared object, ARM aarch64, version 1 (SYSV), dynamically linked, BuildID[sha1]=020d9238e238d042536254e28e669018b6045b7c, not stripped
 $ nm -D --defined-only demo_ext.so
 0000000000000ed0 T Pg_magic_func
 0000000000000ee0 T _PG_init
@@ -102,9 +102,9 @@ $ nm -D --undefined-only demo_ext.so
                  U shmem_startup_hook
                  U standard_ExecutorEnd
 $ ldd demo_ext.so
-	linux-vdso.so.1 (0x0000ffffb137e000)
-	libc.so.6 => /lib64/libc.so.6 (0x0000ffffb1161000)
-	/lib/ld-linux-aarch64.so.1 (0x0000ffffb1330000)
+	linux-vdso.so.1 (0x0000ffffbe987000)
+	libc.so.6 => /lib64/libc.so.6 (0x0000ffffbe771000)
+	/lib/ld-linux-aarch64.so.1 (0x0000ffffbe940000)
 ```
 
 - 정의된 심볼에는 SQL에서 부를 함수(`demo_add` 등)와 짝을 이루는 `pg_finfo_demo_add`, 그리고 `Pg_magic_func`, `_PG_init`이 있습니다. 이 세 종류가 PostgreSQL이 `dlsym()`으로 찾는 이름입니다. C 소스의 `static` 변수(`local_queries` 등)는 숨겨져서 보이지 않습니다.
@@ -322,7 +322,7 @@ demo_add(PG_FUNCTION_ARGS)
 설치는 root로 `make install`을 실행합니다. PGXS는 control 파일과 스크립트를 `share/extension/`에, `.so`를 `$libdir`에 복사할 뿐입니다. 여기까지는 DB에 아무 변화가 없습니다.
 
 ```console
-# make install
+$ make install
 /usr/bin/mkdir -p '/usr/local/pgsql/share/extension'
 /usr/bin/mkdir -p '/usr/local/pgsql/share/extension'
 /usr/bin/mkdir -p '/usr/local/pgsql/lib'
@@ -354,7 +354,7 @@ demo_add(PG_FUNCTION_ARGS)
 A=# SELECT pg_backend_pid();
  pg_backend_pid 
 ----------------
-          10024
+            165
 (1 row)
 
 A=# SELECT name, default_version, installed_version, comment FROM pg_available_extensions WHERE name IN ('demo_ext', 'pg_stat_statements', 'pgcrypto') ORDER BY name;
@@ -379,7 +379,7 @@ A=# SELECT * FROM pg_get_loaded_modules();
 `pg_available_extensions`는 control 파일만 읽어서 보여 주는 뷰입니다(이 빌드는 OpenSSL 없이 만들어 `pgcrypto`가 없습니다). `demo_ext`가 보이지만 `installed_version`은 비어 있고 backend에는 아직 `.so`가 매핑되어 있지 않습니다. `pg_get_loaded_modules()`는 PG18에서 새로 생긴 함수로, 이 프로세스에 올라온 라이브러리 목록을 보여 줍니다([`extension.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L2975)).
 
 ```console
-# strace -p 10024 -f -tt -e trace=openat,read,mmap,mprotect,close -o /tmp/create_ext.strace
+$ strace -p 165 -f -tt -e trace=openat,read,mmap,mprotect,close -o /tmp/create_ext.strace
 ```
 
 ```psql
@@ -387,41 +387,39 @@ A=# CREATE EXTENSION demo_ext;
 CREATE EXTENSION
 ```
 
-strace 결과 74줄 중 앞부분과, 카탈로그 파일(`base/5/...`)을 여는 줄을 줄인 결과입니다.
+strace 결과 67줄 중 앞부분과, 카탈로그 파일(`base/5/...`)을 여는 줄을 줄인 결과입니다.
 
 ```console
 $ cat /tmp/create_ext.strace
-10024 22:23:03.774368 openat(AT_FDCWD, "/usr/local/pgsql/share/extension/demo_ext.control", O_RDONLY) = 45
-10024 22:23:03.774665 read(45, "# demo_ext extension\ncomment = '"..., 8192) = 152
-10024 22:23:03.774791 read(45, "", 4096) = 0
-10024 22:23:03.774891 read(45, "", 8192) = 0
-10024 22:23:03.774999 close(45)         = 0
-10024 22:23:03.775194 openat(AT_FDCWD, "/usr/local/pgsql/share/extension/demo_ext--1.0.control", O_RDONLY) = -1 ENOENT (No such file or directory)
-10024 22:23:03.775323 openat(AT_FDCWD, "base/5/2685", O_RDWR|O_CLOEXEC) = 45
-10024 22:23:03.775702 openat(AT_FDCWD, "base/5/3079_fsm", O_RDWR|O_CLOEXEC) = 46
-10024 22:23:03.776163 openat(AT_FDCWD, "base/5/3079_vm", O_RDWR|O_CLOEXEC) = 47
-10024 22:23:03.776534 openat(AT_FDCWD, "base/5/2608_fsm", O_RDWR|O_CLOEXEC) = 48
-10024 22:23:03.776974 openat(AT_FDCWD, "base/5/2608", O_RDWR|O_CLOEXEC) = 49
+165   11:01:47.364224 openat(AT_FDCWD, "/usr/local/pgsql/share/extension/demo_ext.control", O_RDONLY) = 59
+165   11:01:47.364503 read(59, "# demo_ext extension\ncomment = '"..., 8192) = 152
+165   11:01:47.364633 read(59, "", 4096) = 0
+165   11:01:47.364733 read(59, "", 8192) = 0
+165   11:01:47.364826 close(59)         = 0
+165   11:01:47.365033 openat(AT_FDCWD, "/usr/local/pgsql/share/extension/demo_ext--1.0.control", O_RDONLY) = -1 ENOENT (No such file or directory)
+165   11:01:47.365205 openat(AT_FDCWD, "base/5/2685", O_RDWR|O_CLOEXEC) = 59
+165   11:01:47.365644 openat(AT_FDCWD, "base/5/3079_fsm", O_RDWR|O_CLOEXEC) = 60
+165   11:01:47.366096 openat(AT_FDCWD, "base/5/3079_vm", O_RDWR|O_CLOEXEC) = 61
+165   11:01:47.366485 openat(AT_FDCWD, "base/5/2608_fsm", O_RDWR|O_CLOEXEC) = 62
+165   11:01:47.366951 openat(AT_FDCWD, "base/5/2608", O_RDWR|O_CLOEXEC) = 63
 ...
-10024 22:23:03.779800 openat(AT_FDCWD, "/usr/local/pgsql/share/extension/demo_ext--1.0.sql", O_RDONLY) = 57
-10024 22:23:03.779993 read(57, "\\echo Use \"CREATE EXTENSION demo"..., 4096) = 624
-10024 22:23:03.780090 close(57)         = 0
+165   11:01:47.369823 openat(AT_FDCWD, "/usr/local/pgsql/share/extension/demo_ext--1.0.sql", O_RDONLY) = 71
+165   11:01:47.370011 read(71, "\\echo Use \"CREATE EXTENSION demo"..., 4096) = 624
+165   11:01:47.370102 close(71)         = 0
 ...
-10024 22:23:03.781115 openat(AT_FDCWD, "base/5/1255_fsm", O_RDWR|O_CLOEXEC) = 60
-10024 22:23:03.781753 openat(AT_FDCWD, "base/5/1255_vm", O_RDWR|O_CLOEXEC) = 61
-10024 22:23:03.782256 openat(AT_FDCWD, "base/5/2682", O_RDWR|O_CLOEXEC) = 62
-10024 22:23:03.782486 mmap(NULL, 528384, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff82709000
-10024 22:23:03.782790 openat(AT_FDCWD, "/usr/local/pgsql/lib/demo_ext.so", O_RDONLY|O_CLOEXEC) = 63
-10024 22:23:03.782860 read(63, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\200\f\0\0\0\0\0\0"..., 832) = 832
-10024 22:23:03.783005 mmap(NULL, 131264, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_DENYWRITE, 63, 0) = 0xffff826e8000
-10024 22:23:03.783124 mprotect(0xffff826ea000, 118784, PROT_NONE) = 0
-10024 22:23:03.783237 mmap(0xffff82707000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 63, 0xf000) = 0xffff82707000
-10024 22:23:03.783325 close(63)         = 0
-10024 22:23:03.783417 mprotect(0xffff82707000, 4096, PROT_READ) = 0
-10024 22:23:03.784271 openat(AT_FDCWD, "base/5/2662", O_RDWR|O_CLOEXEC) = 63
-10024 22:23:03.784660 openat(AT_FDCWD, "base/5/16389", O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC, 0600) = 64
+165   11:01:47.371182 openat(AT_FDCWD, "base/5/1255_fsm", O_RDWR|O_CLOEXEC) = 74
+165   11:01:47.371705 openat(AT_FDCWD, "base/5/1255_vm", O_RDWR|O_CLOEXEC) = 75
+165   11:01:47.372210 openat(AT_FDCWD, "base/5/2682", O_RDWR|O_CLOEXEC) = 76
+165   11:01:47.372780 openat(AT_FDCWD, "/usr/local/pgsql/lib/demo_ext.so", O_RDONLY|O_CLOEXEC) = 77
+165   11:01:47.372893 read(77, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\200\f\0\0\0\0\0\0"..., 832) = 832
+165   11:01:47.373063 mmap(NULL, 131264, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_DENYWRITE, 77, 0) = 0xffffaa30c000
+165   11:01:47.373166 mprotect(0xffffaa30e000, 118784, PROT_NONE) = 0
+165   11:01:47.373269 mmap(0xffffaa32b000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 77, 0xf000) = 0xffffaa32b000
+165   11:01:47.373378 close(77)         = 0
+165   11:01:47.373498 mprotect(0xffffaa32b000, 4096, PROT_READ) = 0
+165   11:01:47.374790 openat(AT_FDCWD, "base/5/16389", O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC, 0600) = 77
 ...
-10024 22:23:03.794472 openat(AT_FDCWD, "pg_wal/000000010000000000000001", O_RDWR|O_CLOEXEC) = 82
+165   11:01:47.384251 openat(AT_FDCWD, "pg_wal/000000010000000000000001", O_RDWR|O_CLOEXEC) = 91
 ```
 
 `base/5/<번호>`는 `postgres` DB(OID 5)의 카탈로그 파일입니다. 번호를 카탈로그 이름으로 바꿔 보면 다음과 같습니다.
@@ -452,15 +450,15 @@ strace의 순서가 위 목록과 그대로 맞습니다.
 ```console
 $ cat /home/postgres/server.log
 ...
-2026-09-25 22:23:03.783 UTC [10024] LOG:  demo_ext 1.0: _PG_init in pid 10024 (shared_preload_libraries: no)
-2026-09-25 22:23:03.783 UTC [10024] CONTEXT:  SQL statement "CREATE FUNCTION demo_add(integer, integer) RETURNS integer
+2026-09-26 11:01:47.373 UTC [165] LOG:  demo_ext 1.0: _PG_init in pid 165 (shared_preload_libraries: no)
+2026-09-26 11:01:47.373 UTC [165] CONTEXT:  SQL statement "CREATE FUNCTION demo_add(integer, integer) RETURNS integer
 	AS '$libdir/demo_ext', 'demo_add'
 	LANGUAGE C STRICT IMMUTABLE"
 	extension script file "demo_ext--1.0.sql", near line 3
-2026-09-25 22:23:03.783 UTC [10024] STATEMENT:  CREATE EXTENSION demo_ext;
+2026-09-26 11:01:47.373 UTC [165] STATEMENT:  CREATE EXTENSION demo_ext;
 ```
 
-`_PG_init()`이 backend 10024에서 실행되었고, `CONTEXT`가 그 시점을 정확히 알려 줍니다. 스크립트 3번째 줄의 첫 `CREATE FUNCTION`이고, 스크립트의 `'MODULE_PATHNAME'`이 이미 `'$libdir/demo_ext'`로 바뀌어 있습니다.
+`_PG_init()`이 backend 165에서 실행되었고, `CONTEXT`가 그 시점을 정확히 알려 줍니다. 스크립트 3번째 줄의 첫 `CREATE FUNCTION`이고, 스크립트의 `'MODULE_PATHNAME'`이 이미 `'$libdir/demo_ext'`로 바뀌어 있습니다.
 
 #### backend 주소 공간에 생긴 매핑
 
@@ -468,10 +466,10 @@ $ cat /home/postgres/server.log
 A=# SELECT l FROM regexp_split_to_table(pg_read_file('/proc/self/maps'), E'\n') AS l WHERE l LIKE '%demo_ext%';
                                                      l                                                     
 -----------------------------------------------------------------------------------------------------------
- ffff826e8000-ffff826ea000 r-xp 00000000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so
- ffff826ea000-ffff82707000 ---p 00002000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so
- ffff82707000-ffff82708000 r--p 0000f000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so
- ffff82708000-ffff82709000 rw-p 00010000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so
+ ffffaa30c000-ffffaa30e000 r-xp 00000000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so
+ ffffaa30e000-ffffaa32b000 ---p 00002000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so
+ ffffaa32b000-ffffaa32c000 r--p 0000f000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so
+ ffffaa32c000-ffffaa32d000 rw-p 00010000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so
 (4 rows)
 
 A=# SELECT * FROM pg_get_loaded_modules();
@@ -481,7 +479,7 @@ A=# SELECT * FROM pg_get_loaded_modules();
 (1 row)
 ```
 
-[앞에서 본](#dlopen은-파일을-메모리에-매핑한다) 네 영역이 strace의 `mmap()` 주소 그대로 보입니다. 다섯째 열 `1119984`는 파일의 **inode 번호**입니다. [라이브러리를 교체할 때](#라이브러리-파일을-바꾸면) 이 번호가 중요해집니다. `pg_get_loaded_modules()`의 `version`은 C 소스의 `PG_MODULE_MAGIC_EXT`에 적은 값입니다.
+[앞에서 본](#dlopen은-파일을-메모리에-매핑한다) 네 영역이 strace의 `mmap()` 주소 그대로 보입니다. 다섯째 열 `1306724`는 파일의 **inode 번호**입니다. [라이브러리를 교체할 때](#라이브러리-파일을-바꾸면) 이 번호가 중요해집니다. `pg_get_loaded_modules()`의 `version`은 C 소스의 `PG_MODULE_MAGIC_EXT`에 적은 값입니다.
 
 #### 카탈로그에 남은 것
 
@@ -562,11 +560,11 @@ $ nm -D --defined-only abi17/abi_demo.so
 ```
 
 ```psql
-postgres=# CREATE FUNCTION nomagic_one() RETURNS int AS '/home/postgres/nomagic/nomagic.so', 'nomagic_one' LANGUAGE C;
-ERROR:  incompatible library "/home/postgres/nomagic/nomagic.so": missing magic block
+postgres=# CREATE FUNCTION nomagic_one() RETURNS int AS '/home/postgres/lab/nomagic/nomagic.so', 'nomagic_one' LANGUAGE C;
+ERROR:  incompatible library "/home/postgres/lab/nomagic/nomagic.so": missing magic block
 HINT:  Extension libraries are required to use the PG_MODULE_MAGIC macro.
-postgres=# CREATE FUNCTION abi_demo_one() RETURNS int AS '/home/postgres/abi17/abi_demo.so', 'abi_demo_one' LANGUAGE C;
-ERROR:  incompatible library "/home/postgres/abi17/abi_demo.so": version mismatch
+postgres=# CREATE FUNCTION abi_demo_one() RETURNS int AS '/home/postgres/lab/abi17/abi_demo.so', 'abi_demo_one' LANGUAGE C;
+ERROR:  incompatible library "/home/postgres/lab/abi17/abi_demo.so": version mismatch
 DETAIL:  Server is version 18, library is version 17.
 postgres=# CREATE FUNCTION demo_nosuch() RETURNS int AS '$libdir/demo_ext', 'demo_nosuch' LANGUAGE C;
 ERROR:  could not find function "demo_nosuch" in file "/usr/local/pgsql/lib/demo_ext.so"
@@ -591,7 +589,7 @@ A가 `CREATE EXTENSION`을 했으니 A에는 `.so`가 올라와 있습니다. �
 B=# SELECT pg_backend_pid();
  pg_backend_pid 
 ----------------
-          10173
+           9320
 (1 row)
 
 B=# SELECT count(*) AS mapped FROM regexp_split_to_table(pg_read_file('/proc/self/maps'), E'\n') AS l WHERE l LIKE '%demo_ext.so%';
@@ -620,14 +618,17 @@ B=# SELECT count(*) AS mapped FROM regexp_split_to_table(pg_read_file('/proc/sel
 
 ```console
 $ grep -A1 "_PG_init" /home/postgres/server.log
-2026-09-25 22:23:03.783 UTC [10024] LOG:  demo_ext 1.0: _PG_init in pid 10024 (shared_preload_libraries: no)
-2026-09-25 22:23:03.783 UTC [10024] CONTEXT:  SQL statement "CREATE FUNCTION demo_add(integer, integer) RETURNS integer
+2026-09-26 11:01:47.373 UTC [165] LOG:  demo_ext 1.0: _PG_init in pid 165 (shared_preload_libraries: no)
+2026-09-26 11:01:47.373 UTC [165] CONTEXT:  SQL statement "CREATE FUNCTION demo_add(integer, integer) RETURNS integer
 --
-2026-09-25 22:25:55.866 UTC [10173] LOG:  demo_ext 1.0: _PG_init in pid 10173 (shared_preload_libraries: no)
-2026-09-25 22:25:55.866 UTC [10173] STATEMENT:  SELECT demo_add(1, 2);
+2026-09-26 11:02:20.705 UTC [9305] LOG:  demo_ext 1.0: _PG_init in pid 9305 (shared_preload_libraries: no)
+2026-09-26 11:02:20.705 UTC [9305] STATEMENT:  CREATE FUNCTION demo_nosuch() RETURNS int AS '$libdir/demo_ext', 'demo_nosuch' LANGUAGE C;
+--
+2026-09-26 11:02:25.807 UTC [9320] LOG:  demo_ext 1.0: _PG_init in pid 9320 (shared_preload_libraries: no)
+2026-09-26 11:02:25.807 UTC [9320] STATEMENT:  SELECT demo_add(1, 2);
 ```
 
-extension은 DB에 이미 설치되어 있지만 B에는 `demo_add()`를 처음 부를 때까지 `.so`가 없었습니다. 처음 부르는 순간 B가 직접 `dlopen()`했고, `_PG_init()`도 B에서 따로 한 번 실행되었습니다. **extension 설치는 DB 단위이고, 라이브러리 로드는 프로세스 단위**입니다.
+extension은 DB에 이미 설치되어 있지만 B에는 `demo_add()`를 처음 부를 때까지 `.so`가 없었습니다. 처음 부르는 순간 B가 직접 `dlopen()`했고, `_PG_init()`도 B에서 따로 한 번 실행되었습니다. 가운데의 9305는 [앞 절](#라이브러리를-올리다-실패하는-네-가지-경우)에서 오류 실험을 한 접속입니다. `demo_nosuch`를 찾으려고 `demo_ext.so`를 올렸기 때문에, 함수 생성은 실패했지만 `_PG_init()`은 실행되었습니다. **extension 설치는 DB 단위이고, 라이브러리 로드는 프로세스 단위**입니다.
 
 `LOAD` 명령으로 함수를 부르지 않고 미리 올릴 수도 있습니다([`load_file()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L149)). 이때도 `_PG_init()`은 그 backend에서 실행됩니다([다음 절](#_pg_init과-hook)의 실습).
 
@@ -705,17 +706,18 @@ C=# SELECT * FROM pg_get_loaded_modules();
 B=# SELECT demo_local_count();
  demo_local_count 
 ------------------
-                2
+                3
 (1 row)
 
 B=# SELECT demo_local_count();
  demo_local_count 
 ------------------
-                3
+                4
 (1 row)
 
 B=# SELECT demo_shared_count();
 ERROR:  demo_ext must be loaded via "shared_preload_libraries"
+
 A=# SELECT demo_local_count();
  demo_local_count 
 ------------------
@@ -723,7 +725,7 @@ A=# SELECT demo_local_count();
 (1 row)
 ```
 
-같은 `.so`, 같은 변수인데 A는 6, B는 3입니다. [private 매핑](#dlopen은-파일을-메모리에-매핑한다)이라 변수 영역이 프로세스마다 따로 있습니다(값은 라이브러리를 올린 뒤 끝난 쿼리 수입니다. 지금 실행 중인 쿼리는 아직 세지 않았습니다). 모든 backend가 함께 보는 값을 두려면 공유 메모리가 필요한데, `demo_shared_count()`는 공유 메모리가 없다며 오류를 냅니다.
+같은 `.so`, 같은 변수인데 A는 6, B는 4입니다. [private 매핑](#dlopen은-파일을-메모리에-매핑한다)이라 변수 영역이 프로세스마다 따로 있습니다(값은 라이브러리를 올린 뒤 끝난 쿼리 수입니다. 지금 실행 중인 쿼리는 아직 세지 않았습니다). 모든 backend가 함께 보는 값을 두려면 공유 메모리가 필요한데, `demo_shared_count()`는 공유 메모리가 없다며 오류를 냅니다.
 
 ## shared_preload_libraries: postmaster가 먼저 올리는 경우
 
@@ -764,8 +766,8 @@ $ pg_ctl -D $PGDATA -l /home/postgres/server.log restart -m fast
 pg_ctl: could not start server
 Examine the log output.
 $ tail -2 /home/postgres/server.log
-2026-09-25 22:27:06.419 UTC [10447] FATAL:  could not access file "demo_ext, pg_stat_statements": No such file or directory
-2026-09-25 22:27:06.419 UTC [10447] LOG:  database system is shut down
+2026-09-26 11:03:02.250 UTC [10095] FATAL:  could not access file "demo_ext, pg_stat_statements": No such file or directory
+2026-09-26 11:03:02.250 UTC [10095] LOG:  database system is shut down
 $ cat $PGDATA/postgresql.auto.conf
 # Do not edit this file manually!
 # It will be overwritten by the ALTER SYSTEM command.
@@ -796,67 +798,67 @@ shared_preload_libraries = 'demo_ext, pg_stat_statements'
 
 ```console
 $ PM=$(head -1 $PGDATA/postmaster.pid); echo $PM
-10282
+9751
 $ grep "_PG_init" /home/postgres/server.log | tail -1
-2026-09-25 22:26:31.613 UTC [10282] LOG:  demo_ext 1.0: _PG_init in pid 10282 (shared_preload_libraries: yes)
+2026-09-26 11:02:45.013 UTC [9751] LOG:  demo_ext 1.0: _PG_init in pid 9751 (shared_preload_libraries: yes)
 $ for p in $PM $(pgrep -P $PM); do printf "%6s %-45s %s\n" $p "$(tr "\0" " " < /proc/$p/cmdline | cut -c1-45)" "$(grep -c demo_ext.so /proc/$p/maps)"; done
- 10282 /usr/local/pgsql/bin/postgres -D /var/lib/pos 4
- 10283 postgres: io worker 0                         4
- 10284 postgres: io worker 1                         4
- 10285 postgres: io worker 2                         4
- 10286 postgres: checkpointer                        4
- 10287 postgres: background writer                   4
- 10289 postgres: walwriter                           4
- 10290 postgres: autovacuum launcher                 4
- 10291 postgres: logical replication launcher        4
+  9751 /usr/local/pgsql/bin/postgres -D /var/lib/pos 4
+  9752 postgres: io worker 0                         4
+  9753 postgres: io worker 1                         4
+  9754 postgres: io worker 2                         4
+  9755 postgres: checkpointer                        4
+  9756 postgres: background writer                   4
+  9758 postgres: walwriter                           4
+  9759 postgres: autovacuum launcher                 4
+  9760 postgres: logical replication launcher        4
 ```
 
-`_PG_init()`이 postmaster(10282)에서 `shared_preload_libraries: yes`로 한 번 실행되었습니다. 마지막 열은 각 프로세스의 `maps`에서 `demo_ext.so` 줄을 센 값입니다. postmaster가 올린 뒤에 fork한 백그라운드 프로세스들도 모두 네 영역을 갖고 있습니다. checkpointer나 walwriter는 `demo_ext`를 쓸 일이 없지만 fork로 물려받았습니다.
+`_PG_init()`이 postmaster(9751)에서 `shared_preload_libraries: yes`로 한 번 실행되었습니다. 마지막 열은 각 프로세스의 `maps`에서 `demo_ext.so` 줄을 센 값입니다. postmaster가 올린 뒤에 fork한 백그라운드 프로세스들도 모두 네 영역을 갖고 있습니다. checkpointer나 walwriter는 `demo_ext`를 쓸 일이 없지만 fork로 물려받았습니다.
 
 새 접속이 생길 때 postmaster를 strace로 봤습니다.
 
 ```console
-# strace -p 10282 -f -e trace=clone,clone3,fork,execve,openat -o /tmp/fork.strace
+$ strace -p 9751 -f -e trace=clone,clone3,fork,execve,openat -o /tmp/fork.strace
 ```
 
 ```psql
 A=# SELECT pg_backend_pid();
  pg_backend_pid 
 ----------------
-          10364
+           9844
 (1 row)
 ```
 
 ```console
 $ grep -vE "base/|global/|pg_|\.conf" /tmp/fork.strace
-10282 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0xffffb8105ef0) = 10364
-10364 openat(AT_FDCWD, "/dev/urandom", O_RDONLY) = 5
-10364 openat(AT_FDCWD, "/dev/urandom", O_RDONLY) = 7
-10364 openat(AT_FDCWD, "/dev/shm/PostgreSQL.3195459884", O_RDWR|O_NOFOLLOW|O_CLOEXEC) = 8
+9751  clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0xffffab110ef0) = 9844
+9844  openat(AT_FDCWD, "/dev/urandom", O_RDONLY) = 5
+9844  openat(AT_FDCWD, "/dev/urandom", O_RDONLY) = 7
+9844  openat(AT_FDCWD, "/dev/shm/PostgreSQL.3186032154", O_RDWR|O_NOFOLLOW|O_CLOEXEC) = 8
 $ grep -c "demo_ext" /tmp/fork.strace
 0
 $ grep -c "_PG_init" /home/postgres/server.log
-4
+5
 ```
 
-postmaster가 `clone()`(glibc의 `fork()`)으로 backend 10364를 만들었고, `execve()`는 없습니다. 라이브러리가 이미 부모의 주소 공간에 있었으니 새 backend는 `demo_ext.so`를 한 번도 열지 않았고, 서버 로그의 `_PG_init` 줄 수도 그대로입니다.
+postmaster가 `clone()`(glibc의 `fork()`)으로 backend 9844를 만들었고, `execve()`는 없습니다. 라이브러리가 이미 부모의 주소 공간에 있었으니 새 backend는 `demo_ext.so`를 한 번도 열지 않았고, 서버 로그의 `_PG_init` 줄 수도 그대로입니다.
 
 주소까지 같은지 pg_stat_statements로 확인해 봤습니다(`shared_preload_libraries = 'demo_ext, pg_stat_statements'` 상태).
 
 ```console
-$ grep pg_stat_statements.so /proc/19655/maps
-ffffba284000-ffffba28c000 r-xp 00000000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
-ffffba28c000-ffffba2a3000 ---p 00008000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
-ffffba2a3000-ffffba2a4000 r--p 0000f000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
-ffffba2a4000-ffffba2a5000 rw-p 00010000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
-$ grep pg_stat_statements.so /proc/20504/maps
-ffffba284000-ffffba28c000 r-xp 00000000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
-ffffba28c000-ffffba2a3000 ---p 00008000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
-ffffba2a3000-ffffba2a4000 r--p 0000f000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
-ffffba2a4000-ffffba2a5000 rw-p 00010000 00:38 1077015                    /usr/local/pgsql/lib/pg_stat_statements.so
+$ grep pg_stat_statements.so /proc/10122/maps
+ffff8d30f000-ffff8d317000 r-xp 00000000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
+ffff8d317000-ffff8d32e000 ---p 00008000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
+ffff8d32e000-ffff8d32f000 r--p 0000f000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
+ffff8d32f000-ffff8d330000 rw-p 00010000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
+$ grep pg_stat_statements.so /proc/10148/maps
+ffff8d30f000-ffff8d317000 r-xp 00000000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
+ffff8d317000-ffff8d32e000 ---p 00008000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
+ffff8d32e000-ffff8d32f000 r--p 0000f000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
+ffff8d32f000-ffff8d330000 rw-p 00010000 00:49 1274832                    /usr/local/pgsql/lib/pg_stat_statements.so
 ```
 
-postmaster(19655)와 backend(20504)의 매핑이 주소와 inode까지 똑같습니다. `fork()`가 주소 공간을 그대로 복제했다는 뜻입니다.
+postmaster(10122)와 backend(10148)의 매핑이 주소와 inode까지 똑같습니다. `fork()`가 주소 공간을 그대로 복제했다는 뜻입니다.
 
 #### 공유 메모리의 카운터
 
@@ -958,12 +960,12 @@ postgres=# SELECT pg_reload_conf();
 ```
 
 ```console
-$ grep -E 'parameter "session_preload_libraries" changed to "demo_ext"|pid 20570' /home/postgres/server.log
-2026-09-25 22:37:12.469 UTC [19655] LOG:  parameter "session_preload_libraries" changed to "demo_ext"
-2026-09-25 22:37:13.555 UTC [20570] LOG:  demo_ext 1.1: _PG_init in pid 20570 (shared_preload_libraries: no)
+$ grep -E 'parameter "session_preload_libraries" changed to "demo_ext"|_PG_init' /home/postgres/server.log | tail -2
+2026-09-26 11:03:43.750 UTC [10509] LOG:  parameter "session_preload_libraries" changed to "demo_ext"
+2026-09-26 11:03:44.757 UTC [11137] LOG:  demo_ext 1.1: _PG_init in pid 11137 (shared_preload_libraries: no)
 ```
 
-새 접속(20570)이 쿼리를 보내기 전, 접속하는 단계에서 `_PG_init()`이 실행되었습니다. 앞의 로그와 달리 `STATEMENT` 줄이 없습니다.
+새 접속(11137)이 쿼리를 보내기 전, 접속하는 단계에서 `_PG_init()`이 실행되었습니다. 앞의 로그와 달리 `STATEMENT` 줄이 없습니다.
 
 ## ALTER EXTENSION UPDATE와 라이브러리 교체
 
@@ -991,33 +993,33 @@ LANGUAGE C STRICT IMMUTABLE;
 A=# SELECT pg_backend_pid(), demo_build();
  pg_backend_pid |   demo_build    
 ----------------+-----------------
-          19407 | demo_ext.so 1.0
+          10148 | demo_ext.so 1.0
 (1 row)
 ```
 
 이 상태에서 1.1을 설치합니다. control 파일의 `default_version`을 `'1.1'`로 바꾸고, Makefile의 `DATA`에 업데이트 스크립트를 추가하고, `demo_sub()`가 들어가도록 `-DDEMO_V11`로 빌드했습니다.
 
 ```console
-# make install
+$ make install
 /usr/bin/install -c -m 644 .//demo_ext.control '/usr/local/pgsql/share/extension/'
 /usr/bin/install -c -m 644 .//demo_ext--1.0.sql .//demo_ext--1.0--1.1.sql  '/usr/local/pgsql/share/extension/'
 /usr/bin/install -c -m 755  demo_ext.so '/usr/local/pgsql/lib/'
-# ls -li /usr/local/pgsql/lib/demo_ext.so
-1119983 -rwxr-xr-x 1 root root 72640 Sep 25 22:29 /usr/local/pgsql/lib/demo_ext.so
-# nm -D --defined-only /usr/local/pgsql/lib/demo_ext.so | grep -w demo_sub
+$ ls -li /usr/local/pgsql/lib/demo_ext.so
+1306722 -rwxr-xr-x 1 root root 72640 Sep 26 11:03 /usr/local/pgsql/lib/demo_ext.so
+$ nm -D --defined-only /usr/local/pgsql/lib/demo_ext.so | grep -w demo_sub
 0000000000001094 T demo_sub
 ```
 
-`install` 명령은 기존 파일을 지우고(unlink) 새 파일을 만들어서 inode가 1119984에서 1119983으로 바뀌었습니다. 다시 A에서 봅니다.
+`install` 명령은 기존 파일을 지우고(unlink) 새 파일을 만들어서 inode가 1306724에서 1306722로 바뀌었습니다. 다시 A에서 봅니다.
 
 ```psql
 A=# SELECT l FROM regexp_split_to_table(pg_read_file('/proc/self/maps'), E'\n') AS l WHERE l LIKE '%demo_ext.so%';
                                                           l                                                          
 ---------------------------------------------------------------------------------------------------------------------
- ffffa0c3e000-ffffa0c40000 r-xp 00000000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so (deleted)
- ffffa0c40000-ffffa0c5d000 ---p 00002000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so (deleted)
- ffffa0c5d000-ffffa0c5e000 r--p 0000f000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so (deleted)
- ffffa0c5e000-ffffa0c5f000 rw-p 00010000 00:38 1119984                    /usr/local/pgsql/lib/demo_ext.so (deleted)
+ ffff8d330000-ffff8d332000 r-xp 00000000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so (deleted)
+ ffff8d332000-ffff8d34f000 ---p 00002000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so (deleted)
+ ffff8d34f000-ffff8d350000 r--p 0000f000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so (deleted)
+ ffff8d350000-ffff8d351000 rw-p 00010000 00:49 1306724                    /usr/local/pgsql/lib/demo_ext.so (deleted)
 (4 rows)
 
 A=# SELECT demo_build();
@@ -1047,7 +1049,7 @@ LANGUAGE C STRICT IMMUTABLE"
 extension script file "demo_ext--1.0--1.1.sql", near line 3
 ```
 
-- A의 매핑은 옛 inode 1119984를 가리키고 `(deleted)`가 붙었습니다. 디렉터리에서 이름은 사라졌지만 매핑이 남아 있는 동안 커널은 파일 내용을 지우지 않습니다. A는 계속 1.0 코드를 실행합니다.
+- A의 매핑은 옛 inode 1306724를 가리키고 `(deleted)`가 붙었습니다. 디렉터리에서 이름은 사라졌지만 매핑이 남아 있는 동안 커널은 파일 내용을 지우지 않습니다. A는 계속 1.0 코드를 실행합니다.
 - control 파일은 이미 새것이라 `pg_available_extensions`는 기본 버전 1.1, 설치 버전 1.0을 보여 주고, 1.0 → 1.1 업데이트 경로도 보입니다.
 - 그런데 `ALTER EXTENSION UPDATE`가 실패했습니다. 업데이트 스크립트의 `CREATE FUNCTION demo_sub`를 검증하면서 로더가 `$libdir/demo_ext.so`를 찾았는데, 이 backend의 라이브러리 목록에 **같은 경로 문자열**이 이미 있어서 옛 1.0 핸들을 그대로 돌려줬습니다([L200-L204](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L200-L204)). 1.0 `.so`에는 `demo_sub`가 없습니다. 오류로 트랜잭션이 롤백되어 `extversion`은 1.0 그대로입니다.
 
@@ -1057,7 +1059,7 @@ extension script file "demo_ext--1.0--1.1.sql", near line 3
 B=# SELECT pg_backend_pid(), demo_build();
  pg_backend_pid |   demo_build    
 ----------------+-----------------
-          19555 | demo_ext.so 1.0
+          10396 | demo_ext.so 1.0
 (1 row)
 
 B=# SELECT count(*) AS deleted_mappings FROM regexp_split_to_table(pg_read_file('/proc/self/maps'), E'\n') AS l WHERE l LIKE '%demo_ext.so (deleted)%';
@@ -1083,7 +1085,7 @@ server stopped
 waiting for server to start.... done
 server started
 $ grep _PG_init /home/postgres/server.log | tail -1
-2026-09-25 22:29:50.815 UTC [19617] LOG:  demo_ext 1.1: _PG_init in pid 19617 (shared_preload_libraries: yes)
+2026-09-26 11:03:20.450 UTC [10486] LOG:  demo_ext 1.1: _PG_init in pid 10486 (shared_preload_libraries: yes)
 ```
 
 ```psql
@@ -1122,14 +1124,14 @@ preload하지 않은 라이브러리는 다릅니다. `shared_preload_libraries 
 A=# SELECT pg_backend_pid(), demo_build();
  pg_backend_pid |       demo_build       
 ----------------+------------------------
-          19888 | demo_ext.so 1.1 hotfix
+          10589 | demo_ext.so 1.1 hotfix
 (1 row)
 ```
 
 ```console
-# make install
-# ls -li /usr/local/pgsql/lib/demo_ext.so
-1133969 -rwxr-xr-x 1 root root 72640 Sep 25 22:30 /usr/local/pgsql/lib/demo_ext.so
+$ make install
+$ ls -li /usr/local/pgsql/lib/demo_ext.so
+1306718 -rwxr-xr-x 1 root root 72640 Sep 26 11:03 /usr/local/pgsql/lib/demo_ext.so
 ```
 
 ```psql
@@ -1145,10 +1147,12 @@ A=# SELECT count(*) AS deleted_mappings FROM regexp_split_to_table(pg_read_file(
                 4
 (1 row)
 
+# 세션 B 시작: psql -X application_name=sessB
+
 B=# SELECT pg_backend_pid(), demo_build();
  pg_backend_pid |       demo_build        
 ----------------+-------------------------
-          20001 | demo_ext.so 1.1 hotfix2
+          10732 | demo_ext.so 1.1 hotfix2
 (1 row)
 ```
 
@@ -1168,16 +1172,16 @@ B=# SELECT pg_backend_pid(), demo_build();
 A=# SELECT pg_backend_pid(), demo_build(), demo_add(1, 2);
  pg_backend_pid |       demo_build        | demo_add 
 ----------------+-------------------------+----------
-          20093 | demo_ext.so 1.1 hotfix2 |        3
+          10823 | demo_ext.so 1.1 hotfix2 |        3
 (1 row)
 ```
 
 ```console
-# ls -li /usr/local/pgsql/lib/demo_ext.so
-1133969 -rwxr-xr-x 1 root root 72640 Sep 25 22:30 /usr/local/pgsql/lib/demo_ext.so
-# cp /tmp/demo_ext.hotfix3.so /usr/local/pgsql/lib/demo_ext.so
-# ls -li /usr/local/pgsql/lib/demo_ext.so
-1133969 -rwxr-xr-x 1 root root 72640 Sep 25 22:30 /usr/local/pgsql/lib/demo_ext.so
+$ ls -li /usr/local/pgsql/lib/demo_ext.so
+1306718 -rwxr-xr-x 1 root root 72640 Sep 26 11:03 /usr/local/pgsql/lib/demo_ext.so
+$ cp /tmp/demo_ext.hotfix3.so /usr/local/pgsql/lib/demo_ext.so
+$ ls -li /usr/local/pgsql/lib/demo_ext.so
+1306718 -rwxr-xr-x 1 root root 72640 Sep 26 11:03 /usr/local/pgsql/lib/demo_ext.so
 ```
 
 ```psql
@@ -1187,7 +1191,30 @@ A=# SELECT demo_add(1, 2);
 ERROR:  unrecognized function API version: 0
 ```
 
-`cp`는 기존 파일을 비우고 그 자리에 새 내용을 씁니다. inode가 그대로라 A가 매핑한 페이지가 새 파일의 내용을 보게 되고, A가 캐시해 둔 주소에는 더 이상 원래 값이 없습니다. 이 실습에서는 `pg_finfo_` 레코드가 있던 자리를 읽어 `0`이 나왔고([`fmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/fmgr.c#L407)), 방금까지 되던 `demo_add()`도 실패했습니다. 어떤 자리를 읽느냐에 따라 엉뚱한 명령을 실행해 프로세스가 죽을 수도 있습니다. 라이브러리 파일은 패키지 관리자나 `install`로 교체합니다.
+`cp`는 기존 파일을 비우고 그 자리에 새 내용을 씁니다. inode가 그대로라 A가 매핑한 페이지가 새 파일의 내용을 보게 되고, A가 캐시해 둔 주소에는 더 이상 원래 값이 없습니다. 이 실습에서는 `pg_finfo_` 레코드가 있던 자리를 읽어 `0`이 나왔고([`fmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/fmgr.c#L407)), 방금까지 되던 `demo_add()`도 실패했습니다.
+
+여기서 끝나지 않았습니다. 이어서 세션 A를 닫자 그 backend가 죽었습니다.
+
+```console
+$ cat /home/postgres/server.log
+...
+2026-09-26 11:03:32.559 UTC [10823] ERROR:  unrecognized function API version: 0
+2026-09-26 11:03:32.559 UTC [10823] STATEMENT:  SELECT demo_build();
+2026-09-26 11:03:33.562 UTC [10823] ERROR:  unrecognized function API version: 0
+2026-09-26 11:03:33.562 UTC [10823] STATEMENT:  SELECT demo_add(1, 2);
+2026-09-26 11:03:34.564 UTC [10509] LOG:  client backend (PID 10823) was terminated by signal 11: Segmentation fault
+2026-09-26 11:03:34.564 UTC [10509] LOG:  terminating any other active server processes
+2026-09-26 11:03:34.565 UTC [10509] LOG:  all server processes terminated; reinitializing
+2026-09-26 11:03:34.585 UTC [10909] LOG:  database system was interrupted; last known up at 2026-09-26 11:03:20 UTC
+2026-09-26 11:03:34.615 UTC [10909] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-26 11:03:34.615 UTC [10909] LOG:  invalid record length at 0/1844298: expected at least 24, got 0
+2026-09-26 11:03:34.615 UTC [10909] LOG:  redo is not required
+2026-09-26 11:03:34.616 UTC [10910] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-09-26 11:03:34.621 UTC [10910] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.006 s; sync files=2, longest=0.001 s, average=0.001 s; distance=0 kB, estimate=0 kB; lsn=0/1844298, redo lsn=0/1844298
+2026-09-26 11:03:34.622 UTC [10509] LOG:  database system is ready to accept connections
+```
+
+backend 10823은 쿼리 없이 접속을 끝내던 중에 `SIGSEGV`로 죽어서 `Failed process was running` 줄이 없습니다. 어떤 코드가 망가진 페이지를 실행했는지는 로그로 알 수 없지만, 결과는 [C 함수의 버그](#운영에서는-c-extension의-버그는-서버-전체를-재시작시킨다)와 같습니다. postmaster가 모든 프로세스를 끝내고 crash recovery를 한 뒤 접속을 다시 받았습니다. 파일 하나를 덮어쓴 것이 서버 전체의 재시작으로 이어진 것입니다. 라이브러리 파일은 패키지 관리자나 `install`로 교체합니다.
 
 #### 운영에서는: 패키지 업그레이드 뒤에 해야 할 일
 
@@ -1246,7 +1273,7 @@ CREATE FUNCTION
 postgres=# SELECT pg_backend_pid();
  pg_backend_pid 
 ----------------
-          20264
+          11077
 (1 row)
 
 postgres=# SELECT demo_crash();
@@ -1269,18 +1296,18 @@ server closed the connection unexpectedly
 ```console
 $ cat /home/postgres/server.log
 ...
-2026-09-25 22:31:31.091 UTC [19655] LOG:  client backend (PID 20264) was terminated by signal 11: Segmentation fault
-2026-09-25 22:31:31.091 UTC [19655] DETAIL:  Failed process was running: SELECT demo_crash();
-2026-09-25 22:31:31.091 UTC [19655] LOG:  terminating any other active server processes
-2026-09-25 22:31:31.091 UTC [19655] LOG:  all server processes terminated; reinitializing
-2026-09-25 22:31:31.099 UTC [20268] LOG:  database system was interrupted; last known up at 2026-09-25 22:31:27 UTC
-2026-09-25 22:31:31.125 UTC [20268] LOG:  database system was not properly shut down; automatic recovery in progress
-2026-09-25 22:31:31.125 UTC [20268] LOG:  redo starts at 0/18B8DC0
-2026-09-25 22:31:31.126 UTC [20268] LOG:  invalid record length at 0/18C8870: expected at least 24, got 0
-2026-09-25 22:31:31.126 UTC [20268] LOG:  redo done at 0/18C8808 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
-2026-09-25 22:31:31.128 UTC [20269] LOG:  checkpoint starting: end-of-recovery immediate wait
-2026-09-25 22:31:31.132 UTC [20269] LOG:  checkpoint complete: wrote 13 buffers (0.1%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.002 s, total=0.006 s; sync files=15, longest=0.001 s, average=0.001 s; distance=62 kB, estimate=62 kB; lsn=0/18C8870, redo lsn=0/18C8870
-2026-09-25 22:31:31.132 UTC [19655] LOG:  database system is ready to accept connections
+2026-09-26 11:03:39.800 UTC [10509] LOG:  client backend (PID 11077) was terminated by signal 11: Segmentation fault
+2026-09-26 11:03:39.800 UTC [10509] DETAIL:  Failed process was running: SELECT demo_crash();
+2026-09-26 11:03:39.800 UTC [10509] LOG:  terminating any other active server processes
+2026-09-26 11:03:39.801 UTC [10509] LOG:  all server processes terminated; reinitializing
+2026-09-26 11:03:39.811 UTC [11082] LOG:  database system was interrupted; last known up at 2026-09-26 11:03:34 UTC
+2026-09-26 11:03:39.981 UTC [11082] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-26 11:03:39.982 UTC [11082] LOG:  redo starts at 0/1844310
+2026-09-26 11:03:39.988 UTC [11082] LOG:  invalid record length at 0/1C8F118: expected at least 24, got 0
+2026-09-26 11:03:39.988 UTC [11082] LOG:  redo done at 0/1C8F0B0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-09-26 11:03:39.998 UTC [11083] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-09-26 11:03:40.115 UTC [11083] LOG:  checkpoint complete: wrote 953 buffers (5.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.108 s, total=0.119 s; sync files=318, longest=0.004 s, average=0.001 s; distance=4395 kB, estimate=4395 kB; lsn=0/1C8F118, redo lsn=0/1C8F118
+2026-09-26 11:03:40.116 UTC [10509] LOG:  database system is ready to accept connections
 ```
 
 ```psql
@@ -1361,7 +1388,7 @@ appdb=> SELECT 'a=>1, b=>2'::hstore -> 'b' AS b;
 (1 row)
 ```
 
-`trusted`가 아닌 `demo_ext`는 거부되고 `hstore`는 설치됩니다. extension 소유자는 `app`이지만 C 함수 `hstore_in`의 소유자는 bootstrap superuser인 `postgres`입니다. 일반 사용자가 C 함수를 만든 것이 아니라, superuser가 검토해 `trusted`로 표시한 스크립트를 대신 실행해 준 것입니다. 이 빌드에 설치된 extension 43개 중 19개가 `trusted`였습니다.
+`trusted`가 아닌 `demo_ext`는 거부되고 `hstore`는 설치됩니다. extension 소유자는 `app`이지만 C 함수 `hstore_in`의 소유자는 bootstrap superuser인 `postgres`입니다. 일반 사용자가 C 함수를 만든 것이 아니라, superuser가 검토해 `trusted`로 표시한 스크립트를 대신 실행해 준 것입니다. 이 빌드에 설치된 extension 44개 중 19개가 `trusted`였습니다.
 
 ## PG18: extension_control_path
 
@@ -1372,7 +1399,7 @@ PG17까지 control 파일은 반드시 PostgreSQL 설치 디렉터리의 `share/
 `module_pathname = 'pathdemo'`(경로 없이 이름만)로 작은 extension을 만들어 `DESTDIR`로 `/opt/pathdemo` 아래에 설치했습니다.
 
 ```console
-# make install DESTDIR=/opt/pathdemo
+$ make install DESTDIR=/opt/pathdemo
 /usr/bin/install -c -m 644 .//pathdemo.control '/opt/pathdemo/usr/local/pgsql/share/extension/'
 /usr/bin/install -c -m 644 .//pathdemo--0.1.sql  '/opt/pathdemo/usr/local/pgsql/share/extension/'
 /usr/bin/install -c -m 755  pathdemo.so '/opt/pathdemo/usr/local/pgsql/lib/'
@@ -1478,7 +1505,6 @@ COMMENT ON EXTENSION pg_stat_statements IS 'track planning and execution statist
 COPY public.demo_note (id, note) FROM stdin;
 1	kept by pg_dump
 \.
-GRANT CREATE ON SCHEMA public TO app;
 ```
 
 - 멤버 객체는 `pg_depend`의 `'e'` 의존성 때문에 따로 지울 수 없습니다.
@@ -1512,7 +1538,7 @@ extension 파일은 DB 안에 있지 않으므로 덤프에도 없습니다. 복
 #### 운영에서는: DROP EXTENSION은 데이터도 지운다
 
 ```psql
-restoredb=# INSERT INTO demo_note VALUES (1, 'important');
+restoredb=# INSERT INTO demo_note VALUES (2, 'important');
 INSERT 0 1
 restoredb=# DROP EXTENSION demo_ext;
 DROP EXTENSION

@@ -1,0 +1,4 @@
+comment = 'extension installed outside the PostgreSQL tree'
+default_version = '0.1'
+module_pathname = 'pathdemo'
+relocatable = true

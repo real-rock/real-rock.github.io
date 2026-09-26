@@ -1,0 +1,5 @@
+# demo_ext extension
+comment = 'demo extension for extension internals'
+default_version = '1.0'
+module_pathname = '$libdir/demo_ext'
+relocatable = true

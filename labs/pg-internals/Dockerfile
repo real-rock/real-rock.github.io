@@ -4,7 +4,7 @@ FROM rockylinux:9
 
 RUN dnf -y upgrade \
     && dnf -y install gcc make bison flex perl pkgconf readline-devel zlib-devel libicu-devel \
-      procps-ng file vim-common less findutils diffutils which \
+      procps-ng file vim-common less findutils diffutils which strace \
     && dnf clean all
 
 ADD postgres-src.tar.gz /usr/src/postgres/

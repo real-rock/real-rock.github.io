@@ -18,3 +18,19 @@ $ python3 labs/pg-internals/lib/verify-post.py content/posts/postgresql/01-proce
 ```
 
 로그는 항상 한 번의 전체 실행 결과여야 합니다. 스크립트를 고치면 그 편을 처음부터 다시 실행하고 로그를 통째로 바꿉니다.
+
+## 단독 글: extension 동작 원리
+
+[PostgreSQL extension은 어떻게 동작하는가](../../content/posts/postgresql/extension-internals.md)의 출력은 `extension-internals/`에서 가져옵니다. 이 실습은 두 가지를 더 준비해야 합니다.
+
+- strace가 든 이미지: `Dockerfile`에 strace를 추가했으므로 이미지를 다시 빌드했다면 그대로 쓰면 됩니다(`IMAGE=pg-internals:rocky9-rel18`). 2026-09-26 실측은 네트워크 없이 하려고, 기존 이미지에 strace 바이너리만 더한 `extension-internals/Dockerfile.strace`로 만든 `pg-internals:rocky9-rel18-strace`를 썼습니다.
+- PostgreSQL 17.11 소스: 17용으로 빌드한 모듈이 18에서 거부되는 모습을 보려고 컨테이너 안에서 17을 빌드합니다. 이 tarball도 저장소에 넣지 않습니다.
+
+```console
+$ git -C <postgres 저장소> archive --format=tar.gz -o labs/pg-internals/extension-internals/postgres17-src.tar.gz REL_17_11
+$ docker build -t pg-internals:rocky9-rel18-strace -f labs/pg-internals/extension-internals/Dockerfile.strace labs/pg-internals/extension-internals
+$ bash labs/pg-internals/extension-internals/lab.sh
+$ python3 labs/pg-internals/lib/verify-post.py content/posts/postgresql/extension-internals.md labs/pg-internals/extension-internals/final-run.log
+```
+
+`src/`에는 글에서 쓰는 데모 extension(`demo_ext`, `pathdemo`)과 일부러 잘못 만든 모듈(`nomagic`, `abi17`), `dltest.c`가 있습니다. 컨테이너 이름은 다른 실습과 겹치지 않게 `pglab-ext`를 씁니다.

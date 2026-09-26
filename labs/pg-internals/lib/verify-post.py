@@ -7,7 +7,7 @@
 출력 줄만 로그와 대조한다.
 
 허용하는 차이:
-- 명령 줄: "$ ", "> ", psql 프롬프트("postgres=# ", "A-# " 등)로 시작하는 줄
+- 명령 줄: "$ ", "> ", psql 프롬프트("postgres=# ", "A-# ", 일반 사용자 "appdb=> " 등)로 시작하는 줄
 - 블록 안의 빈 줄과 "..."으로 시작하는 줄(생략 표시)
 - 줄 끝 공백
 - 로그 쪽의 "psql:<stdin>:N: " 접두어 (세션 하네스가 psql을 표준입력으로 돌려서 생긴다)
@@ -16,7 +16,7 @@ import re
 import sys
 
 CHECKED = re.compile(r"^```(console|psql|text)\s*$")
-COMMAND = re.compile(r"^(\$|>|[A-Za-z0-9_]+[=-][*!]?#) ")
+COMMAND = re.compile(r"^(\$|>|[A-Za-z0-9_]+[=-][*!]?[#>]) ")
 STDIN_PREFIX = re.compile(r"^psql:<stdin>:\d+: ")
 
 

@@ -2,3 +2,4 @@ postgres-src.tar.gz
 */*stdout.txt
 */debian-run.log
 run-all.txt
+*/postgres17-src.tar.gz

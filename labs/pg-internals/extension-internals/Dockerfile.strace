@@ -1,0 +1,10 @@
+# extension 글 실습용 파생 이미지: ../Dockerfile로 만든 pg-internals:rocky9-rel18에 strace를 더한다.
+# ../Dockerfile에도 strace를 추가했으므로, 그 Dockerfile로 이미지를 다시 빌드했다면 이 파일은 필요 없다
+# (lab.sh를 IMAGE=pg-internals:rocky9-rel18로 실행).
+# 2026-09-26 실측 때는 네트워크 없이 빌드하려고, 같은 Rocky 9.8 저장소에서 strace-6.12-1.el9를
+# 설치해 둔 로컬 이미지(STRACE_IMAGE)에서 바이너리만 복사했다. 두 이미지의 glibc는 2.34-275.el9_8로 같다.
+ARG STRACE_IMAGE=rocky9-pgbuild
+FROM ${STRACE_IMAGE} AS strace
+
+FROM pg-internals:rocky9-rel18
+COPY --from=strace /usr/bin/strace /usr/bin/strace
