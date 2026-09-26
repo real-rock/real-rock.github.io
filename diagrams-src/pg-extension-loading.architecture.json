@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "공유 라이브러리가 프로세스에 올라오는 두 경로",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1200,
+      620
+    ],
+    "repository": {
+      "url": "https://github.com/postgres/postgres",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "39a0db101105eab3f4044d11c609c58b9459ea16"
+    },
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "backend": {
+          "label": "프로세스"
+        },
+        "database": {
+          "label": "공유 메모리, 카탈로그"
+        },
+        "frontend": {
+          "label": "프로세스 개인 메모리"
+        },
+        "external": {
+          "label": "디스크의 파일"
+        }
+      }
+    },
+    "views": [
+      {
+        "id": "preload",
+        "label": "shared_preload_libraries",
+        "focus": [
+          "sofile",
+          "postmaster",
+          "be1",
+          "be2",
+          "shmem"
+        ],
+        "note": "postmaster가 시작할 때 한 번 dlopen하고 _PG_init을 부릅니다. 공유 메모리를 요청할 수 있는 것도 이때뿐입니다. 자식은 fork로 매핑을 그대로 물려받습니다."
+      },
+      {
+        "id": "lazy",
+        "label": "첫 호출 때 로드",
+        "focus": [
+          "sofile",
+          "pgproc",
+          "be3",
+          "local"
+        ],
+        "note": "preload하지 않은 라이브러리는 backend마다 그 함수를 처음 부를 때 pg_proc의 probin을 보고 dlopen합니다. _PG_init도 backend마다 한 번씩 돕니다."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "sofile",
+      "type": "external",
+      "label": "demo_ext.so",
+      "sublabel": "$libdir",
+      "pos": [
+        40,
+        250
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "pgproc",
+      "type": "database",
+      "label": "pg_proc",
+      "sublabel": "probin, prosrc",
+      "pos": [
+        40,
+        470
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "postmaster",
+      "type": "backend",
+      "label": "postmaster",
+      "sublabel": "시작 때 dlopen, _PG_init",
+      "pos": [
+        340,
+        150
+      ],
+      "size": [
+        200,
+        68
+      ],
+      "sources": [
+        {
+          "path": "src/backend/postmaster/postmaster.c",
+          "line": 932,
+          "label": "process_shared_preload_libraries"
+        }
+      ]
+    },
+    {
+      "id": "be1",
+      "type": "backend",
+      "label": "backend 1",
+      "sublabel": "fork로 매핑 물려받음",
+      "pos": [
+        660,
+        80
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "be2",
+      "type": "backend",
+      "label": "backend 2",
+      "sublabel": "fork로 매핑 물려받음",
+      "pos": [
+        660,
+        220
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "shmem",
+      "type": "database",
+      "label": "공유 메모리",
+      "sublabel": "ShmemInitStruct",
+      "pos": [
+        970,
+        150
+      ],
+      "size": [
+        190,
+        68
+      ],
+      "sources": [
+        {
+          "path": "src/backend/utils/init/miscinit.c",
+          "line": 1931,
+          "label": "process_shmem_requests"
+        }
+      ]
+    },
+    {
+      "id": "be3",
+      "type": "backend",
+      "label": "backend 3",
+      "sublabel": "첫 호출 때 dlopen, _PG_init",
+      "pos": [
+        340,
+        470
+      ],
+      "size": [
+        200,
+        68
+      ],
+      "sources": [
+        {
+          "path": "src/backend/utils/fmgr/dfmgr.c",
+          "line": 189,
+          "label": "internal_load_library"
+        }
+      ]
+    },
+    {
+      "id": "local",
+      "type": "frontend",
+      "label": "개인 메모리",
+      "sublabel": "static 변수, hook 포인터",
+      "pos": [
+        660,
+        470
+      ],
+      "size": [
+        200,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "shared_preload_libraries에 넣은 경우",
+      "wraps": [
+        "postmaster",
+        "be1",
+        "be2",
+        "shmem"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "preload하지 않은 경우",
+      "wraps": [
+        "be3",
+        "local"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c-preload",
+      "from": "sofile",
+      "to": "postmaster",
+      "label": "dlopen 1번",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-fork1",
+      "from": "postmaster",
+      "to": "be1",
+      "label": "fork",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-fork2",
+      "from": "postmaster",
+      "to": "be2",
+      "label": "fork",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-shm1",
+      "from": "be1",
+      "to": "shmem",
+      "label": "같은 카운터"
+    },
+    {
+      "id": "c-shm2",
+      "from": "be2",
+      "to": "shmem",
+      "label": "같은 카운터"
+    },
+    {
+      "id": "c-lazy",
+      "from": "sofile",
+      "to": "be3",
+      "label": "backend마다 dlopen",
+      "toSide": "top"
+    },
+    {
+      "id": "c-probin",
+      "from": "pgproc",
+      "to": "be3",
+      "label": "파일, 심볼 이름"
+    },
+    {
+      "id": "c-local",
+      "from": "be3",
+      "to": "local",
+      "label": "자기 것만"
+    }
+  ]
+}

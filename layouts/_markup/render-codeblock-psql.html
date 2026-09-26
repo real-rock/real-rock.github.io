@@ -1,8 +1,8 @@
-{{- /* psql 세션 블록: 프롬프트("postgres=# ", "postgres-# ", 트랜잭션 중 "postgres=*# ", 세션 구분용 "A=# ") 뒤는 SQL로 하이라이팅하고,
+{{- /* psql 세션 블록: 프롬프트("postgres=# ", "postgres-# ", 트랜잭션 중 "postgres=*# ", 세션 구분용 "A=# ", 일반 사용자 "appdb=> ") 뒤는 SQL로 하이라이팅하고,
        나머지 줄은 결과(go)로 표시한다. console 블록과 같은 구조로 출력한다. */ -}}
 {{- $out := slice -}}
 {{- range split (strings.TrimRight "\n" .Inner) "\n" -}}
-  {{- $m := findRESubmatch `^([A-Za-z0-9_]+[=-][*!]?#) (.*)$` . 1 -}}
+  {{- $m := findRESubmatch `^([A-Za-z0-9_]+[=-][*!]?[#>]) (.*)$` . 1 -}}
   {{- if $m -}}
     {{- $m = index $m 0 -}}
     {{- $sql := transform.Highlight (index $m 2) "sql" "hl_inline=true" | replaceRE `^<code[^>]*>|</code>$` "" -}}

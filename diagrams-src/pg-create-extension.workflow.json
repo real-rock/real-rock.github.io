@@ -1,0 +1,268 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "CREATE EXTENSION이 하는 일",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "frontend": {
+          "label": "클라이언트"
+        },
+        "backend": {
+          "label": "backend 안의 단계"
+        },
+        "external": {
+          "label": "디스크의 extension 파일"
+        },
+        "database": {
+          "label": "시스템 카탈로그"
+        }
+      }
+    },
+    "views": [
+      {
+        "id": "files",
+        "label": "파일 읽기",
+        "focus": [
+          "control",
+          "ctlfile",
+          "script",
+          "sqlfile"
+        ],
+        "note": "control 파일에서 버전과 설정을 읽고, 그 버전의 SQL 스크립트를 읽어 MODULE_PATHNAME 같은 자리표시자를 바꿉니다."
+      },
+      {
+        "id": "catalog",
+        "label": "카탈로그 기록",
+        "focus": [
+          "register",
+          "extrow",
+          "func",
+          "depend"
+        ],
+        "note": "pg_extension에 행을 먼저 넣고, 스크립트가 만드는 객체마다 그 행을 가리키는 pg_depend(deptype 'e')를 남깁니다."
+      },
+      {
+        "id": "load",
+        "label": "라이브러리 로드",
+        "focus": [
+          "func",
+          "load",
+          "sofile",
+          "done"
+        ],
+        "note": "LANGUAGE C 함수를 만들 때 검증기가 .so를 dlopen하고 심볼을 찾습니다. 이때 _PG_init이 이 backend에서 한 번 실행됩니다."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "client",
+      "label": "클라이언트"
+    },
+    {
+      "id": "backend",
+      "label": "backend"
+    },
+    {
+      "id": "files",
+      "label": "디스크"
+    },
+    {
+      "id": "catalog",
+      "label": "카탈로그"
+    }
+  ],
+  "mainPath": [
+    "stmt",
+    "control",
+    "register",
+    "script",
+    "func",
+    "load",
+    "done"
+  ],
+  "nodes": [
+    {
+      "id": "stmt",
+      "lane": "client",
+      "col": 0,
+      "type": "frontend",
+      "label": "CREATE EXTENSION",
+      "sublabel": "demo_ext",
+      "width": 140
+    },
+    {
+      "id": "control",
+      "lane": "backend",
+      "col": 1,
+      "type": "backend",
+      "label": "control 파일 읽기",
+      "sublabel": "설치할 버전 정하기",
+      "width": 140
+    },
+    {
+      "id": "register",
+      "lane": "backend",
+      "col": 2,
+      "type": "backend",
+      "label": "extension 등록",
+      "sublabel": "InsertExtensionTuple",
+      "width": 150
+    },
+    {
+      "id": "script",
+      "lane": "backend",
+      "col": 3,
+      "type": "backend",
+      "label": "스크립트 실행",
+      "sublabel": "자리표시자 치환 후 실행",
+      "width": 150
+    },
+    {
+      "id": "func",
+      "lane": "backend",
+      "col": 4,
+      "type": "backend",
+      "label": "CREATE FUNCTION",
+      "sublabel": "LANGUAGE C",
+      "width": 140
+    },
+    {
+      "id": "load",
+      "lane": "backend",
+      "col": 5,
+      "type": "backend",
+      "label": "C 함수 검증",
+      "sublabel": "dlopen, dlsym, _PG_init",
+      "width": 150
+    },
+    {
+      "id": "done",
+      "lane": "client",
+      "col": 5,
+      "type": "frontend",
+      "label": "CREATE EXTENSION",
+      "sublabel": "한 트랜잭션으로 끝남",
+      "width": 150
+    },
+    {
+      "id": "ctlfile",
+      "lane": "files",
+      "col": 1,
+      "type": "external",
+      "label": "demo_ext.control",
+      "sublabel": "share/extension",
+      "width": 140
+    },
+    {
+      "id": "sqlfile",
+      "lane": "files",
+      "col": 3,
+      "type": "external",
+      "label": "demo_ext--1.0.sql",
+      "sublabel": "share/extension",
+      "width": 150
+    },
+    {
+      "id": "sofile",
+      "lane": "files",
+      "col": 5,
+      "type": "external",
+      "label": "demo_ext.so",
+      "sublabel": "$libdir",
+      "width": 150
+    },
+    {
+      "id": "extrow",
+      "lane": "catalog",
+      "col": 2,
+      "type": "database",
+      "label": "pg_extension",
+      "sublabel": "이름, 버전, 스키마",
+      "width": 150
+    },
+    {
+      "id": "depend",
+      "lane": "catalog",
+      "col": 4,
+      "type": "database",
+      "label": "pg_depend",
+      "sublabel": "deptype 'e'",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "from": "stmt",
+      "to": "control",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e2",
+      "from": "control",
+      "to": "register",
+      "label": "버전 1.0",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e3",
+      "from": "register",
+      "to": "script",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e4",
+      "from": "script",
+      "to": "func",
+      "label": "SQL 문 하나씩",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e5",
+      "from": "func",
+      "to": "load",
+      "label": "검증기 호출",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e6",
+      "from": "load",
+      "to": "done",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e7",
+      "from": "ctlfile",
+      "to": "control",
+      "label": "open, read"
+    },
+    {
+      "id": "e8",
+      "from": "sqlfile",
+      "to": "script",
+      "label": "open, read"
+    },
+    {
+      "id": "e9",
+      "from": "sofile",
+      "to": "load",
+      "label": "mmap"
+    },
+    {
+      "id": "e10",
+      "from": "register",
+      "to": "extrow",
+      "label": "행 추가"
+    },
+    {
+      "id": "e11",
+      "from": "func",
+      "to": "depend",
+      "label": "멤버로 기록"
+    }
+  ]
+}
