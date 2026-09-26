@@ -1,0 +1,249 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+e20cc27990d27a86addc96671406a0d3fca90f11facc794a12c30758d5182c8a
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET track_io_timing = on;
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+$ pgbench -i -s 50 -q postgres 2>&1 | tail -n 1
+done in 2.66 s (drop tables 0.00 s, create tables 0.00 s, client-side generate 1.96 s, vacuum 0.11 s, primary keys 0.59 s).
+[exit=0]
+
+postgres=# SELECT name, setting, unit FROM pg_settings
+postgres-# WHERE name IN ('max_wal_size', 'min_wal_size', 'checkpoint_timeout', 'checkpoint_completion_target',
+postgres-#                'checkpoint_warning', 'full_page_writes', 'log_checkpoints')
+postgres-# ORDER BY name;
+             name             | setting | unit 
+------------------------------+---------+------
+ checkpoint_completion_target | 0.9     | 
+ checkpoint_timeout           | 300     | s
+ checkpoint_warning           | 30      | s
+ full_page_writes             | on      | 
+ log_checkpoints              | on      | 
+ max_wal_size                 | 1024    | MB
+ min_wal_size                 | 80      | MB
+(7 rows)
+
+
+
+######## 1. max_wal_size가 작을 때
+
+postgres=# ALTER SYSTEM SET max_wal_size = '64MB';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+postgres=# SELECT pg_stat_reset_shared('checkpointer'), pg_stat_reset_shared('wal'),
+postgres-#        pg_stat_reset_shared('io'), pg_stat_reset_shared('bgwriter'), pg_stat_reset();
+ pg_stat_reset_shared | pg_stat_reset_shared | pg_stat_reset_shared | pg_stat_reset_shared | pg_stat_reset 
+----------------------+----------------------+----------------------+----------------------+---------------
+                      |                      |                      |                      | 
+(1 row)
+
+
+$ pgbench -n -c 8 -j 2 -T 60 -P 5 postgres 2>&1 | grep -E '^progress|^tps|latency average'
+progress: 5.0 s, 8836.5 tps, lat 0.897 ms stddev 3.228, 0 failed
+progress: 10.0 s, 9037.0 tps, lat 0.882 ms stddev 2.919, 0 failed
+progress: 15.0 s, 9966.2 tps, lat 0.798 ms stddev 2.421, 0 failed
+progress: 20.0 s, 9954.2 tps, lat 0.797 ms stddev 3.076, 0 failed
+progress: 25.0 s, 9962.0 tps, lat 0.799 ms stddev 3.031, 0 failed
+progress: 30.0 s, 10037.0 tps, lat 0.792 ms stddev 2.533, 0 failed
+progress: 35.0 s, 10163.8 tps, lat 0.779 ms stddev 2.211, 0 failed
+progress: 40.0 s, 10394.2 tps, lat 0.768 ms stddev 2.291, 0 failed
+progress: 45.0 s, 10217.5 tps, lat 0.778 ms stddev 2.583, 0 failed
+progress: 50.0 s, 9803.4 tps, lat 0.811 ms stddev 3.227, 0 failed
+progress: 55.0 s, 10074.1 tps, lat 0.789 ms stddev 2.575, 0 failed
+progress: 60.0 s, 9511.6 tps, lat 0.835 ms stddev 2.630, 0 failed
+latency average = 0.809 ms
+tps = 9829.277229 (without initial connection time)
+[exit=0]
+
+postgres=# SELECT c.num_timed, c.num_requested, c.num_done, c.buffers_written,
+postgres-#        round(c.write_time) AS write_ms, round(c.sync_time) AS sync_ms,
+postgres-#        w.wal_fpi, pg_size_pretty(w.wal_bytes) AS wal,
+postgres-#        d.xact_commit, pg_size_pretty(w.wal_bytes / d.xact_commit) AS wal_per_xact
+postgres-# FROM pg_stat_checkpointer c, pg_stat_wal w, pg_stat_database d
+postgres-# WHERE d.datname = 'postgres';
+ num_timed | num_requested | num_done | buffers_written | write_ms | sync_ms | wal_fpi |   wal   | xact_commit |        wal_per_xact         
+-----------+---------------+----------+-----------------+----------+---------+---------+---------+-------------+-----------------------------
+         0 |           170 |      169 |          651127 |    41982 |   14690 |  679639 | 5432 MB |      589820 | 9656.1948424943203011 bytes
+(1 row)
+
+
+postgres=# SELECT backend_type, writes, fsyncs
+postgres-# FROM pg_stat_io
+postgres-# WHERE object = 'relation' AND context = 'normal' AND writes > 0
+postgres-# ORDER BY writes DESC;
+   backend_type    | writes | fsyncs 
+-------------------+--------+--------
+ checkpointer      | 651127 |   1173
+ background writer |   7871 |      0
+(2 rows)
+
+
+$ tail -n 2000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -c 'checkpoint starting: wal'
+171
+[exit=0]
+
+$ tail -n 2000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 1 -E 'checkpoints are occurring too frequently' | tail -n 2
+2026-09-26 10:42:34.389 UTC [31] LOG:  checkpoints are occurring too frequently (1 second apart)
+2026-09-26 10:42:34.389 UTC [31] HINT:  Consider increasing the configuration parameter "max_wal_size".
+[exit=0]
+
+$ tail -n 2000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'checkpoint (starting|complete)' | tail -n 2
+2026-09-26 10:42:33.963 UTC [31] LOG:  checkpoint starting: wal
+2026-09-26 10:42:34.389 UTC [31] LOG:  checkpoint complete: wrote 3571 buffers (21.8%), wrote 2 SLRU buffers; 0 WAL file(s) added, 1 removed, 1 recycled; write=0.296 s, sync=0.105 s, total=0.426 s; sync files=16, longest=0.094 s, average=0.007 s; distance=31955 kB, estimate=33176 kB; lsn=1/7D006CA0, redo lsn=1/7B0040A0
+[exit=0]
+
+
+######## 2. max_wal_size가 충분할 때
+
+postgres=# ALTER SYSTEM SET max_wal_size = '4GB';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+postgres=# SELECT pg_stat_reset_shared('checkpointer'), pg_stat_reset_shared('wal'),
+postgres-#        pg_stat_reset_shared('io'), pg_stat_reset_shared('bgwriter'), pg_stat_reset();
+ pg_stat_reset_shared | pg_stat_reset_shared | pg_stat_reset_shared | pg_stat_reset_shared | pg_stat_reset 
+----------------------+----------------------+----------------------+----------------------+---------------
+                      |                      |                      |                      | 
+(1 row)
+
+
+$ pgbench -n -c 8 -j 2 -T 60 -P 5 postgres 2>&1 | grep -E '^progress|^tps|latency average'
+progress: 5.0 s, 13490.2 tps, lat 0.587 ms stddev 0.648, 0 failed
+progress: 10.0 s, 14140.8 tps, lat 0.561 ms stddev 0.339, 0 failed
+progress: 15.0 s, 13064.4 tps, lat 0.607 ms stddev 0.765, 0 failed
+progress: 20.0 s, 14205.0 tps, lat 0.558 ms stddev 0.248, 0 failed
+progress: 25.0 s, 14422.8 tps, lat 0.550 ms stddev 0.220, 0 failed
+progress: 30.0 s, 14013.1 tps, lat 0.566 ms stddev 0.260, 0 failed
+progress: 35.0 s, 14125.7 tps, lat 0.561 ms stddev 0.255, 0 failed
+progress: 40.0 s, 14227.3 tps, lat 0.557 ms stddev 0.197, 0 failed
+progress: 45.0 s, 13654.7 tps, lat 0.581 ms stddev 1.751, 0 failed
+progress: 50.0 s, 13773.3 tps, lat 0.576 ms stddev 0.204, 0 failed
+progress: 55.0 s, 14229.0 tps, lat 0.557 ms stddev 0.204, 0 failed
+progress: 60.0 s, 14313.4 tps, lat 0.554 ms stddev 0.192, 0 failed
+latency average = 0.567 ms
+tps = 13972.776666 (without initial connection time)
+[exit=0]
+
+postgres=# SELECT c.num_timed, c.num_requested, c.num_done, c.buffers_written,
+postgres-#        round(c.write_time) AS write_ms, round(c.sync_time) AS sync_ms,
+postgres-#        w.wal_fpi, pg_size_pretty(w.wal_bytes) AS wal,
+postgres-#        d.xact_commit, pg_size_pretty(w.wal_bytes / d.xact_commit) AS wal_per_xact
+postgres-# FROM pg_stat_checkpointer c, pg_stat_wal w, pg_stat_database d
+postgres-# WHERE d.datname = 'postgres';
+ num_timed | num_requested | num_done | buffers_written | write_ms | sync_ms | wal_fpi |   wal   | xact_commit |        wal_per_xact         
+-----------+---------------+----------+-----------------+----------+---------+---------+---------+-------------+-----------------------------
+         0 |             0 |        0 |               0 |        0 |       0 |   93556 | 1043 MB |      838330 | 1304.3643278899717295 bytes
+(1 row)
+
+
+postgres=# SELECT backend_type, writes, fsyncs
+postgres-# FROM pg_stat_io
+postgres-# WHERE object = 'relation' AND context = 'normal' AND writes > 0
+postgres-# ORDER BY writes DESC;
+   backend_type    | writes | fsyncs 
+-------------------+--------+--------
+ client backend    | 737700 |      0
+ background writer |  29730 |      0
+ autovacuum worker |    173 |      0
+(3 rows)
+
+
+postgres=# SELECT pg_size_pretty(sum(size)) AS pg_wal FROM pg_ls_waldir();
+ pg_wal  
+---------
+ 1072 MB
+(1 row)
+
+
+
+######## 3. 시간 기준 체크포인트의 분산
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+postgres=# ALTER SYSTEM SET checkpoint_timeout = '30s';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+$ pgbench -n -c 8 -j 2 -T 70 -P 5 postgres 2>&1 | grep -E '^progress|^tps'
+progress: 5.0 s, 14097.2 tps, lat 0.562 ms stddev 0.754, 0 failed
+progress: 10.0 s, 14490.4 tps, lat 0.547 ms stddev 0.087, 0 failed
+progress: 15.0 s, 13674.7 tps, lat 0.580 ms stddev 0.785, 0 failed
+progress: 20.0 s, 13957.3 tps, lat 0.568 ms stddev 0.133, 0 failed
+progress: 25.0 s, 14181.0 tps, lat 0.559 ms stddev 0.085, 0 failed
+progress: 30.0 s, 13995.2 tps, lat 0.567 ms stddev 0.131, 0 failed
+progress: 35.0 s, 11633.8 tps, lat 0.673 ms stddev 2.018, 0 failed
+progress: 40.0 s, 12508.8 tps, lat 0.643 ms stddev 1.638, 0 failed
+progress: 45.0 s, 10561.2 tps, lat 0.752 ms stddev 2.344, 0 failed
+progress: 50.0 s, 6617.0 tps, lat 1.204 ms stddev 8.370, 0 failed
+progress: 55.0 s, 5207.0 tps, lat 1.531 ms stddev 2.233, 0 failed
+progress: 60.0 s, 13100.9 tps, lat 0.605 ms stddev 0.907, 0 failed
+progress: 65.0 s, 11957.9 tps, lat 0.664 ms stddev 4.772, 0 failed
+progress: 70.0 s, 7108.1 tps, lat 1.120 ms stddev 1.828, 0 failed
+tps = 11650.093680 (without initial connection time)
+[exit=0]
+
+$ tail -n 2000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'checkpoint (starting|complete)' | tail -n 4
+2026-09-26 10:43:35.566 UTC [31] LOG:  checkpoint complete: wrote 8992 buffers (54.9%), wrote 58 SLRU buffers; 0 WAL file(s) added, 0 removed, 66 recycled; write=0.023 s, sync=0.262 s, total=0.414 s; sync files=25, longest=0.196 s, average=0.011 s; distance=1084112 kB, estimate=1084112 kB; lsn=1/BF2BAE30, redo lsn=1/BF2BADD8
+2026-09-26 10:44:05.175 UTC [31] LOG:  checkpoint starting: time
+2026-09-26 10:44:32.495 UTC [31] LOG:  checkpoint complete: wrote 213 buffers (1.3%), wrote 46 SLRU buffers; 0 WAL file(s) added, 0 removed, 52 recycled; write=26.840 s, sync=0.300 s, total=27.321 s; sync files=18, longest=0.251 s, average=0.017 s; distance=865433 kB, estimate=1062244 kB; lsn=2/2B003938, redo lsn=1/F3FE11D8
+2026-09-26 10:44:35.506 UTC [31] LOG:  checkpoint starting: time
+[exit=0]
+
