@@ -1,0 +1,374 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+572a14055aae58bac321fe82cd36d6cb629829bdcd1cdb7e7aa938f6cb78d704
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET max_prepared_transactions = 10;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+postgres=# CREATE TABLE t (id int PRIMARY KEY, v int);
+CREATE TABLE
+
+postgres=# INSERT INTO t SELECT g, 0 FROM generate_series(1, 10000) g;
+INSERT 0 10000
+
+postgres=# CREATE TABLE jobs (id int PRIMARY KEY, state text);
+CREATE TABLE
+
+postgres=# INSERT INTO jobs VALUES (1, 'new'), (2, 'new'), (3, 'new');
+INSERT 0 3
+
+# VACUUM 결과를 일정하게 보려고 t의 autovacuum을 끄고 직접 VACUUM한다
+
+postgres=# ALTER TABLE t SET (autovacuum_enabled = false);
+ALTER TABLE
+
+postgres=# VACUUM t;
+VACUUM
+
+
+######## 1. 트랜잭션 세 개를 열어 둔다
+
+# C: 2단계 커밋의 첫 단계(PREPARE TRANSACTION)까지만 하고 세션을 닫는다
+
+# 세션 C 시작: psql -X 
+
+C=# BEGIN;
+BEGIN
+
+C=# UPDATE jobs SET state = 'running' WHERE id = 3;
+UPDATE 1
+
+C=# PREPARE TRANSACTION 'batch-42';
+PREPARE TRANSACTION
+
+# A: REPEATABLE READ로 읽기만 하고 멈춘다
+
+# 세션 A 시작: psql -X 
+
+A=# SET application_name = 'report';
+SET
+
+A=# BEGIN ISOLATION LEVEL REPEATABLE READ;
+BEGIN
+
+A=# SELECT count(*) FROM t;
+ count 
+-------
+ 10000
+(1 row)
+
+
+# B: 행 하나를 고치고 멈춘다
+
+# 세션 B 시작: psql -X 
+
+B=# SET application_name = 'worker';
+SET
+
+B=# BEGIN;
+BEGIN
+
+B=# UPDATE jobs SET state = 'running' WHERE id = 1;
+UPDATE 1
+
+
+######## 2. 증상: VACUUM이 dead tuple을 지우지 못한다
+
+postgres=# UPDATE t SET v = v + 1;
+UPDATE 10000
+
+postgres=# UPDATE t SET v = v + 1;
+UPDATE 10000
+
+postgres=# UPDATE t SET v = v + 1;
+UPDATE 10000
+
+postgres=# UPDATE t SET v = v + 1;
+UPDATE 10000
+
+postgres=# UPDATE t SET v = v + 1;
+UPDATE 10000
+
+postgres=# SELECT n_live_tup, n_dead_tup, pg_size_pretty(pg_table_size('t')) AS size
+postgres-# FROM pg_stat_user_tables WHERE relname = 't';
+ n_live_tup | n_dead_tup |  size   
+------------+------------+---------
+      10000 |      50000 | 2160 kB
+(1 row)
+
+
+postgres=# VACUUM (VERBOSE) t;
+INFO:  vacuuming "postgres.public.t"
+VACUUM
+INFO:  finished vacuuming "postgres.public.t": index scans: 0
+pages: 0 removed, 266 remain, 266 scanned (100.00% of total), 0 eagerly scanned
+tuples: 0 removed, 60000 remain, 50000 are dead but not yet removable
+removable cutoff: 757, which was 7 XIDs old when operation ended
+frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+visibility map: 0 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 587 hits, 0 reads, 0 dirtied
+WAL usage: 1 records, 0 full page images, 307 bytes, 0 buffers full
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+
+postgres=# SELECT n_live_tup, n_dead_tup, pg_size_pretty(pg_table_size('t')) AS size
+postgres-# FROM pg_stat_user_tables WHERE relname = 't';
+ n_live_tup | n_dead_tup |  size   
+------------+------------+---------
+      10000 |      50000 | 2160 kB
+(1 row)
+
+
+
+######## 3. 누가 xmin horizon을 붙잡고 있는가
+
+postgres=# SELECT pid, application_name AS app, state, backend_xid, backend_xmin,
+postgres-#        age(backend_xmin) AS xmin_age, now() - xact_start AS xact_age
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY xact_start;
+ pid |  app   |        state        | backend_xid | backend_xmin | xmin_age |    xact_age     
+-----+--------+---------------------+-------------+--------------+----------+-----------------
+ 224 | report | idle in transaction |             |          757 |        7 | 00:00:06.806246
+ 305 | worker | idle in transaction |         758 |              |          | 00:00:02.12534
+(2 rows)
+
+
+postgres=# SELECT 'session' AS kind, pid::text AS id, state,
+postgres-#        age(backend_xid) AS xid_age, age(backend_xmin) AS xmin_age, xact_start
+postgres-# FROM pg_stat_activity
+postgres-# WHERE (backend_xid IS NOT NULL OR backend_xmin IS NOT NULL) AND pid <> pg_backend_pid()
+postgres-# UNION ALL
+postgres-# SELECT 'prepared', gid, NULL, age(transaction), NULL, prepared
+postgres-# FROM pg_prepared_xacts
+postgres-# UNION ALL
+postgres-# SELECT 'slot', slot_name, NULL, age(xmin), age(catalog_xmin), NULL
+postgres-# FROM pg_replication_slots
+postgres-# ORDER BY 4 DESC NULLS LAST, 5 DESC NULLS LAST;
+   kind   |    id    |        state        | xid_age | xmin_age |          xact_start           
+----------+----------+---------------------+---------+----------+-------------------------------
+ prepared | batch-42 |                     |       7 |          | 2026-09-26 10:07:14.95094+00
+ session  | 305      | idle in transaction |       6 |          | 2026-09-26 10:07:23.77488+00
+ session  | 224      | idle in transaction |         |        7 | 2026-09-26 10:07:19.093974+00
+(3 rows)
+
+
+
+######## 4. 세션을 끊는다
+
+postgres=# SELECT pid, application_name, pg_terminate_backend(pid)
+postgres-# FROM pg_stat_activity WHERE application_name IN ('report', 'worker');
+ pid | application_name | pg_terminate_backend 
+-----+------------------+----------------------
+ 224 | report           | t
+ 305 | worker           | t
+(2 rows)
+
+
+postgres=# VACUUM (VERBOSE) t;
+INFO:  vacuuming "postgres.public.t"
+INFO:  finished vacuuming "postgres.public.t": index scans: 0
+pages: 0 removed, 266 remain, 266 scanned (100.00% of total), 0 eagerly scanned
+tuples: 0 removed, 60000 remain, 50000 are dead but not yet removable
+removable cutoff: 757, which was 7 XIDs old when operation ended
+frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+visibility map: 0 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 578 hits, 0 reads, 0 dirtied
+WAL usage: 0 records, 0 full page images, 0 bytes, 0 buffers full
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+VACUUM
+
+# 세션은 모두 끊었는데 여전히 지우지 못한다
+
+postgres=# SELECT count(*) AS sessions FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid();
+ sessions 
+----------
+        0
+(1 row)
+
+
+postgres=# SELECT 'session' AS kind, pid::text AS id, state,
+postgres-#        age(backend_xid) AS xid_age, age(backend_xmin) AS xmin_age, xact_start
+postgres-# FROM pg_stat_activity
+postgres-# WHERE (backend_xid IS NOT NULL OR backend_xmin IS NOT NULL) AND pid <> pg_backend_pid()
+postgres-# UNION ALL
+postgres-# SELECT 'prepared', gid, NULL, age(transaction), NULL, prepared
+postgres-# FROM pg_prepared_xacts
+postgres-# UNION ALL
+postgres-# SELECT 'slot', slot_name, NULL, age(xmin), age(catalog_xmin), NULL
+postgres-# FROM pg_replication_slots
+postgres-# ORDER BY 4 DESC NULLS LAST, 5 DESC NULLS LAST;
+   kind   |    id    | state | xid_age | xmin_age |          xact_start          
+----------+----------+-------+---------+----------+------------------------------
+ prepared | batch-42 |       |       7 |          | 2026-09-26 10:07:14.95094+00
+(1 row)
+
+
+postgres=# SELECT gid, prepared, owner, database, age(transaction) AS xid_age FROM pg_prepared_xacts;
+   gid    |           prepared           |  owner   | database | xid_age 
+----------+------------------------------+----------+----------+---------
+ batch-42 | 2026-09-26 10:07:14.95094+00 | postgres | postgres |       7
+(1 row)
+
+
+# prepared transaction은 재시작해도 남는다
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+postgres=# SELECT gid, prepared, age(transaction) AS xid_age FROM pg_prepared_xacts;
+   gid    |           prepared           | xid_age 
+----------+------------------------------+---------
+ batch-42 | 2026-09-26 10:07:14.95094+00 |       7
+(1 row)
+
+
+postgres=# SELECT locktype, relation::regclass, mode, granted, virtualtransaction
+postgres-# FROM pg_locks WHERE virtualtransaction LIKE '-1/%';
+   locktype    | relation  |       mode       | granted | virtualtransaction 
+---------------+-----------+------------------+---------+--------------------
+ relation      | jobs_pkey | RowExclusiveLock | t       | -1/757
+ transactionid |           | ExclusiveLock    | t       | -1/757
+ relation      | jobs      | RowExclusiveLock | t       | -1/757
+(3 rows)
+
+
+postgres=# ROLLBACK PREPARED 'batch-42';
+ROLLBACK PREPARED
+
+postgres=# VACUUM (VERBOSE) t;
+INFO:  vacuuming "postgres.public.t"
+INFO:  finished vacuuming "postgres.public.t": index scans: 1
+pages: 0 removed, 266 remain, 266 scanned (100.00% of total), 0 eagerly scanned
+tuples: 50000 removed, 10000 remain, 0 are dead but not yet removable
+removable cutoff: 764, which was 0 XIDs old when operation ended
+new relfrozenxid: 763, which is 10 XIDs ahead of previous value
+frozen: 1 pages from table (0.38% of total) had 172 tuples frozen
+visibility map: 266 pages set all-visible, 222 pages set all-frozen (0 were all-visible)
+index scan needed: 222 pages from table (83.46% of total) had 50000 dead item identifiers removed
+index "t_pkey": pages: 111 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+avg read rate: 1356.368 MB/s, avg write rate: 1342.983 MB/s
+buffer usage: 318 hits, 608 reads, 602 dirtied
+WAL usage: 824 records, 380 full page images, 953157 bytes, 0 buffers full
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+VACUUM
+
+postgres=# SELECT n_live_tup, n_dead_tup, pg_size_pretty(pg_table_size('t')) AS size
+postgres-# FROM pg_stat_user_tables WHERE relname = 't';
+ n_live_tup | n_dead_tup |  size   
+------------+------------+---------
+      10000 |          0 | 2160 kB
+(1 row)
+
+
+
+######## 5. 예방: idle_in_transaction_session_timeout, transaction_timeout
+
+# 세션 D 시작: psql -X 
+
+D=# SET application_name = 'forgetful';
+SET
+
+D=# SET idle_in_transaction_session_timeout = '3s';
+SET
+
+D=# BEGIN;
+BEGIN
+
+D=# SELECT count(*) FROM t;
+ count 
+-------
+ 10000
+(1 row)
+
+
+D=# SELECT 1;
+FATAL:  terminating connection due to idle-in-transaction timeout
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
+
+# 세션 E 시작: psql -X 
+
+E=# SET application_name = 'slowbatch';
+SET
+
+E=# SET transaction_timeout = '3s';
+SET
+
+E=# BEGIN;
+BEGIN
+
+E=# SELECT pg_sleep(1);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+
+E=# SELECT pg_sleep(5);
+FATAL:  terminating connection due to transaction timeout
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
+
+E=# SELECT 1;
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'idle-in-transaction timeout|transaction timeout'
+2026-09-26 10:07:35.956 UTC [544] postgres@postgres/forgetful FATAL:  terminating connection due to idle-in-transaction timeout
+2026-09-26 10:07:46.483 UTC [677] postgres@postgres/slowbatch FATAL:  terminating connection due to transaction timeout
+[exit=0]
+
+postgres=# SELECT name, setting, unit FROM pg_settings
+postgres-# WHERE name IN ('idle_in_transaction_session_timeout', 'transaction_timeout', 'statement_timeout', 'idle_session_timeout')
+postgres-# ORDER BY name;
+                name                 | setting | unit 
+-------------------------------------+---------+------
+ idle_in_transaction_session_timeout | 0       | ms
+ idle_session_timeout                | 0       | ms
+ statement_timeout                   | 0       | ms
+ transaction_timeout                 | 0       | ms
+(4 rows)
+
+
