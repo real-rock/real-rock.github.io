@@ -12,12 +12,13 @@ fresh_cluster
 env_info
 
 step "1. 설치 직후의 로그 관련 설정"
-q "SELECT name, setting FROM pg_settings
+q "SELECT name, setting, boot_val, source FROM pg_settings
 WHERE name IN ('logging_collector', 'log_directory', 'log_filename',
+               'log_rotation_age', 'log_rotation_size', 'log_truncate_on_rotation',
                'log_line_prefix', 'log_lock_waits', 'log_autovacuum_min_duration',
                'log_checkpoints', 'log_temp_files', 'log_min_duration_statement',
                'track_io_timing', 'shared_preload_libraries', 'deadlock_timeout')
-ORDER BY name;"
+ORDER BY source, name;"
 pg <<'SH'
 ls -l $PGDATA/log
 SH
