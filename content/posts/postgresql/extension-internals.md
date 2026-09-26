@@ -24,7 +24,7 @@ description: "공유 라이브러리와 fork 같은 OS 배경지식부터 CREATE
 - 왜 어떤 extension은 `shared_preload_libraries`에 넣고 재시작해야 하는가
 - 라이브러리 파일을 바꾸면 이미 떠 있는 프로세스에는 무슨 일이 일어나는가
 
-C extension의 동작은 공유 라이브러리, 심볼, `dlopen`, `fork` 같은 운영체제 개념 위에 서 있습니다. 그래서 이 개념들을 먼저 짧게 정리하고 시작합니다. 설명에는 직접 만든 작은 extension `demo_ext`를 씁니다.
+C extension의 동작은 공유 라이브러리, 심볼, `dlopen`, `fork` 같은 운영체제 개념 위에 서 있습니다. 이 개념들을 먼저 짧게 정리하고 시작합니다. 설명에는 직접 만든 작은 extension `demo_ext`를 씁니다.
 
 > **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16)(18.6 개발 버전). [PostgreSQL 인터널 연재](/series/postgresql-인터널/)와 같은 커밋이고, 소스 링크는 모두 이 커밋에 고정했습니다. 실습은 Rocky Linux 9.3(aarch64) 컨테이너에서 이 소스를 gcc 11.5로 빌드해 실행한 결과입니다.
 
@@ -46,7 +46,7 @@ C extension의 동작은 공유 라이브러리, 심볼, `dlopen`, `fork` 같은
 
 C 소스를 컴파일하면 기계어와 함께 **심볼 표**가 나옵니다. 심볼은 함수나 전역 변수의 이름입니다. 파일 안에 정의가 있는 심볼(defined)이 있고, 이름만 쓰고 정의는 다른 곳에서 찾아야 하는 심볼(undefined)이 있습니다.
 
-**공유 라이브러리**(Linux에서는 `.so`, shared object)는 실행 파일처럼 ELF 형식이지만 혼자 실행되지 않고 다른 프로세스에 끼워 넣어 쓰는 파일입니다. 어느 주소에 올라가도 동작하도록 위치 독립 코드(`-fPIC`)로 컴파일하고 `-shared`로 링크합니다. 이 파일을 실행 중에 프로세스로 불러오는 함수가 `dlopen()`, 불러온 라이브러리에서 이름으로 심볼 주소를 찾는 함수가 `dlsym()`입니다. `dlopen()`이 라이브러리를 올릴 때 **동적 링커**가 그 라이브러리의 undefined 심볼을 이미 프로세스에 있는 심볼과 연결합니다.
+**공유 라이브러리**(Linux에서는 `.so`, shared object)는 실행 파일처럼 ELF 형식이지만 혼자 실행되지 않고 다른 프로세스에 끼워 넣어 쓰는 파일입니다. 어느 주소에 올라가도 동작하도록 위치 독립 코드(`-fPIC`)로 컴파일하고 `-shared`로 링크합니다. 이 파일을 실행 중에 프로세스로 불러오는 함수가 `dlopen()`, 불러온 라이브러리에서 이름으로 심볼 주소를 찾는 함수가 `dlsym()`입니다. `dlopen()`이 라이브러리를 올릴 때 **동적 링커**가 라이브러리의 undefined 심볼을 이미 프로세스에 있는 심볼과 연결합니다.
 
 `demo_ext`를 PGXS(extension 빌드용 Makefile 틀, [뒤에서](#extension을-이루는-파일들) 설명)로 빌드할 때 나온 명령에서 이 옵션들을 볼 수 있습니다(경고 옵션은 줄였습니다).
 
@@ -113,7 +113,7 @@ $ ldd demo_ext.so
 
 ### 서버 실행 파일이 심볼을 내보낸다
 
-답은 **`postgres` 실행 파일 자신**입니다. 보통 실행 파일은 자기 함수 이름을 동적 심볼 표에 올리지 않지만, PostgreSQL은 서버를 링크할 때 `-Wl,--export-dynamic`을 붙여 모든 전역 심볼을 동적 심볼 표에 올립니다([`configure.ac`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/configure.ac#L2453)). 그래서 `postgres` 프로세스 안으로 올라온 `.so`는 서버 내부 함수를 제 것처럼 부를 수 있습니다.
+답은 **`postgres` 실행 파일 자신**입니다. 보통 실행 파일은 자기 함수 이름을 동적 심볼 표에 올리지 않지만 PostgreSQL은 서버를 링크할 때 `-Wl,--export-dynamic`을 붙여 모든 전역 심볼을 동적 심볼 표에 올립니다([`configure.ac`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/configure.ac#L2453)). 그래서 `postgres` 프로세스 안으로 올라온 `.so`는 서버 내부 함수를 제 것처럼 부를 수 있습니다.
 
 #### postgres 실행 파일의 동적 심볼
 
@@ -170,7 +170,7 @@ dlopen failed: /usr/local/pgsql/lib/pg_stat_statements.so: undefined symbol: pos
 
 ### dlopen은 파일을 메모리에 매핑한다
 
-`dlopen()`은 파일을 `read()`로 통째로 읽어 들이지 않습니다. **`mmap()`으로 파일을 프로세스 주소 공간에 매핑**합니다. 매핑된 영역은 `/proc/<pid>/maps`에 한 줄씩 나타나며, 공유 라이브러리 하나는 보통 권한이 다른 네 영역으로 보입니다.
+`dlopen()`은 파일을 `read()`로 통째로 읽어 들이지 않습니다. **`mmap()`으로 파일을 프로세스 주소 공간에 매핑**합니다. 매핑된 영역은 `/proc/<pid>/maps`에 한 줄씩 나타나며 공유 라이브러리 하나는 보통 권한이 다른 네 영역으로 보입니다.
 
 | 권한 | 내용 |
 |---|---|
@@ -179,13 +179,13 @@ dlopen failed: /usr/local/pgsql/lib/pg_stat_statements.so: undefined symbol: pos
 | `r--p` | 동적 링커가 주소를 채운 뒤 읽기 전용으로 바꾼 영역(RELRO) |
 | `rw-p` | 전역 변수와 `static` 변수 |
 
-끝의 `p`는 private, 즉 **copy-on-write 매핑**입니다. 여러 프로세스가 같은 `.so`를 매핑하면 처음에는 같은 물리 페이지를 공유하지만, 한 프로세스가 `rw-p` 영역에 쓰는 순간 그 페이지만 그 프로세스 전용으로 복사됩니다. 그래서 `.so` 안의 `static` 변수는 **프로세스마다 따로** 있습니다. 실제 매핑 모습은 [CREATE EXTENSION 절](#backend-주소-공간에-생긴-매핑)에서 봅니다.
+끝의 `p`는 private, 즉 **copy-on-write 매핑**입니다. 여러 프로세스가 같은 `.so`를 매핑하면 처음에는 같은 물리 페이지를 공유하지만 한 프로세스가 `rw-p` 영역에 쓰는 순간 그 페이지만 해당 프로세스 전용으로 복사됩니다. 그래서 `.so` 안의 `static` 변수는 **프로세스마다 따로** 있습니다. 실제 매핑 모습은 [CREATE EXTENSION 절](#backend-주소-공간에-생긴-매핑)에서 봅니다.
 
 ### fork와 프로세스별 메모리
 
-[1편](/posts/postgresql/01-process-architecture/)에서 봤듯이 PostgreSQL은 접속마다 postmaster가 `fork()`로 backend를 만듭니다. `fork()`는 부모의 주소 공간을 그대로 복제하므로(copy-on-write), **부모가 이미 매핑해 둔 라이브러리와 그 라이브러리의 전역 변수 값**이 자식에게 그대로 넘어갑니다. 반대로 `fork()` 뒤에 자식이 따로 `dlopen()`한 라이브러리는 그 자식에게만 있습니다.
+[1편](/posts/postgresql/01-process-architecture/)에서 봤듯이 PostgreSQL은 접속마다 postmaster가 `fork()`로 backend를 만듭니다. `fork()`는 부모의 주소 공간을 그대로 복제하므로(copy-on-write) **부모가 이미 매핑해 둔 라이브러리와 거기 담긴 전역 변수 값**이 자식에게 그대로 넘어갑니다. 반대로 `fork()` 뒤에 자식이 따로 `dlopen()`한 라이브러리는 그 자식에게만 있습니다.
 
-프로세스끼리 값을 함께 보려면 **공유 메모리**([2편](/posts/postgresql/02-memory-architecture/))가 필요합니다. PostgreSQL의 공유 메모리는 postmaster가 시작할 때 크기를 정해 한 번 만들고, 이후 모든 자식이 물려받습니다. 크기를 나중에 늘릴 수 없으므로, 공유 메모리를 쓰려는 extension은 postmaster가 공유 메모리를 만들기 전에 올라와 있어야 합니다. 이것이 [`shared_preload_libraries`](#shared_preload_libraries-postmaster가-먼저-올리는-경우)가 필요한 이유입니다.
+프로세스끼리 값을 함께 보려면 **공유 메모리**([2편](/posts/postgresql/02-memory-architecture/))가 필요합니다. PostgreSQL의 공유 메모리는 postmaster가 시작할 때 크기를 정해 한 번 만들고, 이후 모든 자식이 물려받습니다. 크기를 나중에 늘릴 수 없으니 공유 메모리를 쓰려는 extension은 postmaster가 공유 메모리를 만들기 전에 올라와 있어야 하고, 그러려면 [`shared_preload_libraries`](#shared_preload_libraries-postmaster가-먼저-올리는-경우)가 필요합니다.
 
 > **용어 정리**
 > - **심볼(symbol)**: 함수나 전역 변수의 이름과 주소. 공유 라이브러리를 올릴 때 이름으로 서로 연결됩니다.
@@ -339,16 +339,16 @@ demo_add(PG_FUNCTION_ARGS)
 
 1. **control 파일 찾기와 읽기**: `extension_control_path`에 적힌 디렉터리에서 `이름.control`을 찾습니다. 기본값 `$system`은 `share/extension/`입니다([`get_extension_control_directories()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L473)). 없으면 `extension "..." is not available` 오류입니다. 버전별 보조 control 파일(`이름--버전.control`)이 있으면 그것도 읽습니다.
 2. **설치 경로 정하기**: 설치할 버전(지정이 없으면 `default_version`)의 스크립트가 있으면 그것을 쓰고, 없으면 있는 설치 스크립트에서 업데이트 스크립트를 이어 붙여 목표 버전까지 가는 가장 짧은 경로를 찾습니다([`find_install_path()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1729)).
-3. **`pg_extension`에 행 넣기**: 스크립트를 실행하기 **전에** 먼저 extension 자신을 등록합니다([`InsertExtensionTuple()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1986)). 스크립트가 만드는 객체가 가리킬 대상이 있어야 하기 때문입니다.
+3. **`pg_extension`에 행 넣기**: 스크립트를 실행하기 전에 먼저 extension 자신을 등록합니다([`InsertExtensionTuple()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1986)). 스크립트가 만드는 객체가 가리킬 대상이 있어야 하기 때문입니다.
 4. **스크립트 읽고 바꾸기**: 스크립트를 읽어 `\echo` 줄을 지우고, `@extschema@`를 설치 스키마로, `MODULE_PATHNAME`을 control 파일의 `module_pathname`으로 바꿉니다([`execute_extension_script()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1196), 치환은 [L1373-L1434](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1373-L1434)). 실행하는 동안만 `search_path`를 설치 스키마로, `client_min_messages`를 `warning`으로, `check_function_bodies`를 `off`로 바꿔 둡니다.
-5. **스크립트 실행**: `creating_extension = true`, `CurrentExtensionObject = <extension OID>`로 표시해 두고([L1319](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1319)) 스크립트의 SQL 문을 하나씩 실행합니다([`execute_sql_string()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1046)). 객체를 만드는 코드는 이 표시를 보고 새 객체에서 extension으로 가는 `pg_depend` 행(`deptype = 'e'`)을 추가합니다([`recordDependencyOnCurrentExtension()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/catalog/pg_depend.c#L206)). 이것이 "extension의 멤버"라는 말의 실체입니다.
-6. **C 함수 검증**: `LANGUAGE C` 함수를 만들면 C 언어의 검증 함수 [`fmgr_c_validator()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/catalog/pg_proc.c#L795)가 불립니다. 이 함수는 **라이브러리를 실제로 올려서** 심볼이 있는지 확인합니다. 4번에서 `check_function_bodies`를 꺼 뒀지만 C 함수 검증은 이 설정을 무시합니다([pg_proc.c L808](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/catalog/pg_proc.c#L808-L811)). 그래서 `CREATE EXTENSION`을 실행한 backend에는 `.so`가 올라오고 `_PG_init()`이 실행됩니다.
+5. **스크립트 실행**: `creating_extension = true`, `CurrentExtensionObject = <extension OID>`로 표시해 두고([L1319](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1319)) 스크립트의 SQL 문을 하나씩 실행합니다([`execute_sql_string()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1046)). 객체를 만드는 코드는 이 표시를 보고 새 객체에서 extension으로 가는 `pg_depend` 행(`deptype = 'e'`)을 추가합니다([`recordDependencyOnCurrentExtension()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/catalog/pg_depend.c#L206)). "extension의 멤버"라는 말의 실체가 이 행입니다.
+6. **C 함수 검증**: `LANGUAGE C` 함수를 만들면 C 언어의 검증 함수 [`fmgr_c_validator()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/catalog/pg_proc.c#L795)가 불립니다. 이 함수는 라이브러리를 실제로 올려서 심볼이 있는지 확인합니다. 4번에서 `check_function_bodies`를 꺼 뒀지만 C 함수 검증은 이 설정을 무시합니다([pg_proc.c L808](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/catalog/pg_proc.c#L808-L811)). 이 검증을 거치면서 `CREATE EXTENSION`을 실행한 backend에는 `.so`가 올라오고 `_PG_init()`이 실행됩니다.
 
-이 모든 일이 **한 트랜잭션** 안에서 일어납니다. 스크립트 중간에 오류가 나면 `pg_extension` 행과 만들던 객체가 모두 롤백됩니다. 다만 6번에서 프로세스에 올라온 `.so`는 롤백되지 않습니다. 라이브러리를 내리는 기능은 없습니다([`dfmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L183-L186)).
+이 모든 일이 한 트랜잭션 안에서 일어납니다. 스크립트 중간에 오류가 나면 `pg_extension` 행과 만들던 객체가 모두 롤백됩니다. 다만 6번에서 프로세스에 올라온 `.so`는 롤백되지 않습니다. 라이브러리를 내리는 기능은 없습니다([`dfmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L183-L186)).
 
 #### strace로 보는 CREATE EXTENSION
 
-접속 A를 열고, 그 backend에 `strace`를 붙인 상태에서 `CREATE EXTENSION`을 실행했습니다. 먼저 실행 전의 상태입니다. `/proc/self/maps`는 backend 자신의 매핑 목록이라, `pg_read_file()`로 읽으면 SQL에서 바로 볼 수 있습니다.
+접속 A를 열고 그 backend에 `strace`를 붙인 상태에서 `CREATE EXTENSION`을 실행했습니다. 먼저 실행 전의 상태입니다. `/proc/self/maps`는 backend 자신의 매핑 목록이라 `pg_read_file()`로 읽으면 SQL에서 바로 볼 수 있습니다.
 
 ```psql
 A=# SELECT pg_backend_pid();
@@ -376,7 +376,7 @@ A=# SELECT * FROM pg_get_loaded_modules();
 (0 rows)
 ```
 
-`pg_available_extensions`는 control 파일만 읽어서 보여 주는 뷰입니다(이 빌드는 OpenSSL 없이 만들어 `pgcrypto`가 없습니다). `demo_ext`가 보이지만 `installed_version`은 비어 있고, backend에는 아직 `.so`가 매핑되어 있지 않습니다. `pg_get_loaded_modules()`는 PG18에서 새로 생긴 함수로, 이 프로세스에 올라온 라이브러리 목록을 보여 줍니다([`extension.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L2975)).
+`pg_available_extensions`는 control 파일만 읽어서 보여 주는 뷰입니다(이 빌드는 OpenSSL 없이 만들어 `pgcrypto`가 없습니다). `demo_ext`가 보이지만 `installed_version`은 비어 있고 backend에는 아직 `.so`가 매핑되어 있지 않습니다. `pg_get_loaded_modules()`는 PG18에서 새로 생긴 함수로, 이 프로세스에 올라온 라이브러리 목록을 보여 줍니다([`extension.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L2975)).
 
 ```console
 # strace -p 10024 -f -tt -e trace=openat,read,mmap,mprotect,close -o /tmp/create_ext.strace
@@ -441,10 +441,10 @@ postgres=# SELECT pg_relation_filenode(c.oid) AS filenode, c.relname FROM pg_cla
 strace의 순서가 위 목록과 그대로 맞습니다.
 
 1. `demo_ext.control`을 열어 읽습니다(152바이트). 보조 control 파일 `demo_ext--1.0.control`은 없어서 `ENOENT`입니다.
-2. `pg_extension`(3079)과 `pg_depend`(2608)를 엽니다. 스크립트보다 먼저 extension 행을 넣기 때문입니다.
+2. 스크립트보다 먼저 extension 행을 넣으므로 `pg_extension`(3079)과 `pg_depend`(2608)를 엽니다.
 3. `demo_ext--1.0.sql`을 읽습니다(624바이트).
 4. 첫 `CREATE FUNCTION`이 `pg_proc`(1255)에 행을 넣은 직후 `demo_ext.so`를 엽니다. ELF 헤더 832바이트를 읽고, 파일을 `mmap()`하고, 가운데 틈을 `PROT_NONE`으로, 데이터 영역을 `PROT_READ|PROT_WRITE`로 다시 매핑합니다. 마지막 `mprotect(..., PROT_READ)`는 동적 링커가 심볼 주소를 채운 영역을 읽기 전용으로 바꾸는 것(RELRO)입니다.
-5. `.so`를 여는 것은 **한 번뿐**입니다. 나머지 `CREATE FUNCTION` 세 개는 이미 올라온 라이브러리를 그대로 씁니다.
+5. `.so`를 여는 것은 한 번뿐입니다. 나머지 `CREATE FUNCTION` 세 개는 이미 올라온 라이브러리를 그대로 씁니다.
 6. `16389`, `16393` 같은 새 파일은 스크립트의 `CREATE TABLE demo_note`가 만든 테이블과 인덱스입니다. 마지막에 커밋하며 WAL에 씁니다.
 
 #### 서버 로그의 _PG_init
@@ -521,11 +521,11 @@ A=# SELECT classid::regclass, pg_describe_object(classid, objid, objsubid) AS me
 
 ## C 함수가 호출되기까지
 
-SQL에서 `demo_add(1, 2)`를 부르면 함수 관리자(fmgr)가 `pg_proc` 행을 보고 실제 C 함수 주소를 찾습니다. 언어가 `c`이면 [`fmgr_info_C_lang()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/fmgr.c#L349)이 불리고, 다음 순서로 동적 로더(dfmgr)를 거칩니다.
+SQL에서 `demo_add(1, 2)`를 부르면 함수 관리자(fmgr)가 `pg_proc` 행을 보고 실제 C 함수 주소를 찾습니다. 언어가 `c`이면 [`fmgr_info_C_lang()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/fmgr.c#L349)이 불리고 다음 순서로 동적 로더(dfmgr)를 거칩니다.
 
 1. **이 backend에서 찾아 둔 적이 있는가**: 한 번 찾은 함수 주소는 backend의 해시 테이블에 캐시합니다. 두 번째 호출부터는 아래 과정을 건너뜁니다.
 2. **파일 이름 풀기** ([`expand_dynamic_library_name()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L466)): `probin`에 `/`가 있으면 `$libdir`을 실제 경로로 바꾸고, 없으면 `dynamic_library_path`에 적힌 디렉터리에서 찾습니다. 파일이 없으면 끝에 `.so`를 붙여 다시 찾습니다. `'$libdir/demo_ext'`는 `/usr/local/pgsql/lib/demo_ext.so`가 됩니다.
-3. **이미 올린 파일인가** ([`internal_load_library()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L189)): backend마다 올린 라이브러리 목록이 있습니다. 먼저 **경로 문자열**로 찾고, 없으면 `stat()`으로 inode를 얻어 같은 파일을 다른 경로로 올린 적이 있는지 봅니다. 찾으면 그 핸들을 그대로 씁니다.
+3. **이미 올린 파일인가** ([`internal_load_library()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L189)): backend마다 올린 라이브러리 목록이 있습니다. 먼저 **경로 문자열**로 찾고, 없으면 `stat()`으로 inode를 얻어 같은 파일을 다른 경로로 올린 적이 있는지 봅니다. 찾으면 해당 핸들을 그대로 씁니다.
 4. **`dlopen(RTLD_NOW | RTLD_GLOBAL)`** ([L244](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L244)): 처음 보는 파일이면 올립니다. undefined 심볼은 [`postgres` 실행 파일이 내보낸 심볼](#서버-실행-파일이-심볼을-내보낸다)과 이때 연결됩니다.
 5. **magic block 검사** ([L257-L291](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L257-L291)): `dlsym("Pg_magic_func")`로 magic block을 꺼내 서버와 비교합니다. 없거나 다르면 `dlclose()`하고 오류를 냅니다.
 6. **`_PG_init()` 호출** ([L297](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L297)): 라이브러리에 `_PG_init`이 있으면 부릅니다. 파일 하나당 프로세스마다 딱 한 번입니다.
@@ -581,7 +581,7 @@ ERROR:  could not access file "demo_extx": No such file or directory
 | `could not find function` | 7. `dlsym(prosrc)`가 없음 |
 | `could not access file` | 3. 파일 이름을 풀지 못해 원래 문자열 그대로 `stat()`했다가 실패 |
 
-모두 `CREATE FUNCTION` 단계에서 났습니다. C 함수 검증기가 만들 때 라이브러리를 올려 보기 때문입니다.
+C 함수 검증기가 함수를 만들 때 라이브러리를 올려 보므로 오류는 모두 `CREATE FUNCTION` 단계에서 났습니다.
 
 #### 다른 backend는 처음 부를 때 올린다
 
@@ -627,15 +627,15 @@ $ grep -A1 "_PG_init" /home/postgres/server.log
 2026-09-25 22:25:55.866 UTC [10173] STATEMENT:  SELECT demo_add(1, 2);
 ```
 
-extension은 DB에 이미 설치되어 있지만, B에는 `demo_add()`를 처음 부를 때까지 `.so`가 없었습니다. 처음 부르는 순간 B가 직접 `dlopen()`했고, `_PG_init()`도 B에서 따로 한 번 실행되었습니다. **extension 설치는 DB 단위이고, 라이브러리 로드는 프로세스 단위**입니다.
+extension은 DB에 이미 설치되어 있지만 B에는 `demo_add()`를 처음 부를 때까지 `.so`가 없었습니다. 처음 부르는 순간 B가 직접 `dlopen()`했고, `_PG_init()`도 B에서 따로 한 번 실행되었습니다. **extension 설치는 DB 단위이고, 라이브러리 로드는 프로세스 단위**입니다.
 
 `LOAD` 명령으로 함수를 부르지 않고 미리 올릴 수도 있습니다([`load_file()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L149)). 이때도 `_PG_init()`은 그 backend에서 실행됩니다([다음 절](#_pg_init과-hook)의 실습).
 
 ## _PG_init과 hook
 
-`.so`가 올라오기만 해서는 SQL로 부를 수 있는 함수가 늘어날 뿐입니다. pg_stat_statements나 auto_explain처럼 **모든 쿼리에 끼어드는** extension은 `_PG_init()`에서 **hook**을 겁니다.
+`.so`가 올라오기만 해서는 SQL로 부를 수 있는 함수가 늘어날 뿐입니다. pg_stat_statements나 auto_explain처럼 모든 쿼리에 끼어드는 extension은 `_PG_init()`에서 **hook**을 겁니다.
 
-hook은 서버 곳곳에 있는 **함수 포인터 전역 변수**입니다. 서버는 어떤 지점에 이르면 그 변수가 NULL이 아닌지 보고, 값이 있으면 그 함수를 대신 부릅니다. 예를 들어 실행기의 마지막 단계는 이렇게 생겼습니다([`execMain.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/executor/execMain.c#L466-L472)).
+hook은 서버 곳곳에 있는 **함수 포인터 전역 변수**입니다. 서버는 어떤 지점에 이르면 이 변수가 NULL이 아닌지 보고 값이 있으면 변수에 담긴 함수를 대신 부릅니다. 예를 들어 실행기의 마지막 단계는 이렇게 생겼습니다([`execMain.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/executor/execMain.c#L466-L472)).
 
 ```c
 void
@@ -648,9 +648,9 @@ ExecutorEnd(QueryDesc *queryDesc)
 }
 ```
 
-[앞에서](#postgres-실행-파일의-동적-심볼) `nm`으로 본 `B ExecutorEnd_hook`이 바로 이 변수입니다. `demo_ext`의 `_PG_init()`은 원래 값을 `prev_ExecutorEnd`에 저장하고 자기 함수 주소를 써넣습니다. 자기 일을 마친 뒤에는 저장해 둔 이전 hook을, 없으면 원래 함수 `standard_ExecutorEnd()`를 부릅니다. 여러 extension이 같은 hook을 걸면 이렇게 **사슬**이 됩니다. `_PG_init()`이 나중에 실행된 extension이 사슬의 맨 앞에 섭니다. pg_stat_statements도 같은 방식입니다([`pg_stat_statements.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/contrib/pg_stat_statements/pg_stat_statements.c#L484-L485)). PG18 헤더에는 이런 hook 타입이 31개 정의되어 있습니다(`src/include`에서 `typedef ..._hook_type`을 센 값).
+[앞에서](#postgres-실행-파일의-동적-심볼) `nm`으로 본 `B ExecutorEnd_hook`이 바로 이 변수입니다. `demo_ext`의 `_PG_init()`은 원래 값을 `prev_ExecutorEnd`에 저장하고 자기 함수 주소를 써넣습니다. 자기 일을 마친 뒤에는 저장해 둔 이전 hook을, 없으면 원래 함수 `standard_ExecutorEnd()`를 부릅니다. 여러 extension이 같은 hook을 걸면 이렇게 사슬이 됩니다. `_PG_init()`이 나중에 실행된 extension이 사슬의 맨 앞에 섭니다. pg_stat_statements도 같은 방식입니다([`pg_stat_statements.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/contrib/pg_stat_statements/pg_stat_statements.c#L484-L485)). PG18 헤더에는 이런 hook 타입이 31개 정의되어 있습니다(`src/include`에서 `typedef ..._hook_type`을 센 값).
 
-hook 변수도, `.so`의 `static` 변수도 결국 **프로세스의 전역 변수**입니다. 그래서 hook은 `_PG_init()`이 실행된 프로세스에만 걸립니다.
+hook 변수도, `.so`의 `static` 변수도 결국 **프로세스의 전역 변수**라서 hook은 `_PG_init()`이 실행된 프로세스에만 걸립니다.
 
 `_PG_init()`에서는 extension 전용 설정(custom GUC)도 등록합니다. `DefineCustomBoolVariable("demo_ext.trace", ...)`는 `demo_ext.trace`라는 설정을 만들고, `MarkGUCPrefixReserved("demo_ext")`는 `demo_ext.`로 시작하는 다른 이름을 쓰지 못하게 막습니다.
 
@@ -695,11 +695,11 @@ C=# SELECT * FROM pg_get_loaded_modules();
 (1 row)
 ```
 
-라이브러리가 올라오기 전에는 서버가 `demo_ext.tarce`가 맞는 이름인지 알 방법이 없어서, 점이 들어간 이름은 일단 **임시 설정(placeholder)** 으로 받아 둡니다. `LOAD`로 `_PG_init()`이 실행되고 나서야 오타를 알아채고 경고와 함께 지웁니다. `postgresql.conf`에 extension 설정을 적어 둘 때 오타가 조용히 무시될 수 있는 이유가 이것입니다.
+라이브러리가 올라오기 전에는 서버가 `demo_ext.tarce`가 맞는 이름인지 알 방법이 없어서 점이 들어간 이름은 일단 **임시 설정(placeholder)** 으로 받아 둡니다. `LOAD`로 `_PG_init()`이 실행되고 나서야 오타를 알아채고 경고와 함께 지웁니다. `postgresql.conf`에 extension 설정을 적어 둘 때도 오타가 이렇게 조용히 무시될 수 있습니다.
 
 #### 프로세스마다 따로 있는 static 변수
 
-`local_queries`는 `.so` 안의 `static` 변수이고, 쿼리가 끝날 때마다 1씩 늘어납니다. A와 B에서 값을 읽어 봤습니다.
+`local_queries`는 `.so` 안의 `static` 변수이고 쿼리가 끝날 때마다 1씩 늘어납니다. A와 B에서 값을 읽어 봤습니다.
 
 ```psql
 B=# SELECT demo_local_count();
@@ -723,20 +723,20 @@ A=# SELECT demo_local_count();
 (1 row)
 ```
 
-같은 `.so`, 같은 변수인데 A는 6, B는 3입니다. [private 매핑](#dlopen은-파일을-메모리에-매핑한다)이라 변수 영역은 프로세스마다 따로 있기 때문입니다(값은 라이브러리를 올린 뒤 끝난 쿼리 수입니다. 지금 실행 중인 쿼리는 아직 세지 않았습니다). 모든 backend가 함께 보는 값을 두려면 공유 메모리가 필요한데, `demo_shared_count()`는 공유 메모리가 없다며 오류를 냅니다.
+같은 `.so`, 같은 변수인데 A는 6, B는 3입니다. [private 매핑](#dlopen은-파일을-메모리에-매핑한다)이라 변수 영역이 프로세스마다 따로 있습니다(값은 라이브러리를 올린 뒤 끝난 쿼리 수입니다. 지금 실행 중인 쿼리는 아직 세지 않았습니다). 모든 backend가 함께 보는 값을 두려면 공유 메모리가 필요한데, `demo_shared_count()`는 공유 메모리가 없다며 오류를 냅니다.
 
 ## shared_preload_libraries: postmaster가 먼저 올리는 경우
 
 {{< diagram src="/diagrams/pg-extension-loading.html" title="공유 라이브러리가 프로세스에 올라오는 두 경로" height="640" caption="shared_preload_libraries에 넣으면 postmaster가 시작할 때 한 번 올리고 자식이 fork로 물려받습니다. 넣지 않으면 backend마다 처음 쓸 때 따로 올립니다." >}}
 
-`shared_preload_libraries`에 적은 라이브러리는 **postmaster가 시작할 때** 올립니다. 순서가 중요합니다([`PostmasterMain()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L932)).
+`shared_preload_libraries`에 적은 라이브러리는 postmaster가 시작할 때 올립니다. 순서가 중요합니다([`PostmasterMain()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L932)).
 
 1. [`process_shared_preload_libraries()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/init/miscinit.c#L1903): 라이브러리를 올리고 `_PG_init()`을 부릅니다. 이 동안만 `process_shared_preload_libraries_in_progress`가 `true`입니다.
 2. [`process_shmem_requests()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L961): `_PG_init()`이 걸어 둔 `shmem_request_hook`을 불러 필요한 공유 메모리 크기를 모읍니다(`RequestAddinShmemSpace()`).
 3. [`CreateSharedMemoryAndSemaphores()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L1003): 모은 크기로 공유 메모리를 만들고, `shmem_startup_hook`에서 extension이 자기 영역을 초기화합니다(`ShmemInitStruct()`).
 4. 그 뒤로 만드는 모든 자식 프로세스는 `fork()`로 라이브러리 매핑, hook 포인터, 공유 메모리를 물려받습니다.
 
-공유 메모리가 필요한 extension이 반드시 여기 들어가야 하는 이유가 2번과 3번입니다. 공유 메모리는 이때 한 번 만들어지고 나중에 늘릴 수 없습니다. pg_stat_statements의 `_PG_init()`은 preload 중이 아니면 아무것도 하지 않고 바로 돌아가고([`pg_stat_statements.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/contrib/pg_stat_statements/pg_stat_statements.c#L380-L396)), 함수가 불리면 오류를 냅니다.
+공유 메모리는 2번과 3번을 거쳐 한 번 만들어지고 나중에 늘릴 수 없으니, 공유 메모리가 필요한 extension은 반드시 여기 들어가야 합니다. pg_stat_statements의 `_PG_init()`은 preload 중이 아니면 아무것도 하지 않고 바로 돌아가고([`pg_stat_statements.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/contrib/pg_stat_statements/pg_stat_statements.c#L380-L396)), 함수가 불리면 오류를 냅니다.
 
 #### CREATE EXTENSION은 되는데 조회가 안 되는 이유
 
@@ -774,7 +774,7 @@ $ postgres -D $PGDATA -C shared_preload_libraries
 "demo_ext, pg_stat_statements"
 ```
 
-`shared_preload_libraries`는 목록형 설정입니다. `ALTER SYSTEM`에 작은따옴표 하나로 묶어 넘기면 쉼표까지 포함한 문자열 **하나**가 원소 하나가 되어, 큰따옴표로 감싸져 저장됩니다. postmaster는 `demo_ext, pg_stat_statements`라는 이름의 파일을 찾다가 실패했습니다([`load_libraries()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/init/miscinit.c#L1851)). preload 실패는 곧 **서버 시작 실패**이고, 서버가 안 떠 있으니 `ALTER SYSTEM`으로 되돌릴 수도 없습니다. `postgresql.auto.conf`에서 그 줄을 직접 지우고 서버를 띄운 뒤, 따옴표 없이 다시 설정했습니다.
+`shared_preload_libraries`는 목록형 설정입니다. `ALTER SYSTEM`에 작은따옴표 하나로 묶어 넘기면 쉼표까지 포함한 문자열 하나가 원소 하나가 되어 큰따옴표로 감싸져 저장됩니다. postmaster는 `demo_ext, pg_stat_statements`라는 이름의 파일을 찾다가 실패했습니다([`load_libraries()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/init/miscinit.c#L1851)). preload 실패는 곧 **서버 시작 실패**이고, 서버가 안 떠 있으니 `ALTER SYSTEM`으로 되돌릴 수도 없습니다. `postgresql.auto.conf`에서 그 줄을 직접 지우고 서버를 띄운 뒤 따옴표 없이 다시 설정했습니다.
 
 ```psql
 postgres=# ALTER SYSTEM SET shared_preload_libraries = demo_ext, pg_stat_statements;
@@ -839,7 +839,7 @@ $ grep -c "_PG_init" /home/postgres/server.log
 4
 ```
 
-postmaster가 `clone()`(glibc의 `fork()`)으로 backend 10364를 만들었고, `execve()`는 없습니다. 새 backend는 `demo_ext.so`를 한 번도 열지 않았고, 서버 로그의 `_PG_init` 줄 수도 그대로입니다. 라이브러리가 이미 부모의 주소 공간에 있었기 때문입니다.
+postmaster가 `clone()`(glibc의 `fork()`)으로 backend 10364를 만들었고, `execve()`는 없습니다. 라이브러리가 이미 부모의 주소 공간에 있었으니 새 backend는 `demo_ext.so`를 한 번도 열지 않았고, 서버 로그의 `_PG_init` 줄 수도 그대로입니다.
 
 주소까지 같은지 pg_stat_statements로 확인해 봤습니다(`shared_preload_libraries = 'demo_ext, pg_stat_statements'` 상태).
 
@@ -985,7 +985,7 @@ LANGUAGE C STRICT IMMUTABLE;
 
 ### 라이브러리 파일을 바꾸면
 
-`shared_preload_libraries = 'demo_ext, pg_stat_statements'`로 서버가 떠 있고, 접속 A가 열려 있는 상태입니다.
+`shared_preload_libraries = 'demo_ext, pg_stat_statements'`로 서버가 떠 있고 접속 A가 열려 있는 상태입니다.
 
 ```psql
 A=# SELECT pg_backend_pid(), demo_build();
@@ -1008,7 +1008,7 @@ A=# SELECT pg_backend_pid(), demo_build();
 0000000000001094 T demo_sub
 ```
 
-inode가 1119984에서 1119983으로 바뀌었습니다. `install` 명령은 기존 파일을 지우고(unlink) 새 파일을 만들기 때문입니다. 다시 A에서 봅니다.
+`install` 명령은 기존 파일을 지우고(unlink) 새 파일을 만들어서 inode가 1119984에서 1119983으로 바뀌었습니다. 다시 A에서 봅니다.
 
 ```psql
 A=# SELECT l FROM regexp_split_to_table(pg_read_file('/proc/self/maps'), E'\n') AS l WHERE l LIKE '%demo_ext.so%';
@@ -1047,9 +1047,9 @@ LANGUAGE C STRICT IMMUTABLE"
 extension script file "demo_ext--1.0--1.1.sql", near line 3
 ```
 
-- A의 매핑은 **옛 inode 1119984**를 가리키고 `(deleted)`가 붙었습니다. 디렉터리에서 이름은 사라졌지만, 매핑이 남아 있는 동안 커널은 파일 내용을 지우지 않습니다. A는 계속 1.0 코드를 실행합니다.
+- A의 매핑은 옛 inode 1119984를 가리키고 `(deleted)`가 붙었습니다. 디렉터리에서 이름은 사라졌지만 매핑이 남아 있는 동안 커널은 파일 내용을 지우지 않습니다. A는 계속 1.0 코드를 실행합니다.
 - control 파일은 이미 새것이라 `pg_available_extensions`는 기본 버전 1.1, 설치 버전 1.0을 보여 주고, 1.0 → 1.1 업데이트 경로도 보입니다.
-- 그런데 `ALTER EXTENSION UPDATE`가 **실패**했습니다. 업데이트 스크립트의 `CREATE FUNCTION demo_sub`를 검증하면서 로더가 `$libdir/demo_ext.so`를 찾았는데, 이 backend의 라이브러리 목록에 **같은 경로 문자열**이 이미 있어서 옛 1.0 핸들을 그대로 돌려줬습니다([L200-L204](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L200-L204)). 1.0 `.so`에는 `demo_sub`가 없습니다. 오류로 트랜잭션이 롤백되어 `extversion`은 1.0 그대로입니다.
+- 그런데 `ALTER EXTENSION UPDATE`가 실패했습니다. 업데이트 스크립트의 `CREATE FUNCTION demo_sub`를 검증하면서 로더가 `$libdir/demo_ext.so`를 찾았는데, 이 backend의 라이브러리 목록에 **같은 경로 문자열**이 이미 있어서 옛 1.0 핸들을 그대로 돌려줬습니다([L200-L204](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/dfmgr.c#L200-L204)). 1.0 `.so`에는 `demo_sub`가 없습니다. 오류로 트랜잭션이 롤백되어 `extversion`은 1.0 그대로입니다.
 
 새 접속 B를 열면 새 `.so`를 쓸까요.
 
@@ -1116,7 +1116,7 @@ postgres=# SELECT demo_sub(10, 3);
 
 재시작 뒤에야 업데이트가 됩니다.
 
-preload하지 않은 라이브러리는 다릅니다. `shared_preload_libraries = pg_stat_statements`로 바꿔 재시작하고, 접속 A가 1.1 `.so`(`hotfix` 표시를 붙여 빌드)를 올린 상태에서 다시 빌드한 `hotfix2`를 `make install`했습니다.
+preload하지 않은 라이브러리는 다릅니다. `shared_preload_libraries = pg_stat_statements`로 바꿔 재시작했습니다. 접속 A가 1.1 `.so`(`hotfix` 표시를 붙여 빌드)를 올린 상태에서 다시 빌드한 `hotfix2`를 `make install`했습니다.
 
 ```psql
 A=# SELECT pg_backend_pid(), demo_build();
@@ -1162,7 +1162,7 @@ B=# SELECT pg_backend_pid(), demo_build();
 
 #### 운영에서는: 라이브러리를 cp로 덮어쓰지 않는다
 
-`install`이나 패키지 관리자(rpm)는 새 파일을 만들어 교체하므로 옛 매핑이 안전하게 남습니다. 같은 inode를 제자리에서 덮어쓰면 어떻게 되는지 보려고, A가 `hotfix2`를 올린 상태에서 다른 빌드를 `cp`로 덮어썼습니다.
+`install`이나 패키지 관리자(rpm)는 새 파일을 만들어 교체하므로 옛 매핑이 안전하게 남습니다. 같은 inode를 제자리에서 덮어쓰면 어떻게 되는지 보려고 A가 `hotfix2`를 올린 상태에서 다른 빌드를 `cp`로 덮어썼습니다.
 
 ```psql
 A=# SELECT pg_backend_pid(), demo_build(), demo_add(1, 2);
@@ -1187,7 +1187,7 @@ A=# SELECT demo_add(1, 2);
 ERROR:  unrecognized function API version: 0
 ```
 
-`cp`는 기존 파일을 비우고 그 자리에 새 내용을 씁니다. inode가 그대로라 A가 매핑한 페이지가 **새 파일의 내용**을 보게 되고, A가 캐시해 둔 주소에는 더 이상 원래 값이 없습니다. 이 실습에서는 `pg_finfo_` 레코드가 있던 자리를 읽어 `0`이 나왔고([`fmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/fmgr.c#L407)), 방금까지 되던 `demo_add()`도 실패했습니다. 어떤 자리를 읽느냐에 따라 엉뚱한 명령을 실행해 프로세스가 죽을 수도 있습니다. 라이브러리 파일은 패키지 관리자나 `install`로 교체합니다.
+`cp`는 기존 파일을 비우고 그 자리에 새 내용을 씁니다. inode가 그대로라 A가 매핑한 페이지가 새 파일의 내용을 보게 되고, A가 캐시해 둔 주소에는 더 이상 원래 값이 없습니다. 이 실습에서는 `pg_finfo_` 레코드가 있던 자리를 읽어 `0`이 나왔고([`fmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/fmgr/fmgr.c#L407)), 방금까지 되던 `demo_add()`도 실패했습니다. 어떤 자리를 읽느냐에 따라 엉뚱한 명령을 실행해 프로세스가 죽을 수도 있습니다. 라이브러리 파일은 패키지 관리자나 `install`로 교체합니다.
 
 #### 운영에서는: 패키지 업그레이드 뒤에 해야 할 일
 
@@ -1195,7 +1195,7 @@ ERROR:  unrecognized function API version: 0
 
 1. 패키지를 올립니다. 이것만으로는 카탈로그도, 떠 있는 프로세스도 바뀌지 않습니다.
 2. preload하는 라이브러리라면 서버를 재시작합니다. 아니라면 적어도 새 접속에서 작업합니다. 커넥션 풀의 오래된 접속은 옛 `.so`를 쥐고 있을 수 있습니다.
-3. 새 버전에 SQL 변경이 있으면 **DB마다** `ALTER EXTENSION ... UPDATE`를 실행합니다. 다음 쿼리로 남은 곳을 찾을 수 있습니다.
+3. 새 버전에 SQL 변경이 있으면 DB마다 `ALTER EXTENSION ... UPDATE`를 실행합니다. 다음 쿼리로 남은 곳을 찾을 수 있습니다.
 
 ```psql
 postgres=# SELECT name, default_version, installed_version FROM pg_available_extensions WHERE installed_version IS DISTINCT FROM default_version AND installed_version IS NOT NULL;
@@ -1223,15 +1223,15 @@ verdb=# SELECT extversion FROM pg_extension WHERE extname = 'demo_ext';
 (1 row)
 ```
 
-그래서 extension 배포판은 모든 버전의 설치 스크립트를 들고 다닐 필요 없이, 기준이 되는 설치 스크립트 하나와 업데이트 스크립트들만 갖고 있으면 됩니다.
+덕분에 extension 배포판은 모든 버전의 설치 스크립트를 들고 다닐 필요 없이, 기준이 되는 설치 스크립트 하나와 업데이트 스크립트만 있으면 됩니다.
 
 ## C extension은 서버 프로세스 안에서 돈다
 
-C 함수는 서버 코드와 같은 프로세스, 같은 주소 공간에서 실행됩니다. 그래서 C 함수의 버그는 서버의 버그와 같습니다.
+C 함수는 서버 코드와 같은 프로세스, 같은 주소 공간에서 실행되니 C 함수의 버그는 서버의 버그와 같습니다.
 
 #### 운영에서는: C extension의 버그는 서버 전체를 재시작시킨다
 
-접속 B가 트랜잭션 안에서 `demo_note`에 행을 넣고 커밋하지 않은 상태에서, 다른 접속이 NULL 포인터에 쓰는 `demo_crash()`를 불렀습니다. 함수는 extension 스크립트 밖에서 같은 `.so`의 심볼로 따로 만들었습니다. 이렇게 `CREATE FUNCTION`만으로도 라이브러리의 어떤 심볼이든 SQL 함수로 만들 수 있습니다.
+접속 B가 트랜잭션 안에서 `demo_note`에 행을 넣고 커밋하지 않았습니다. 그 상태에서 다른 접속이 NULL 포인터에 쓰는 `demo_crash()`를 불렀습니다. 함수는 extension 스크립트 밖에서 같은 `.so`의 심볼로 따로 만들었습니다. 이렇게 `CREATE FUNCTION`만으로도 라이브러리의 어떤 심볼이든 SQL 함수로 만들 수 있습니다.
 
 ```psql
 B=# BEGIN;
@@ -1291,13 +1291,13 @@ postgres=# SELECT count(*) FROM demo_note;
 (1 row)
 ```
 
-backend 하나가 `SIGSEGV`로 죽자, postmaster는 그 프로세스가 공유 메모리를 망가뜨렸을 수 있다고 보고 **아무 잘못 없는 B를 포함한 모든 프로세스를 종료**했습니다([`HandleChildCrash()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L2785)). 그다음 공유 메모리를 다시 만들고 WAL로 crash recovery를 한 뒤 접속을 다시 받았습니다([1편](/posts/postgresql/01-process-architecture/), [8편](/posts/postgresql/08-checkpoint-and-recovery/)). B가 커밋하지 않은 행은 사라졌습니다.
+backend 하나가 `SIGSEGV`로 죽자 postmaster는 그 프로세스가 공유 메모리를 망가뜨렸을 수 있다고 보고 **아무 잘못 없는 B를 포함한 모든 프로세스를 종료**했습니다([`HandleChildCrash()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/postmaster/postmaster.c#L2785)). 그다음 공유 메모리를 다시 만들고 WAL로 crash recovery를 한 뒤 접속을 다시 받았습니다([1편](/posts/postgresql/01-process-architecture/), [8편](/posts/postgresql/08-checkpoint-and-recovery/)). B가 커밋하지 않은 행은 사라졌습니다.
 
 같은 일이 extension 코드 안의 NULL 참조, 해제된 메모리 사용, 스택 넘침으로 생깁니다. 로그에 `terminated by signal 11`이 보이고 `Failed process was running`의 쿼리가 extension 함수를 쓰고 있다면 그 extension을 먼저 의심합니다. 새 C extension은 운영 전에 부하를 걸어 충분히 시험하고, 코어 덤프를 남기도록 설정해 두면 원인을 찾기 쉽습니다.
 
 ## 권한: superuser와 trusted
 
-C 함수를 만든다는 것은 서버 프로세스 안에서 임의의 코드를 실행할 수 있다는 뜻입니다. 그래서 `LANGUAGE C` 함수는 superuser만 만들 수 있고, control 파일의 `superuser`도 기본값이 `true`입니다. PG13부터는 control 파일에 `trusted = true`를 적은 extension을, superuser가 아니어도 DB에 `CREATE` 권한이 있으면 설치할 수 있습니다. 이때 스크립트는 **bootstrap superuser의 권한으로** 실행되고([`execute_extension_script()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1216-L1255)), extension의 소유자만 설치한 사용자가 됩니다.
+C 함수를 만들면 서버 프로세스 안에서 임의의 코드를 실행할 수 있습니다. 그래서 `LANGUAGE C` 함수는 superuser만 만들 수 있고, control 파일의 `superuser`도 기본값이 `true`입니다. PG13부터는 control 파일에 `trusted = true`를 적은 extension을, superuser가 아니어도 DB에 `CREATE` 권한이 있으면 설치할 수 있습니다. 이때 스크립트는 **bootstrap superuser의 권한으로** 실행되고([`execute_extension_script()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/commands/extension.c#L1216-L1255)), extension의 소유자만 설치한 사용자가 됩니다.
 
 #### trusted extension과 일반 사용자
 
@@ -1361,7 +1361,7 @@ appdb=> SELECT 'a=>1, b=>2'::hstore -> 'b' AS b;
 (1 row)
 ```
 
-`trusted`가 아닌 `demo_ext`는 거부되고, `hstore`는 설치됩니다. extension 소유자는 `app`이지만 C 함수 `hstore_in`의 소유자는 bootstrap superuser인 `postgres`입니다. 일반 사용자가 C 함수를 만든 것이 아니라, superuser가 검토해 `trusted`로 표시한 스크립트를 대신 실행해 준 것입니다. 이 빌드에 설치된 extension 43개 중 19개가 `trusted`였습니다.
+`trusted`가 아닌 `demo_ext`는 거부되고 `hstore`는 설치됩니다. extension 소유자는 `app`이지만 C 함수 `hstore_in`의 소유자는 bootstrap superuser인 `postgres`입니다. 일반 사용자가 C 함수를 만든 것이 아니라, superuser가 검토해 `trusted`로 표시한 스크립트를 대신 실행해 준 것입니다. 이 빌드에 설치된 extension 43개 중 19개가 `trusted`였습니다.
 
 ## PG18: extension_control_path
 
@@ -1420,7 +1420,7 @@ postgres=# SELECT probin FROM pg_proc WHERE proname = 'pathdemo_hello';
 (1 row)
 ```
 
-control 파일은 `extension_control_path`로, `.so`는 `dynamic_library_path`로 따로 찾는다는 것이 오류 순서에서 드러납니다. control 경로만 추가했을 때는 스크립트까지는 실행되었고, C 함수 검증에서 `.so`를 찾지 못했습니다. `probin`에 경로 없이 `pathdemo`만 저장되었으므로, 이 함수를 부르는 **모든 세션**이 `dynamic_library_path`를 알아야 합니다. 설정하지 않은 새 접속에서 보면 이렇습니다.
+control 파일은 `extension_control_path`로, `.so`는 `dynamic_library_path`로 따로 찾는다는 것이 오류 순서에서 드러납니다. control 경로만 추가했을 때는 스크립트까지는 실행되었고 C 함수 검증에서 `.so`를 찾지 못했습니다. `probin`에 경로 없이 `pathdemo`만 저장되었으므로 이 함수를 부르는 모든 세션이 `dynamic_library_path`를 알아야 합니다. 설정하지 않은 새 접속에서 보면 이렇습니다.
 
 ```psql
 postgres=# SELECT pathdemo_hello();
@@ -1437,11 +1437,11 @@ postgres=# SELECT name, installed_version FROM pg_available_extensions WHERE nam
 (0 rows)
 ```
 
-카탈로그에는 extension이 설치되어 있다고 나오는데, 이 세션은 control 파일도 `.so`도 찾지 못합니다. 실습에서는 세션에서 `SET`했지만, 실제로 쓸 때는 두 설정을 `postgresql.conf`에 넣어야 합니다.
+카탈로그에는 extension이 설치되어 있다고 나오는데, 이 세션은 control 파일도 `.so`도 찾지 못합니다. 실습에서는 세션에서 `SET`했지만 실제로 쓸 때는 두 설정을 `postgresql.conf`에 넣어야 합니다.
 
 ## pg_dump와 DROP EXTENSION
 
-extension의 멤버 객체는 카탈로그에 있지만, 그 정의의 원본은 디스크의 스크립트 파일입니다. `pg_dump`는 이 점을 이용합니다.
+extension의 멤버 객체는 카탈로그에 있지만 정의의 원본은 디스크의 스크립트 파일입니다. `pg_dump`는 이 점을 이용합니다.
 
 #### pg_dump가 남기는 것
 
@@ -1483,8 +1483,8 @@ GRANT CREATE ON SCHEMA public TO app;
 
 - 멤버 객체는 `pg_depend`의 `'e'` 의존성 때문에 따로 지울 수 없습니다.
 - `pg_dump`는 멤버 객체의 정의를 하나도 내보내지 않고 `CREATE EXTENSION` 한 줄만 남깁니다. 복원하는 서버가 **자기 디스크의 스크립트**로 객체를 다시 만듭니다.
-- 이 줄에는 **버전이 없습니다**. 복원하는 서버의 `default_version`으로 설치됩니다.
-- `pg_extension_config_dump()`로 표시한 `demo_note`는 테이블 정의는 빠지고 **데이터만** `COPY`로 나옵니다.
+- 이 줄에는 버전이 없습니다. 복원하는 서버의 `default_version`으로 설치됩니다.
+- `pg_extension_config_dump()`로 표시한 `demo_note`는 테이블 정의는 빠지고 데이터만 `COPY`로 나옵니다.
 
 #### 운영에서는: 복원할 서버에 extension 파일이 없으면
 
@@ -1533,7 +1533,7 @@ restoredb=# SELECT to_regclass('demo_note');
 - 라이브러리 로드는 **프로세스 단위**입니다. 보통은 backend마다 처음 쓸 때 올리고, `shared_preload_libraries`에 넣으면 postmaster가 한 번 올려 fork로 물려줍니다. 공유 메모리가 필요한 extension은 preload해야 합니다.
 - hook은 서버의 함수 포인터 전역 변수이고, `_PG_init()`에서 이전 값을 저장하고 자기 함수로 바꿔 사슬을 만듭니다.
 - 한 번 올린 라이브러리는 내릴 수 없습니다. 파일을 바꿔도 기존 프로세스는 옛 코드를 쓰고, preload한 라이브러리는 재시작해야 바뀝니다. 그 전에 `ALTER EXTENSION UPDATE`를 하면 옛 `.so`에서 새 심볼을 찾다가 실패할 수 있습니다.
-- C 함수는 서버 프로세스 안에서 돌기 때문에, 그 버그 하나가 모든 접속을 끊고 crash recovery를 일으킵니다.
+- C 함수는 서버 프로세스 안에서 돌기 때문에 버그 하나가 모든 접속을 끊고 crash recovery를 일으킵니다.
 
 ## 참고 자료
 
