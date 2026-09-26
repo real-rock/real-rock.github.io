@@ -548,7 +548,7 @@ SET
 
 ## pg_stat_io: I/O를 누가 어디서 했는가
 
-PostgreSQL 16부터 생긴 `pg_stat_io`는 I/O를 **프로세스 종류(`backend_type`) × 대상(`object`) × 용도(`context`)**로 나눠 셉니다. 18에서는 바이트 수(`read_bytes` 등)와 WAL I/O(`object = wal`)도 들어왔습니다.
+PostgreSQL 16부터 생긴 `pg_stat_io`는 I/O를 프로세스 종류(`backend_type`), 대상(`object`), 용도(`context`)의 **세 축으로** 나눠 셉니다. 18에서는 바이트 수(`read_bytes` 등)와 WAL I/O(`object = wal`)도 들어왔습니다.
 
 ```psql
 postgres=# SELECT backend_type, object, context, reads, pg_size_pretty(read_bytes) AS read,
