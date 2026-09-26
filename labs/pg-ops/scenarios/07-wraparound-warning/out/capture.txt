@@ -1,0 +1,276 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+548d2cdbebc965d0c7316d0cd1ffdee49bb4584132ceeb3b467461969ea8f406
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET max_prepared_transactions = 10;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_autovacuum_min_duration = 0;
+ALTER SYSTEM
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+postgres=# CREATE TABLE orders (id bigserial PRIMARY KEY, amount int);
+CREATE TABLE
+
+postgres=# CREATE TABLE jobs (id int PRIMARY KEY, state text);
+CREATE TABLE
+
+postgres=# INSERT INTO jobs VALUES (1, 'new');
+INSERT 0 1
+
+postgres=# SELECT name, setting FROM pg_settings
+postgres-# WHERE name IN ('autovacuum_freeze_max_age', 'vacuum_freeze_table_age', 'vacuum_failsafe_age')
+postgres-# ORDER BY name;
+           name            |  setting   
+---------------------------+------------
+ autovacuum_freeze_max_age | 200000000
+ vacuum_failsafe_age       | 1600000000
+ vacuum_freeze_table_age   | 150000000
+(3 rows)
+
+
+
+######## 1. 오래 남는 트랜잭션 하나
+
+# 세션 C 시작: psql -X 
+
+C=# BEGIN;
+BEGIN
+
+C=# UPDATE jobs SET state = 'running' WHERE id = 1;
+UPDATE 1
+
+C=# PREPARE TRANSACTION 'batch-77';
+PREPARE TRANSACTION
+
+postgres=# SELECT datname, datfrozenxid, age(datfrozenxid) AS xid_age,
+postgres-#        2147483647 - age(datfrozenxid) AS until_wraparound
+postgres-# FROM pg_database ORDER BY age(datfrozenxid) DESC;
+  datname  | datfrozenxid | xid_age | until_wraparound 
+-----------+--------------+---------+------------------
+ postgres  |          744 |      12 |       2147483635
+ template1 |          744 |      12 |       2147483635
+ template0 |          744 |      12 |       2147483635
+(3 rows)
+
+
+
+######## 2. (실습용) 다음 트랜잭션 ID를 한계 근처로 옮긴다
+
+$ pg_ctl -D $PGDATA -w stop -m fast
+$ pg_resetwal -x $((2045 * 1048576)) $PGDATA
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+waiting for server to shut down.... done
+server stopped
+Write-ahead log reset
+waiting for server to start......... done
+server started
+[exit=0]
+
+
+######## 3. 경고 단계
+
+postgres=# INSERT INTO orders (amount) VALUES (100);
+WARNING:  database "template1" must be vacuumed within 3146471 transactions
+HINT:  To avoid transaction ID assignment failures, execute a database-wide VACUUM in that database.
+You might also need to commit or roll back old prepared transactions, or drop stale replication slots.
+INSERT 0 1
+
+postgres=# SELECT datname, datfrozenxid, age(datfrozenxid) AS xid_age,
+postgres-#        2147483647 - age(datfrozenxid) AS until_wraparound
+postgres-# FROM pg_database ORDER BY age(datfrozenxid) DESC;
+  datname  | datfrozenxid |  xid_age   | until_wraparound 
+-----------+--------------+------------+------------------
+ postgres  |          744 | 2144337177 |          3146470
+ template1 |          744 | 2144337177 |          3146470
+ template0 |          744 | 2144337177 |          3146470
+(3 rows)
+
+
+$ tail -n 3000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'must be vacuumed within' | head -n 1
+2026-09-26 10:29:50.599 UTC [227] WARNING:  database with OID 1 must be vacuumed within 3146471 transactions
+[exit=0]
+
+
+######## 4. 쓰기 거부
+
+$ echo 'SELECT pg_current_xact_id();' > /tmp/xid.sql
+$ pgbench -n -c 4 -t 40000 -f /tmp/xid.sql postgres 2>&1 | grep -v 'must be vacuumed\|To avoid\|You might' | tail -n 4
+latency average = 0.062 ms
+initial connection time = 6.072 ms
+tps = 64132.910544 (without initial connection time)
+pgbench: error: Run was aborted; the above results are incomplete.
+[exit=0]
+
+postgres=# INSERT INTO orders (amount) VALUES (200);
+ERROR:  database is not accepting commands that assign new transaction IDs to avoid wraparound data loss in database "template1"
+HINT:  Execute a database-wide VACUUM in that database.
+You might also need to commit or roll back old prepared transactions, or drop stale replication slots.
+
+postgres=# SELECT count(*) FROM orders;
+ count 
+-------
+     1
+(1 row)
+
+
+postgres=# SELECT datname, datfrozenxid, age(datfrozenxid) AS xid_age,
+postgres-#        2147483647 - age(datfrozenxid) AS until_wraparound
+postgres-# FROM pg_database ORDER BY age(datfrozenxid) DESC;
+  datname  | datfrozenxid |  xid_age   | until_wraparound 
+-----------+--------------+------------+------------------
+ postgres  |          744 | 2144483649 |          2999998
+ template1 |          744 | 2144483649 |          2999998
+ template0 |          744 | 2144483649 |          2999998
+(3 rows)
+
+
+$ tail -n 3000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'not accepting commands' | tail -n 1
+2026-09-26 10:30:03.916 UTC [277] postgres@postgres/psql ERROR:  database is not accepting commands that assign new transaction IDs to avoid wraparound data loss in database "template1"
+[exit=0]
+
+
+######## 5. 원인 찾기
+
+postgres=# SELECT 'session' AS kind, pid::text AS id, age(backend_xid) AS xid_age, age(backend_xmin) AS xmin_age
+postgres-# FROM pg_stat_activity WHERE (backend_xid IS NOT NULL OR backend_xmin IS NOT NULL) AND pid <> pg_backend_pid()
+postgres-# UNION ALL
+postgres-# SELECT 'prepared', gid, age(transaction), NULL FROM pg_prepared_xacts
+postgres-# UNION ALL
+postgres-# SELECT 'slot', slot_name, age(xmin), age(catalog_xmin) FROM pg_replication_slots
+postgres-# ORDER BY 3 DESC NULLS LAST;
+   kind   |    id    |  xid_age   | xmin_age 
+----------+----------+------------+----------
+ prepared | batch-77 | 2144483638 |         
+(1 row)
+
+
+postgres=# SELECT c.oid::regclass AS table_name, age(c.relfrozenxid) AS xid_age
+postgres-# FROM pg_class c WHERE c.relkind IN ('r', 't', 'm')
+postgres-# ORDER BY age(c.relfrozenxid) DESC LIMIT 3;
+       table_name       |  xid_age   
+------------------------+------------
+ pg_statistic           | 2144483649
+ pg_type                | 2144483649
+ pg_toast.pg_toast_1255 | 2144483649
+(3 rows)
+
+
+
+######## 6. 조치
+
+postgres=# ROLLBACK PREPARED 'batch-77';
+ROLLBACK PREPARED
+
+postgres=# VACUUM (VERBOSE) orders;
+INFO:  aggressively vacuuming "postgres.public.orders"
+WARNING:  bypassing nonessential maintenance of table "postgres.public.orders" as a failsafe after 0 index scans
+DETAIL:  The table's relfrozenxid or relminmxid is too far in the past.
+HINT:  Consider increasing configuration parameter "maintenance_work_mem" or "autovacuum_work_mem".
+You might also need to consider other ways for VACUUM to keep up with the allocation of transaction IDs.
+INFO:  finished vacuuming "postgres.public.orders": index scans: 0
+pages: 0 removed, 1 remain, 1 scanned (100.00% of total), 0 eagerly scanned
+tuples: 0 removed, 1 remain, 0 are dead but not yet removable
+removable cutoff: 2144484393, which was 0 XIDs old when operation ended
+new relfrozenxid: 2144337920, which is 2144337168 XIDs ahead of previous value
+frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+visibility map: 1 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+index scan bypassed by failsafe: 0 pages from table (0.00% of total) have 0 dead item identifiers
+avg read rate: 0.000 MB/s, avg write rate: 104.866 MB/s
+buffer usage: 56 hits, 0 reads, 4 dirtied
+WAL usage: 5 records, 4 full page images, 33237 bytes, 0 buffers full
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+VACUUM
+WARNING:  database "postgres" must be vacuumed within 2999998 transactions
+HINT:  To avoid XID assignment failures, execute a database-wide VACUUM in that database.
+You might also need to commit or roll back old prepared transactions, or drop stale replication slots.
+
+$ vacuumdb --all > /tmp/vacuumdb.log 2>&1
+$ grep -E '^vacuumdb:' /tmp/vacuumdb.log
+$ grep -m 1 -A 3 'bypassing nonessential' /tmp/vacuumdb.log
+$ grep -c 'bypassing nonessential' /tmp/vacuumdb.log
+vacuumdb: vacuuming database "postgres"
+vacuumdb: vacuuming database "template1"
+WARNING:  bypassing nonessential maintenance of table "postgres.pg_catalog.pg_proc" as a failsafe after 0 index scans
+DETAIL:  The table's relfrozenxid or relminmxid is too far in the past.
+HINT:  Consider increasing configuration parameter "maintenance_work_mem" or "autovacuum_work_mem".
+You might also need to consider other ways for VACUUM to keep up with the allocation of transaction IDs.
+216
+[exit=0]
+
+postgres=# SELECT datname, datfrozenxid, age(datfrozenxid) AS xid_age,
+postgres-#        2147483647 - age(datfrozenxid) AS until_wraparound
+postgres-# FROM pg_database ORDER BY age(datfrozenxid) DESC;
+  datname  | datfrozenxid |  xid_age   | until_wraparound 
+-----------+--------------+------------+------------------
+ template0 |          744 | 2144483649 |          2999998
+ postgres  |   2144337920 |     146473 |       2147337174
+ template1 |   2144484393 |          0 |       2147483647
+(3 rows)
+
+
+postgres=# INSERT INTO orders (amount) VALUES (250);
+ERROR:  database is not accepting commands that assign new transaction IDs to avoid wraparound data loss in database "template0"
+HINT:  Execute a database-wide VACUUM in that database.
+You might also need to commit or roll back old prepared transactions, or drop stale replication slots.
+
+# template0은 접속을 받지 않으므로 vacuumdb --all이 건너뛴다. autovacuum이 처리할 때까지 기다린다
+
+# 기다린 시간: 26초
+
+$ tail -n 3000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'automatic aggressive vacuum to prevent wraparound of table "template0' | head -n 2
+2026-09-26 10:30:26.142 UTC [387] LOG:  automatic aggressive vacuum to prevent wraparound of table "template0.pg_catalog.pg_statistic": index scans: 0
+2026-09-26 10:30:26.143 UTC [387] LOG:  automatic aggressive vacuum to prevent wraparound of table "template0.pg_catalog.pg_type": index scans: 0
+[exit=0]
+
+postgres=# SELECT datname, datfrozenxid, age(datfrozenxid) AS xid_age,
+postgres-#        2147483647 - age(datfrozenxid) AS until_wraparound
+postgres-# FROM pg_database ORDER BY age(datfrozenxid) DESC;
+  datname  | datfrozenxid | xid_age | until_wraparound 
+-----------+--------------+---------+------------------
+ postgres  |   2144337920 |  146473 |       2147337174
+ template1 |   2144484393 |       0 |       2147483647
+ template0 |   2144484393 |       0 |       2147483647
+(3 rows)
+
+
+postgres=# INSERT INTO orders (amount) VALUES (300);
+INSERT 0 1
+
+postgres=# SELECT count(*) FROM orders;
+ count 
+-------
+     2
+(1 row)
+
+
