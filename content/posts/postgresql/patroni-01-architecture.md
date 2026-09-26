@@ -14,7 +14,7 @@ description: "DCS와 leader key, HA loop, failover 판단"
 
 ## 개요
 
-[인터널 9편](/posts/postgresql/09-streaming-replication/)에서 스트리밍 복제로 standby를 만들었습니다. standby는 primary의 WAL을 계속 받아 재생하므로, primary가 죽으면 `pg_ctl promote` 한 번으로 새 primary가 될 수 있습니다. 문제는 **그 한 번을 누가, 언제 하느냐**입니다. 사람이 새벽에 알람을 받고 판단하는 동안 서비스는 멈춰 있고, 서두르다 보면 더 나쁜 일이 생깁니다.
+[인터널 9편](/posts/postgresql/09-streaming-replication/)에서 스트리밍 복제로 standby를 만들었습니다. standby는 primary의 WAL을 계속 받아 재생하므로 primary가 죽으면 `pg_ctl promote` 한 번으로 새 primary가 될 수 있습니다. 문제는 **그 한 번을 누가, 언제 하느냐**입니다. 사람이 새벽에 알람을 받고 판단하는 동안 서비스는 멈춰 있고, 서두르다 보면 더 나쁜 일이 생깁니다.
 
 자동으로 하려면 생각보다 많은 것을 풀어야 합니다.
 
@@ -24,7 +24,7 @@ description: "DCS와 leader key, HA loop, failover 판단"
 - 남은 standby와 되살아난 옛 primary를 새 primary에 어떻게 다시 붙이는가
 - 애플리케이션은 새 primary를 어떻게 찾아가는가
 
-**Patroni**는 이 문제를 각 PostgreSQL 노드에 붙는 데몬과, 여러 서버가 합의해서 값을 저장하는 분산 저장소(**DCS**, Distributed Configuration Store)로 풉니다. 이 글에서는 Patroni가 무엇으로 이루어져 있고, 어떤 규칙으로 primary를 정하고 바꾸는지를 실제 클러스터에서 확인합니다. 클러스터를 처음부터 구성하는 방법은 [2편](/posts/postgresql/patroni-02-setup/)에서 다룹니다.
+**Patroni**는 이 문제를 각 PostgreSQL 노드에 붙는 데몬과, 여러 서버가 합의해서 값을 저장하는 분산 저장소(**DCS**, Distributed Configuration Store)로 풉니다. 이 글에서는 Patroni가 무엇으로 이루어져 있고 어떤 규칙으로 primary를 정하고 바꾸는지를 실제 클러스터에서 확인합니다. 클러스터를 처음부터 구성하는 방법은 [2편](/posts/postgresql/patroni-02-setup/)에서 다룹니다.
 
 이 글에서 답할 질문은 다음과 같습니다.
 
@@ -40,19 +40,19 @@ description: "DCS와 leader key, HA loop, failover 판단"
 
 {{< diagram src="/diagrams/patroni-architecture.html" title="Patroni 클러스터: 누가 누구와 이야기하는가" height="720" caption="각 노드의 Patroni가 자기 PostgreSQL을 관리하고, etcd의 leader key로 누가 primary인지 정합니다. 애플리케이션은 HAProxy를 거쳐 들어오고, HAProxy는 Patroni REST API로 primary를 찾습니다." >}}
 
-실습 클러스터의 이름(`scope`)은 `pg-ha`이고, 노드는 `pg1`, `pg2`, `pg3`입니다.
+실습 클러스터의 이름(`scope`)은 `pg-ha`이고 노드는 `pg1`, `pg2`, `pg3`입니다.
 
 - **Patroni 데몬**: PostgreSQL 노드마다 하나씩 돕니다. PostgreSQL을 직접 시작하고, 멈추고, promote하고, standby로 되돌립니다. 운영자가 `pg_ctl`을 직접 쓰는 대신 Patroni에게 맡기는 구조입니다.
-- **DCS**: 클러스터 상태의 유일한 기준입니다. 누가 leader인지, 멤버가 누구인지, 클러스터 전체에 적용할 설정이 무엇인지가 여기에 있습니다. etcd, Consul, ZooKeeper, Kubernetes API를 쓸 수 있고, 이 연재는 etcd(v3 API)를 씁니다. etcd 자체도 3대로 쿼럼을 이루므로 한 대가 죽어도 동작합니다.
+- **DCS**: 클러스터 상태의 유일한 기준입니다. 누가 leader인지, 멤버가 누구인지, 클러스터 전체에 적용할 설정이 무엇인지가 여기에 있습니다. etcd, Consul, ZooKeeper, Kubernetes API를 쓸 수 있습니다. 이 연재는 etcd(v3 API)를 씁니다. etcd 자체도 3대로 쿼럼을 이루므로 한 대가 죽어도 동작합니다.
 - **REST API**: 각 Patroni가 8008번 포트로 엽니다. Patroni끼리 서로의 WAL 위치를 물어볼 때, HAProxy가 primary를 찾을 때, `patronictl`이 명령을 보낼 때 씁니다.
 - **patronictl**: 운영자용 명령행 도구입니다. 클러스터 상태 보기, switchover, 재시작, 설정 변경을 합니다.
-- **HAProxy**: Patroni는 애플리케이션의 연결을 옮겨 주지 않습니다. 새 primary가 생겨도 애플리케이션이 그쪽으로 가게 하는 일은 별도 계층의 몫이고, 여기서는 HAProxy가 REST API의 응답을 보고 연결을 보냅니다.
+- **HAProxy**: Patroni는 애플리케이션의 연결을 옮겨 주지 않습니다. 새 primary가 생겨도 애플리케이션이 그쪽으로 가게 하는 일은 별도 계층의 몫입니다. 여기서는 HAProxy가 REST API의 응답을 보고 연결을 보냅니다.
 
 복제 자체는 PostgreSQL의 스트리밍 복제 그대로입니다. Patroni는 WAL을 나르지 않고, **누가 primary인지 정하고 나머지가 그 primary를 따르도록 설정을 써 줄 뿐**입니다.
 
 #### Patroni가 PostgreSQL을 자식 프로세스로 띄운다
 
-systemd가 띄우는 것은 Patroni 하나이고, PostgreSQL은 Patroni의 자식 프로세스로 뜹니다. pg1에서 서비스 상태를 봅니다.
+systemd가 띄우는 것은 Patroni 하나이고 PostgreSQL은 Patroni의 자식 프로세스로 뜹니다. pg1에서 서비스 상태를 봅니다.
 
 ```console
 $ systemctl status patroni --no-pager
@@ -79,7 +79,7 @@ $ systemctl status patroni --no-pager
 ```
 
 - `patroni.service`의 cgroup 안에 Patroni(PID 100)와 postmaster(PID 131), 그리고 [인터널 1편](/posts/postgresql/01-process-architecture/)에서 본 백그라운드 프로세스들이 함께 있습니다.
-- postmaster의 명령행에 `--max_connections=100`, `--wal_level=replica` 같은 파라미터가 직접 붙어 있습니다. Patroni는 복제에 꼭 맞아야 하는 몇몇 파라미터를 명령행으로 넘깁니다. 명령행 값은 `postgresql.conf`나 `ALTER SYSTEM`보다 우선하므로, 이 값들은 DCS 설정으로만 바꿀 수 있습니다([3편](/posts/postgresql/patroni-03-operations/)에서 확인합니다).
+- postmaster의 명령행에 `--max_connections=100`, `--wal_level=replica` 같은 파라미터가 직접 붙어 있습니다. Patroni는 복제에 꼭 맞아야 하는 몇몇 파라미터를 명령행으로 넘깁니다. 명령행 값은 `postgresql.conf`나 `ALTER SYSTEM`보다 우선하므로 이 값들은 DCS 설정으로만 바꿀 수 있습니다([3편](/posts/postgresql/patroni-03-operations/)에서 확인합니다).
 - 마지막 줄의 `127.0.0.1(50430) idle`은 Patroni가 PostgreSQL 상태를 확인하려고 붙어 있는 연결입니다.
 
 ## DCS에 무엇이 저장되는가
@@ -140,7 +140,7 @@ $ etcdctl get --prefix /service/pg-ha --keys-only | grep .
 
 ## leader key: TTL이 붙은 잠금
 
-leader key는 **스스로 사라지는 잠금**입니다. etcd v3에서는 키에 lease를 붙이고, lease를 갱신하지 않으면 TTL이 지난 뒤 키가 지워집니다. leader인 Patroni는 주기적으로 lease를 갱신해 키를 지키고, 갱신이 멈추면 키가 사라져 다른 노드가 차지할 수 있게 됩니다.
+leader key는 **스스로 사라지는 잠금**입니다. etcd v3에서는 키에 lease를 붙이고, lease를 갱신하지 않으면 TTL이 지난 뒤 키가 지워집니다. leader인 Patroni는 주기적으로 lease를 갱신해 키를 지킵니다. 갱신이 멈추면 키가 사라져 다른 노드가 차지할 수 있게 됩니다.
 
 #### lease는 10초마다 30초로 되돌아간다
 
@@ -171,10 +171,10 @@ $ journalctl -u patroni -o cat --since "-30s" | tail -3
 2026-09-25 22:22:55,433 INFO: no action. I am (pg1), the leader with the lock
 ```
 
-- lease의 TTL은 30초(`ttl`)이고, 남은 시간이 20초까지 줄었다가 28초로 돌아갑니다. Patroni가 10초(`loop_wait`)마다 한 번씩 갱신하기 때문이고, 로그의 `the leader with the lock`이 찍히는 시각(:45, :55)과 같습니다.
+- lease의 TTL은 30초(`ttl`)이고 남은 시간이 20초까지 줄었다가 28초로 돌아갑니다. Patroni가 10초(`loop_wait`)마다 한 번씩 갱신하기 때문이고, 로그의 `the leader with the lock`이 찍히는 시각(:45, :55)과 같습니다.
 - leader key와 pg1의 `members/pg1` 키가 **같은 lease**에 붙어 있습니다. pg1이 갱신을 멈추면 leader 자격과 멤버 정보가 함께 사라집니다.
 
-세 값에는 규칙이 있습니다. Patroni는 `loop_wait + 2 × retry_timeout <= ttl`을 요구하고, 어기면 `retry_timeout`을 줄여 맞춥니다([`config.py`](https://github.com/patroni/patroni/blob/v4.1.5/patroni/config.py#L298)). 기본값 `ttl 30`, `loop_wait 10`, `retry_timeout 10`이 이 규칙을 딱 맞춘 값입니다. 이유는 [뒤에서](#dcs와-끊긴-primary는-스스로-내려간다) 봅니다. leader가 DCS에 닿지 못하면 lease가 만료되기 **전에** 스스로 물러날 시간이 있어야 하기 때문입니다.
+Patroni는 세 값이 `loop_wait + 2 × retry_timeout <= ttl` 규칙을 지키도록 요구하고, 어기면 `retry_timeout`을 줄여 맞춥니다([`config.py`](https://github.com/patroni/patroni/blob/v4.1.5/patroni/config.py#L298)). 기본값 `ttl 30`, `loop_wait 10`, `retry_timeout 10`이 이 규칙을 딱 맞춘 값입니다. 이유는 [뒤에서](#dcs와-끊긴-primary는-스스로-내려간다) 봅니다. leader가 DCS에 닿지 못하면 lease가 만료되기 전에 스스로 물러날 시간이 있어야 하기 때문입니다.
 
 ## HA loop: 10초마다 하는 판단
 
@@ -216,7 +216,7 @@ $ patronictl -c /etc/patroni/patroni.yml list
 +--------+-------------+---------+---------+----+-------------+-----+------------+-----+
 ```
 
-- 22:28:50.2에 죽였고, 다음 loop인 22:28:56.7에 `Postgresql is not running`을 확인한 뒤 `starting primary after failure`로 같은 노드에서 다시 띄웠습니다.
+- 22:28:50.2에 죽였고 다음 loop인 22:28:56.7에 `Postgresql is not running`을 확인한 뒤 `starting primary after failure`로 같은 노드에서 다시 띄웠습니다.
 - leader key는 pg2가 계속 쥐고 있었으므로(`Lock owner: pg2`) failover는 일어나지 않았고, timeline도 4 그대로입니다. 0.5초마다 쓰던 클라이언트는 약 8초 동안 쓰지 못했고, 22:28:57.9부터 같은 pg2에 다시 썼습니다.
 - 재시작이 계속 실패하면 언제 포기하고 failover할지는 `primary_start_timeout`(기본 300초)이 정합니다.
 
@@ -224,7 +224,7 @@ Patroni가 먼저 재시작을 시도하는 것은 합리적입니다. failover�
 
 ## leader가 사라지면: leader race
 
-leader key가 사라지면 replica들이 경쟁합니다. 아무나 먼저 key를 잡는 것은 아니고, 각자 몇 가지를 확인한 뒤에 시도합니다([`Ha.is_healthiest_node()`](https://github.com/patroni/patroni/blob/v4.1.5/patroni/ha.py#L1494), [`Ha._is_healthiest_node()`](https://github.com/patroni/patroni/blob/v4.1.5/patroni/ha.py#L1290)).
+leader key가 사라지면 replica들이 경쟁합니다. 각자 몇 가지를 확인한 뒤에야 key를 잡으려고 시도합니다([`Ha.is_healthiest_node()`](https://github.com/patroni/patroni/blob/v4.1.5/patroni/ha.py#L1494), [`Ha._is_healthiest_node()`](https://github.com/patroni/patroni/blob/v4.1.5/patroni/ha.py#L1290)).
 
 {{< diagram src="/diagrams/patroni-leader-race.html" title="leader key가 사라졌을 때 replica가 하는 판단" height="520" caption="자기 점검(nofailover 태그, pause, 복제 지연)을 통과한 replica만 다른 멤버와 WAL 위치를 비교하고, 가장 앞선 노드가 leader key를 만듭니다. key는 없을 때만 만들 수 있으므로 한 노드만 성공합니다." >}}
 
@@ -236,7 +236,7 @@ leader key가 사라지면 replica들이 경쟁합니다. 아무나 먼저 key�
 
 #### primary 노드를 통째로 죽인다
 
-primary pg1 컨테이너를 `docker kill`로 죽입니다. 전원이 나간 것과 같아서 pg1의 Patroni도 함께 죽고, 아무도 lease를 갱신하지 않습니다. 다른 노드에서 2초마다 leader key를 봅니다.
+primary pg1 컨테이너를 `docker kill`로 죽입니다. 전원이 나간 것과 같아서 pg1의 Patroni도 함께 죽고 아무도 lease를 갱신하지 않습니다. 다른 노드에서 2초마다 leader key를 봅니다.
 
 ```console
 $ docker kill pg1        # 22:27:11.440
@@ -282,7 +282,7 @@ $ journalctl -u patroni -o cat --since 22:27:05 --until 22:27:42 | grep -E "INFO
 - pg2가 먼저 성공했고(`promoted self to leader by acquiring session lock`), pg3는 `Could not take out TTL lock`으로 실패한 뒤 pg2를 따르기 시작했습니다. etcd의 원자적 생성 덕분에 leader는 하나만 나왔습니다.
 - 22:27:11.4에 죽이고 22:27:35.5에 promote했으니 **failover에 24초**가 걸렸습니다. 0.5초마다 HAProxy로 쓰던 클라이언트는 22:27:11.2의 성공 뒤 22:27:35.8까지 쓰지 못했습니다. 이 시간의 대부분은 lease 만료를 기다린 시간입니다.
 
-"죽었다"를 판단하는 근거가 lease 만료라는 점이 중요합니다. 노드가 갑자기 죽으면 최악의 경우 `ttl`만큼 기다린 뒤에야 failover가 시작됩니다. `ttl`을 줄이면 빨라지지만, 그만큼 짧은 네트워크 지연이나 etcd의 일시적인 느려짐도 "leader가 죽었다"로 해석될 수 있습니다.
+Patroni가 "죽었다"를 판단하는 근거는 lease 만료입니다. 노드가 갑자기 죽으면 최악의 경우 `ttl`만큼 기다린 뒤에야 failover가 시작됩니다. `ttl`을 줄이면 빨라지지만 그만큼 짧은 네트워크 지연이나 etcd의 일시적인 느려짐도 "leader가 죽었다"로 해석될 수 있습니다.
 
 ## DCS와 끊긴 primary는 스스로 내려간다
 
@@ -307,7 +307,7 @@ $ for i in $(seq 1 12); do echo "$(date +%T) pg2_in_recovery=$(psql -h /run/post
 22:33:07 pg2_in_recovery=t leader=pg1
 ```
 
-(`psql`은 pg2에서, `etcdctl`은 etcd 노드에서 실행했습니다.) 22:32:48부터 pg2는 `pg_is_in_recovery() = t`, 즉 standby가 되었습니다. 그런데 etcd의 leader key는 22:33:01까지 여전히 `pg2`입니다. pg2가 먼저 내려가고, 한참 뒤에 pg1이 올라왔습니다. pg2의 로그에서 반복되는 etcd 재시도 줄을 빼고 보면 이렇습니다.
+(`psql`은 pg2에서, `etcdctl`은 etcd 노드에서 실행했습니다.) 22:32:48부터 pg2는 `pg_is_in_recovery() = t`, 즉 standby가 되었습니다. 그런데 etcd의 leader key는 22:33:01까지 여전히 `pg2`입니다. pg2가 먼저 내려가고 한참 뒤에 pg1이 올라왔습니다. pg2의 로그에서 반복되는 etcd 재시도 줄을 빼고 보면 이렇습니다.
 
 ```console
 $ journalctl -u patroni -o cat --since 22:32:10 --until 22:33:10 | grep -vE "Request to server|Reconnection allowed|Retrying on|Failed to get list|KVCache"
@@ -341,7 +341,7 @@ $ journalctl -u patroni -o cat --since 22:32:55 --until 22:33:05 | grep -E "INFO
 
 - pg2가 마지막으로 lease를 갱신한 것은 22:32:28입니다. 다음 loop(22:32:37.9)부터 etcd에 닿지 못했고, `retry_timeout`(10초) 동안 재시도하다가 22:32:46에 `demoting self because DCS is not accessible and I was a leader`로 스스로 내려갔습니다([`Ha._handle_dcs_error()`](https://github.com/patroni/patroni/blob/v4.1.5/patroni/ha.py#L2352)).
 - leader key는 22:32:28 + 30초 = **22:32:58**에 만료되었고, pg1이 바로 그 시각(22:32:58.468)에 key를 잡았습니다.
-- 그 사이 12초 동안은 primary가 **하나도 없었습니다**. 두 primary가 겹치는 순간은 없었습니다.
+- 그 사이 12초 동안은 primary가 하나도 없었습니다. 두 primary가 겹치는 순간은 없었습니다.
 
 HAProxy로 쓰던 클라이언트가 본 것도 같습니다.
 
@@ -363,11 +363,11 @@ $ awk '$1>="22:32:44" && $1<="22:33:00"' /root/writer.log
 
 이제 `loop_wait + 2 × retry_timeout <= ttl` 규칙의 뜻이 보입니다. leader가 마지막으로 갱신한 직후 DCS가 끊겨도, 다음 loop까지 `loop_wait`, 재시도에 `retry_timeout`을 쓰고 강등할 여유가 lease 만료 전에 남아야 합니다. 이 순서가 지켜지는 한 **옛 primary의 강등이 새 primary의 승격보다 먼저** 일어납니다.
 
-이 보장에는 전제가 있습니다. **옛 primary의 Patroni가 살아서 판단할 수 있어야 합니다.** Patroni 프로세스가 죽거나 멈추면 PostgreSQL은 primary로 남은 채 아무도 강등시키지 않습니다. 이 틈을 막는 것이 watchdog이고, [3편](/posts/postgresql/patroni-03-operations/#patroni가-죽으면-postgresql은-계속-primary다)에서 실제로 두 primary가 생기는 것을 확인합니다.
+이 보장에는 **옛 primary의 Patroni가 살아서 판단할 수 있어야 한다**는 전제가 있습니다. Patroni 프로세스가 죽거나 멈추면 PostgreSQL은 primary로 남은 채 아무도 강등시키지 않습니다. 이 틈을 막는 것이 watchdog이고, [3편](/posts/postgresql/patroni-03-operations/#patroni가-죽으면-postgresql은-계속-primary다)에서 실제로 두 primary가 생기는 것을 확인합니다.
 
 ## 운영에서는 이렇게 나타납니다
 
-- **failover 시간은 대부분 TTL이다.** 노드가 통째로 죽으면 lease가 만료될 때까지 기다립니다. 실습에서는 24초였고, 기본값에서 최악은 30초 남짓입니다. 이 시간을 줄이려고 `ttl`을 낮추면, DCS나 네트워크가 잠깐 느려질 때도 멀쩡한 primary가 강등됩니다. 실제 장애 대응 시간 목표와 오탐 비용을 같이 놓고 정해야 합니다.
+- **failover 시간은 대부분 TTL이다.** 노드가 통째로 죽으면 lease가 만료될 때까지 기다립니다. 실습에서는 24초였고, 기본값에서 최악은 30초 남짓입니다. 이 시간을 줄이려고 `ttl`을 낮추면 DCS나 네트워크가 잠깐 느려질 때도 멀쩡한 primary가 강등됩니다. 실제 장애 대응 시간 목표와 오탐 비용을 같이 놓고 정해야 합니다.
 - **PostgreSQL 프로세스 장애는 대개 failover가 아니다.** postmaster가 죽으면 Patroni는 같은 노드에서 다시 띄웁니다. 로그에 `starting primary after failure`가 있으면 failover가 일어나지 않은 것이고, timeline도 그대로입니다.
 - **DCS는 PostgreSQL만큼 중요하다.** leader가 DCS에 닿지 못하면 PostgreSQL이 멀쩡해도 강등됩니다. etcd 쿼럼이 깨지면 모든 노드가 DCS에 닿지 못하므로 클러스터 전체가 read-only가 됩니다([3편](/posts/postgresql/patroni-03-operations/#dcs가-멈추면-클러스터-전체가-read-only가-된다)).
 - **Patroni는 연결을 옮겨 주지 않는다.** 새 primary가 생겨도 애플리케이션이 옛 주소로 붙고 있으면 소용이 없습니다. HAProxy, pgBouncer, DNS, libpq의 `target_session_attrs=read-write` 같은 별도 수단이 필요합니다([2편](/posts/postgresql/patroni-02-setup/#haproxy로-연결-보내기)).

@@ -75,7 +75,7 @@ pg2=# SHOW work_mem;
 ```
 
 - 재시작까지 했는데 `max_connections`는 100 그대로이고, 출처가 `command line`입니다. `ALTER SYSTEM`은 성공했다고 답하지만 명령행 값을 이길 수 없습니다.
-- `work_mem`은 64MB(65536kB)로 바뀌었지만 **pg1에서만**입니다. pg2는 4MB입니다. `postgresql.auto.conf`는 복제되는 파일이 아니라서, failover로 pg2가 primary가 되면 설정이 바뀐 것처럼 보이게 됩니다.
+- `work_mem`은 64MB(65536kB)로 바뀌었지만 **pg1에서만**입니다. pg2는 4MB입니다. `postgresql.auto.conf`는 복제되는 파일이 아니라서, failover로 pg2가 primary가 되면 설정이 바뀐 것처럼 보입니다.
 
 `ALTER SYSTEM RESET ALL`로 되돌리고, 클러스터 전체 설정은 DCS에서 바꿉니다.
 
@@ -132,7 +132,7 @@ $ awk '$1>="22:34:32" && $1<="22:34:37"' /root/writer.log
 
 #### 줄이는 변경은 Patroni가 순서를 지켜 준다
 
-hot standby에는 "replica의 `max_connections` 같은 값이 primary보다 작으면 안 된다"는 규칙이 있습니다([Hot Standby Parameter Settings](https://www.postgresql.org/docs/18/hot-standby.html#HOT-STANDBY-ADMIN)). 늘릴 때는 괜찮지만, 줄일 때 replica를 먼저 재시작하면 규칙을 어기게 됩니다. `max_connections`를 50으로 줄이고 replica pg2만 먼저 재시작해 봅니다.
+hot standby에는 "replica의 `max_connections` 같은 값이 primary보다 작으면 안 된다"는 규칙이 있습니다([Hot Standby Parameter Settings](https://www.postgresql.org/docs/18/hot-standby.html#HOT-STANDBY-ADMIN)). 늘릴 때는 괜찮지만 줄일 때 replica를 먼저 재시작하면 규칙을 어기게 됩니다. `max_connections`를 50으로 줄이고 replica pg2만 먼저 재시작해 봅니다.
 
 ```console
 $ patronictl -c /etc/patroni/patroni.yml edit-config pg-ha --force -p max_connections=50
@@ -168,9 +168,9 @@ $ patronictl -c /etc/patroni/patroni.yml history | tail -3
 ```
 
 1. pg1(leader)의 Patroni를 재시작하자 pg1이 key를 내려놓았고, pg2가 곧바로 promote했습니다(timeline 10 → 11).
-2. 바로 이어서 pg2의 Patroni를 재시작하자, promote하던 pg2가 작업을 취소하고 내려갔고(`Cancelling long running task promote`), 이번에는 다시 올라온 pg1이 promote했습니다(timeline 11 → 12).
+2. 바로 이어서 pg2의 Patroni를 재시작하자 promote하던 pg2가 작업을 취소하고 내려갔고(`Cancelling long running task promote`), 이번에는 다시 올라온 pg1이 promote했습니다(timeline 11 → 12).
 
-2초 사이에 leader가 두 번 바뀌었고, 그때마다 쓰기가 끊겼습니다. `history`의 timeline 10 줄에 시각과 leader가 비어 있는 것도 promote가 도중에 끊긴 흔적입니다. Patroni 자체를 재시작해야 할 때(버전 업그레이드, `patroni.yml`의 재시작이 필요한 항목 변경)는 **replica를 하나씩 재시작하고, 멤버가 `streaming`으로 돌아온 것을 확인한 뒤, switchover로 leader를 옮기고, 마지막으로 옛 leader를 재시작**합니다.
+2초 사이에 leader가 두 번 바뀌었고 그때마다 쓰기가 끊겼습니다. `history`의 timeline 10 줄에 시각과 leader가 비어 있는 것도 promote가 도중에 끊긴 흔적입니다. Patroni 자체를 재시작해야 할 때(버전 업그레이드, `patroni.yml`의 재시작이 필요한 항목 변경)는 **replica를 하나씩 재시작하고, 멤버가 `streaming`으로 돌아온 것을 확인한 뒤, switchover로 leader를 옮기고, 마지막으로 옛 leader를 재시작**합니다.
 
 ## 유지보수는 pause로
 
@@ -205,7 +205,7 @@ pause 중에는 **자동 failover가 없다**는 점을 잊으면 안 됩니다.
 
 ## DCS가 멈추면 클러스터 전체가 read-only가 된다
 
-[1편](/posts/postgresql/patroni-01-architecture/#dcs와-끊긴-primary는-스스로-내려간다)에서 DCS와 끊긴 primary는 스스로 강등한다는 것을 봤습니다. split-brain을 막는 장치이지만, 끊긴 것이 primary 한 대가 아니라 **DCS 자체**라면 어떻게 될까요? etcd 3대 중 2대를 멈춰 쿼럼을 깹니다. PostgreSQL 3대는 모두 멀쩡합니다.
+[1편](/posts/postgresql/patroni-01-architecture/#dcs와-끊긴-primary는-스스로-내려간다)에서 DCS와 끊긴 primary는 스스로 강등한다는 것을 봤습니다. split-brain을 막는 장치이지만 끊긴 것이 primary 한 대가 아니라 **DCS 자체**라면 어떻게 될까요? etcd 3대 중 2대를 멈춰 쿼럼을 깹니다. PostgreSQL 3대는 모두 멀쩡합니다.
 
 ```console
 $ systemctl stop etcd       # etcd2, etcd3에서, 22:37:08.6
@@ -234,11 +234,11 @@ primary였던 pg1의 로그입니다.
 
 세 노드가 모두 standby가 되었고, HAProxy의 쓰기 포트에는 서버가 하나도 없습니다. 클라이언트는 22:37:37.8까지 쓰다가 그 뒤로 `read-only transaction` 오류와 연결 오류만 받았습니다. **데이터베이스 서버는 하나도 죽지 않았는데 쓰기 서비스 전체가 멈췄습니다.** Patroni 입장에서는 옳은 판단입니다. DCS에 닿지 못하는 동안에는 다른 노드가 promote했는지 알 수 없으니, 두 primary가 생길 위험보다 쓰기 중단을 택합니다.
 
-etcd를 되살리자 pg1이 다시 leader가 되었는데, 이때도 promote를 거치므로 timeline이 하나 올라갔습니다(`history`의 timeline 5 → 6, 22:38:12).
+etcd를 되살리자 pg1이 다시 leader가 되었는데 이때도 promote를 거치므로 timeline이 하나 올라갔습니다(`history`의 timeline 5 → 6, 22:38:12).
 
 #### failsafe_mode: 모든 멤버와 연락되면 primary를 유지한다
 
-`failsafe_mode`는 이 상황을 완화합니다. DCS에 닿지 못해도, leader가 **다른 모든 멤버와 REST API로 연락되고 그들이 자신을 leader로 인정하면** primary를 유지합니다. 모든 멤버가 "나는 promote하지 않겠다"고 답했다면 두 primary가 생길 수 없다는 논리입니다.
+`failsafe_mode`는 이 상황을 완화합니다. DCS에 닿지 못해도 leader가 **다른 모든 멤버와 REST API로 연락되고 그들이 자신을 leader로 인정하면** primary를 유지합니다. 모든 멤버가 "나는 promote하지 않겠다"고 답했다면 두 primary가 생길 수 없다는 논리입니다.
 
 ```console
 $ patronictl -c /etc/patroni/patroni.yml edit-config pg-ha --force -s failsafe_mode=true
@@ -271,13 +271,13 @@ $ journalctl -u patroni -o cat --since "-27s" | grep -iE "failsafe|demot" | cut 
 2026-09-25 22:39:57,142 INFO: demoted self because DCS is not accessible and I was a leader
 ```
 
-pg3가 응답하지 않자 pg1은 곧바로 강등했습니다. pg3가 정말 죽었는지, 아니면 pg1과만 끊겨서 promote했을지 모르기 때문입니다. `failsafe_mode`는 "DCS만 잠깐 멈춘" 경우를 살려 주는 장치이지, DCS 장애를 견디는 장치가 아닙니다. 가장 확실한 대책은 etcd를 PostgreSQL만큼 튼튼하게 운영하는 것입니다. 홀수 대, 서로 다른 장애 도메인, 빠른 디스크, 그리고 etcd 자체의 모니터링입니다.
+pg3가 응답하지 않자 pg1은 곧바로 강등했습니다. pg3가 정말 죽었는지, 아니면 pg1과만 끊겨서 promote했을지 모르기 때문입니다. `failsafe_mode`는 "DCS만 잠깐 멈춘" 경우를 살려 주는 장치이지 DCS 장애를 견디는 장치가 아닙니다. 가장 확실한 대책은 etcd를 PostgreSQL만큼 튼튼하게 운영하는 것입니다. 홀수 대, 서로 다른 장애 도메인, 빠른 디스크, 그리고 etcd 자체의 모니터링입니다.
 
 ## 비동기 복제는 커밋 응답을 받은 데이터도 잃을 수 있다
 
-기본 설정의 스트리밍 복제는 비동기입니다. primary는 커밋을 자기 디스크에 기록하면 바로 클라이언트에 성공을 돌려주고, WAL은 그 뒤에 replica로 갑니다. 그 사이에 primary가 죽으면, **클라이언트는 성공 응답을 받았는데 새 primary에는 없는** 트랜잭션이 생깁니다.
+기본 설정의 스트리밍 복제는 비동기입니다. primary는 커밋을 자기 디스크에 기록하면 바로 클라이언트에 성공을 돌려주고, WAL은 그 뒤에 replica로 갑니다. 그 사이에 primary가 죽으면 **클라이언트는 성공 응답을 받았는데 새 primary에는 없는** 트랜잭션이 생깁니다.
 
-얼마나 잃는지 정확히 세려고, 스레드 4개가 번호를 1씩 올리며 INSERT하고 **COMMIT 성공 응답을 받은 번호만** 파일에 적는 클라이언트를 만들었습니다.
+얼마나 잃는지 정확히 세려고 클라이언트를 만들었습니다. 스레드 4개가 번호를 1씩 올리며 INSERT하고 **COMMIT 성공 응답을 받은 번호만** 파일에 적습니다.
 
 ```python
 # 4개 스레드가 각자 번호를 1씩 올리며 INSERT하고, COMMIT 응답을 받은 번호만 파일에 적는다
@@ -340,7 +340,7 @@ total acked=141512, lost=51936
 
 #### maximum_lag_on_failover가 막지 못한 이유
 
-이상한 점이 있습니다. 지연이 약 9MB였는데 `maximum_lag_on_failover`는 1MB입니다. 1MB 넘게 뒤처진 replica는 후보에서 빠져야 하는데, pg3가 승격했습니다.
+이상한 점이 있습니다. 지연이 약 9MB였는데 `maximum_lag_on_failover`는 1MB입니다. 1MB 넘게 뒤처진 replica는 후보에서 빠져야 하는데 pg3가 승격했습니다.
 
 ```console
 $ journalctl -u patroni -o cat --since 22:41:30 --until 22:42:02 | grep -E "INFO|WARN" | cut -c1-110     # pg2
@@ -359,7 +359,7 @@ lag = self.cluster.status.last_lsn - wal_position
 return lag > global_config.maximum_lag_on_failover
 ```
 
-`last_lsn`은 **leader가 loop마다 DCS `status` 키에 적어 둔 마지막 WAL 위치**입니다. 실제 primary의 현재 위치가 아닙니다. leader는 이 값을 `loop_wait`(10초)마다 한 번 적습니다. pg3가 후보에서 빠지지 않았다는 것은 DCS의 `last_lsn`이 pg3의 위치(`0/5ED7C00`)에서 1MB 이내였다는 뜻이고, 실제 primary 위치(`0/6781D80`)보다 적어도 8MB 뒤의 값이었다는 뜻입니다. 마지막 기록 뒤에 쌓인 WAL은 replica들에게 보이지 않았던 것입니다.
+`last_lsn`은 **leader가 loop마다 DCS `status` 키에 적어 둔 마지막 WAL 위치**입니다. 실제 primary의 현재 위치가 아닙니다. leader는 이 값을 `loop_wait`(10초)마다 한 번 적습니다. pg3가 후보에서 빠지지 않았다는 것은 DCS의 `last_lsn`이 pg3의 위치(`0/5ED7C00`)에서 1MB 이내였고 실제 primary 위치(`0/6781D80`)보다 적어도 8MB 뒤의 값이었다는 뜻입니다. 마지막 기록 뒤에 쌓인 WAL은 replica들에게 보이지 않았습니다.
 
 `maximum_lag_on_failover`는 **오래 뒤처져 있던 replica를 걸러 내는 장치**입니다. 최대 `loop_wait` 동안 쌓인 WAL은 보지 못하므로, 유실의 상한을 보장하지 않습니다.
 
@@ -398,7 +398,7 @@ pg3=# SELECT pid, wait_event_type, wait_event, left(query, 40) FROM pg_stat_acti
 (4 rows)
 ```
 
-네 세션이 모두 `SyncRep`에서 기다립니다([인터널 9편](/posts/postgresql/09-streaming-replication/#동기-복제-커밋이-standby를-기다린다)에서 본 대기입니다). 커밋은 로컬에 기록됐지만, 동기 standby의 확인이 오지 않으니 클라이언트에 응답하지 않습니다. 이 상태에서 pg3를 죽입니다.
+네 세션이 모두 `SyncRep`에서 기다립니다([인터널 9편](/posts/postgresql/09-streaming-replication/#동기-복제-커밋이-standby를-기다린다)에서 본 대기입니다). 커밋은 로컬에 기록됐지만 동기 standby의 확인이 오지 않으니 클라이언트에 응답하지 않습니다. 이 상태에서 pg3를 죽입니다.
 
 ```console
 $ docker kill pg3        # 22:43:23.2
@@ -444,7 +444,7 @@ $ journalctl -u patroni -o cat --since "-42s" | grep -iE "sync"      # pg2(leade
 
 다음 HA loop에서 Patroni가 pg3를 새 동기 standby로 정하기까지 **8초 동안 모든 커밋이 멈췄습니다.**
 
-**replica가 모두 사라지면**: 남은 replica pg3까지 죽이면, 기본값(`synchronous_mode_strict: false`)에서는 Patroni가 동기 복제를 풀어 버립니다.
+**replica가 모두 사라지면**: 남은 replica pg3까지 죽이면 기본값(`synchronous_mode_strict: false`)에서는 Patroni가 동기 복제를 풀어 버립니다.
 
 ```console
 $ docker kill pg3        # 22:45:25.8
@@ -459,7 +459,7 @@ $ awk '$1>="22:45:24" && $1<="22:45:32"' /root/writer.log
 22:45:31.489 172.30.0.22 INSERT 0 1 
 ```
 
-5초 멈춘 뒤 쓰기가 다시 됩니다. 가용성은 지켰지만, 이제 데이터는 pg2 한 대에만 있습니다. `synchronous_mode_strict: true`로 바꾸면 반대로 동작합니다.
+5초 멈춘 뒤 쓰기가 다시 됩니다. 가용성은 지켰지만 이제 데이터는 pg2 한 대에만 있습니다. `synchronous_mode_strict: true`로 바꾸면 반대로 동작합니다.
 
 ```console
 $ patronictl -c /etc/patroni/patroni.yml edit-config pg-ha --force -s synchronous_mode_strict=on
@@ -476,7 +476,7 @@ pg2=# SELECT wait_event, left(query, 30) FROM pg_stat_activity WHERE usename = '
 (1 row)
 ```
 
-`synchronous_standby_names`가 `'*'`가 되어, 어떤 standby든 하나가 붙을 때까지 모든 커밋이 기다립니다. 잃지 않는 대신 쓰지 못합니다.
+`synchronous_standby_names`가 `'*'`가 되어, 어떤 standby든 하나가 붙을 때까지 모든 커밋이 기다립니다. 데이터는 잃지 않지만 그동안은 쓰지 못합니다.
 
 | 설정 | failover 유실 | standby 장애 때 |
 |---|---|---|
@@ -560,11 +560,11 @@ watchdog:
 - 하드웨어 watchdog이 없는 서버는 `softdog` 커널 모듈을 씁니다. Patroni RPM의 unit 파일에도 `modprobe softdog`와 `/dev/watchdog` 소유권 변경이 주석으로 들어 있고, postgres 사용자가 장치를 열 수 있어야 합니다.
 - 이 실습 환경에서는 watchdog을 켤 수 없어서 재부팅 동작은 직접 확인하지 못했습니다.
 
-동기 복제도 이 상황의 피해를 줄입니다. 옛 primary의 동기 standby가 새 primary를 따라가면, 옛 primary의 커밋은 `SyncRep`에서 멈춰 응답을 돌려주지 못하기 때문입니다.
+동기 복제도 이 상황의 피해를 줄입니다. 옛 primary의 동기 standby가 새 primary를 따라가면 옛 primary의 커밋은 `SyncRep`에서 멈춰 응답을 돌려주지 못하기 때문입니다.
 
 ## 멈춘 멤버의 slot과 reinit
 
-`use_slots: true`이면 primary에 멤버마다 replication slot이 있습니다. replica를 멈추면 slot은 어떻게 될까요? pg3의 Patroni를 멈추고, 멤버 목록에서 pg3가 사라진 뒤 primary에서 WAL을 많이 만듭니다.
+`use_slots: true`이면 primary에 멤버마다 replication slot이 있습니다. replica를 멈추면 slot은 어떻게 될까요? pg3의 Patroni를 멈추고 멤버 목록에서 pg3가 사라진 뒤 primary에서 WAL을 많이 만듭니다.
 
 ```console
 $ systemctl stop patroni       # pg3, 22:48:40
@@ -636,7 +636,7 @@ Reinitialize is completed on: pg3
 22:54:42
 ```
 
-`reinit`은 pg3의 데이터 디렉터리를 지우고 leader에서 새로 `pg_basebackup`을 받습니다. 데이터베이스 전체가 469MB인데 **3분 29초**가 걸렸습니다. 원인은 primary의 로그에 있습니다.
+`reinit`은 pg3의 데이터 디렉터리를 지우고 leader에서 새로 `pg_basebackup`을 받습니다. 데이터베이스 전체가 469MB인데 **3분 29초**가 걸렸습니다. primary의 로그에서 원인을 확인합니다.
 
 ```console
 $ grep -hE "checkpoint (starting|complete)" /var/lib/pgsql/18/data/log/*.log | cut -c1-110      # pg1, 그 시각의 줄만 옮김
@@ -695,7 +695,7 @@ Success: restart on member pg3
 
 - 인증을 켜면 명령(POST, PUT, PATCH, DELETE)에는 인증이 필요하고, `GET /health` 같은 조회는 그대로 열려 있어서 HAProxy의 health check는 바꿀 것이 없습니다.
 - `patronictl`도 REST API로 명령을 보내므로 같은 인증 정보가 필요합니다. 여기서는 환경 변수를 읽혀서 실행했습니다. 운영자가 쓰는 계정에서 이 파일을 읽을 수 있게 할지, `patronictl`용 설정 파일을 따로 둘지 정해 두어야 합니다.
-- 인증은 평문 HTTP 위에서 Basic 인증이므로, 운영에서는 `restapi.certfile`, `restapi.keyfile`로 TLS를 함께 켭니다.
+- 인증은 평문 HTTP 위에서 Basic 인증이므로 운영에서는 `restapi.certfile`, `restapi.keyfile`로 TLS를 함께 켭니다.
 
 ## 운영 점검표
 

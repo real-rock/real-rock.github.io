@@ -38,7 +38,7 @@ description: "etcd, patroni.yml, HAProxy, switchover와 failover"
 
 ## 패키지 설치
 
-PGDG 저장소를 등록하고, Rocky Linux 기본 AppStream의 `postgresql` 모듈을 끈 뒤 설치합니다. Patroni는 `pgdg-common` 저장소에 있고, etcd와 HAProxy는 기본으로 꺼져 있는 `pgdg-rhel9-extras` 저장소에 있습니다. 모든 노드에 같은 패키지를 넣었습니다(etcd 노드에는 etcd만, pg 노드에는 PostgreSQL과 Patroni만 있으면 됩니다).
+PGDG 저장소를 등록하고 Rocky Linux 기본 AppStream의 `postgresql` 모듈을 끈 뒤 설치합니다. Patroni는 `pgdg-common` 저장소에 있고, etcd와 HAProxy는 기본으로 꺼져 있는 `pgdg-rhel9-extras` 저장소에 있습니다. 모든 노드에 같은 패키지를 넣었습니다(etcd 노드에는 etcd만, pg 노드에는 PostgreSQL과 Patroni만 있으면 됩니다).
 
 ```console
 $ dnf -y install https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-aarch64/pgdg-redhat-repo-latest.noarch.rpm
@@ -82,7 +82,7 @@ WantedBy=multi-user.target
 ```
 
 - 설정 파일은 `/etc/patroni/patroni.yml`이고, `/etc/patroni_env.conf`가 있으면 환경 변수로 읽습니다. 비밀번호는 이 파일에 넣을 것입니다.
-- `KillMode=process`: 서비스를 멈출 때 Patroni 프로세스에만 신호를 보냅니다. Patroni가 PostgreSQL을 순서대로 내리게 하려는 것입니다.
+- `KillMode=process`: 서비스를 멈출 때 Patroni 프로세스에만 신호를 보냅니다. Patroni가 PostgreSQL을 순서대로 내리게 하려는 설정입니다.
 - `Restart=`가 두 번 나오고 뒤의 `Restart=no`가 이깁니다. Patroni가 죽어도 systemd가 되살리지 않습니다. 원본 주석에는 "장애 때 사람이 먼저 살펴보게 하려는 것"이라고 적혀 있습니다. Patroni가 죽은 채 PostgreSQL만 남는 상황의 위험은 [3편](/posts/postgresql/patroni-03-operations/#patroni가-죽으면-postgresql은-계속-primary다)에서 봅니다.
 - 이 파일을 직접 고치지 말고 `/etc/systemd/system/patroni.service.d/` 아래 drop-in 파일로 덮어쓰라고 파일 머리 주석이 안내합니다.
 
@@ -125,7 +125,7 @@ $ etcdctl member list -w table
 └──────────────────┴─────────┴───────┴─────────────────────────┴─────────────────────────┴────────────┘
 ```
 
-세 멤버가 모두 `started`이고 건강합니다. `endpoint status`로 보면 etcd2가 Raft leader였습니다. etcd는 디스크 fsync 지연과 네트워크 지연에 민감해서, 운영에서는 PostgreSQL과 디스크를 나눠 쓰거나 아예 별도 서버에 두는 경우가 많습니다. 이 실습도 etcd를 PostgreSQL 노드와 분리했습니다.
+세 멤버가 모두 `started`이고 건강합니다. `endpoint status`로 보면 etcd2가 Raft leader였습니다. etcd는 디스크 fsync 지연과 네트워크 지연에 민감해서 운영에서는 PostgreSQL과 디스크를 나눠 쓰거나 아예 별도 서버에 두는 경우가 많습니다. 이 실습도 etcd를 PostgreSQL 노드와 분리했습니다.
 
 ## patroni.yml 작성
 
@@ -201,7 +201,7 @@ tags:
 
 - `use_pg_rewind: true`: failover 뒤 옛 primary를 다시 붙일 때 `pg_rewind`로 갈라진 부분만 되돌립니다. `pg_rewind`에는 `wal_log_hints = on`이나 data checksums가 필요해서 둘 다 켰습니다(PG18의 initdb는 checksums를 기본으로 켭니다).
 - `use_slots: true`: replica마다 primary에 physical replication slot을 만들어 줍니다. slot 이름은 멤버 이름과 같습니다.
-- `pgpass`: Patroni가 복제나 `pg_rewind`로 다른 노드에 접속할 때 쓰는 비밀번호 파일을 여기에 만듭니다.
+- `pgpass`: Patroni가 여기에 비밀번호 파일을 만들고 복제나 `pg_rewind`로 다른 노드에 접속할 때 씁니다.
 
 #### 비밀번호는 환경 변수 파일로
 
@@ -231,7 +231,7 @@ rc=0
 
 ## 첫 노드 부트스트랩
 
-pg1에서 Patroni를 띄웁니다. 데이터 디렉터리는 비어 있고, DCS에도 아직 아무것도 없습니다.
+pg1에서 Patroni를 띄웁니다. 데이터 디렉터리는 비어 있고 DCS에도 아직 아무것도 없습니다.
 
 ```console
 $ systemctl start patroni
@@ -300,7 +300,7 @@ connection to server at "localhost" (127.0.0.1), port 5432 failed: FATAL:  no pg
 
 - leader가 이미 있으니 `pg_basebackup`으로 pg1을 복제해 합류했습니다(`bootstrapped from leader 'pg1'`).
 - 그런데 곧바로 `ERROR: Can not fetch local timeline and lsn from replication connection`이 10초마다 반복됩니다. Patroni는 replica의 timeline과 WAL 위치를 알아내려고 **자기 노드의 PostgreSQL에 localhost로 복제 연결**을 합니다. `pg_hba`에 복제 연결은 `172.30.0.0/24`에서만 허용했으니 `127.0.0.1`에서 온 연결이 거절된 것입니다.
-- 복제 자체는 문제없이 돌지만, 이 정보는 failover 때 WAL 위치 비교와 timeline 확인에 쓰입니다. 그대로 두면 안 됩니다.
+- 복제 자체는 문제없이 돌지만 이 정보는 failover 때 WAL 위치 비교와 timeline 확인에 쓰입니다. 그대로 두면 안 됩니다.
 
 모든 노드의 `patroni.yml`에 한 줄을 넣고 reload합니다. `postgresql.pg_hba`는 로컬 설정이므로 파일을 고치고 `systemctl reload patroni`(SIGHUP)만 하면 Patroni가 `pg_hba.conf`를 다시 쓰고 PostgreSQL을 reload합니다.
 
@@ -373,7 +373,7 @@ $ ls /var/lib/pgsql/18/data/standby.signal
 
 ## HAProxy로 연결 보내기
 
-애플리케이션이 primary를 찾아가게 하는 방법은 여럿이지만, 가장 흔한 것은 HAProxy가 **Patroni REST API로 health check**를 하는 방식입니다. REST API의 endpoint들은 노드의 역할에 따라 다른 HTTP 상태 코드를 돌려줍니다. primary pg1과 replica pg2에 각각 물어본 결과입니다.
+애플리케이션이 primary를 찾아가게 하는 방법은 여럿이지만 가장 흔한 것은 HAProxy가 **Patroni REST API로 health check**를 하는 방식입니다. REST API의 endpoint들은 노드의 역할에 따라 다른 HTTP 상태 코드를 돌려줍니다. primary pg1과 replica pg2에 각각 물어본 결과입니다.
 
 | endpoint | pg1 (primary) | pg2 (replica) | 쓰임 |
 |---|---|---|---|
@@ -384,7 +384,7 @@ $ ls /var/lib/pgsql/18/data/standby.signal
 | `GET /liveness` | 200 | 200 | Patroni가 살아 있는가 (Kubernetes liveness probe용) |
 | `GET /readiness` | 200 | 200 | 요청을 받을 준비가 되었는가 |
 
-`/replica?lag=1MB`처럼 허용할 지연을 붙이면, 너무 뒤처진 replica를 읽기에서 뺄 수 있습니다. HAProxy 설정입니다(`/etc/haproxy/haproxy.cfg`).
+`/replica?lag=1MB`처럼 허용할 지연을 붙이면 너무 뒤처진 replica를 읽기에서 뺄 수 있습니다. HAProxy 설정입니다(`/etc/haproxy/haproxy.cfg`).
 
 ```text
 global
@@ -429,8 +429,8 @@ listen replicas
     server pg3 172.30.0.23:5432 maxconn 100 check port 8008
 ```
 
-- 연결은 PostgreSQL 포트(5432)로 보내고, 검사는 `check port 8008`로 REST API에 합니다. 세 서버를 모두 등록해 두고, 검사에 통과한 서버로만 보냅니다.
-- `inter 3s fall 3 rise 2`: 3초마다 검사하고, 3번 연속 실패하면 내리고, 2번 연속 성공하면 올립니다. Patroni 저장소의 예제 설정과 같은 값인데, 뒤에서 이 값 때문에 문제가 생깁니다.
+- 연결은 PostgreSQL 포트(5432)로 보내고, 검사는 `check port 8008`로 REST API에 합니다. 세 서버를 모두 등록해 두고 검사에 통과한 서버로만 보냅니다.
+- `inter 3s fall 3 rise 2`: 3초마다 검사하고, 3번 연속 실패하면 내리고, 2번 연속 성공하면 올립니다. Patroni 저장소의 예제 설정과 같은 값인데 뒤에서 이 값 때문에 문제가 생깁니다.
 - `on-marked-down shutdown-sessions`: 서버가 내려가면 그 서버로 붙어 있던 연결을 끊습니다. 강등된 옛 primary에 연결이 남아 있지 않게 하려는 것입니다.
 
 ```console
@@ -632,7 +632,7 @@ $ patronictl -c /etc/patroni/patroni.yml list
 
 (`...`는 같은 상태 줄이 반복되는 부분을 줄였습니다.)
 
-1. pg1은 비정상 종료된 상태였으므로, 먼저 **single user mode로 crash recovery**를 해서 데이터 디렉터리를 일관된 상태로 만듭니다([인터널 8편](/posts/postgresql/08-checkpoint-and-recovery/)).
+1. pg1은 비정상 종료된 상태였으므로 먼저 **single user mode로 crash recovery**를 해서 데이터 디렉터리를 일관된 상태로 만듭니다([인터널 8편](/posts/postgresql/08-checkpoint-and-recovery/)).
 2. 자신은 timeline 3, leader pg2는 timeline 4입니다. pg1이 죽기 직전에 쓴 WAL 중 pg2가 받지 못한 부분이 있으면 두 서버의 역사가 갈라진 상태입니다.
 3. `pg_rewind`가 두 서버가 갈라진 위치(`0/54B9380`)를 찾아 pg1을 그 지점으로 되돌리고, standby로 시작해 pg2를 따릅니다.
 
@@ -655,7 +655,7 @@ pg1에 성공한 마지막 쓰기(22:27:11.224)가 새 primary에도 있습니�
 
 ## 운영에서는 이렇게 나타납니다
 
-- **replica의 `pg_hba`에 localhost 복제 연결이 없으면** Patroni 로그에 `Can not fetch local timeline and lsn from replication connection`이 계속 찍힙니다. 복제는 되니 놓치기 쉽지만, failover 판단에 쓰는 정보이므로 `host replication <복제 사용자> 127.0.0.1/32`를 꼭 넣습니다.
+- **replica의 `pg_hba`에 localhost 복제 연결이 없으면** Patroni 로그에 `Can not fetch local timeline and lsn from replication connection`이 계속 찍힙니다. 복제는 되니 놓치기 쉽지만 failover 판단에 쓰는 정보이므로 `host replication <복제 사용자> 127.0.0.1/32`를 꼭 넣습니다.
 - **HAProxy 검사 주기는 switchover의 품질을 정한다.** 느슨하면 강등된 옛 primary로 쓰기가 가서 read-only 오류가 나고, 잠깐 두 서버에 쓰기 연결이 나뉩니다. `inter`를 1-2초로 줄이고 `on-marked-down shutdown-sessions`를 둡니다.
 - **switchover는 수 초, failover는 TTL.** 실습에서 switchover의 쓰기 중단은 약 3.5초, 노드 장애 failover는 약 24초였습니다. 점검은 항상 switchover로 합니다.
 - **`bootstrap.dcs`는 처음 한 번만 쓰인다.** 클러스터가 만들어진 뒤 `patroni.yml`의 `bootstrap` 구역을 고쳐도 아무 일도 일어나지 않습니다. 클러스터 전체 설정은 `patronictl edit-config`로 바꿉니다([3편](/posts/postgresql/patroni-03-operations/#설정은-dcs에서-바꾼다)).
