@@ -427,6 +427,5 @@ $ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 4 -E 'automatic v
 - [pgstattuple](https://www.postgresql.org/docs/18/pgstattuple.html)
 - [REINDEX](https://www.postgresql.org/docs/18/sql-reindex.html), [VACUUM](https://www.postgresql.org/docs/18/sql-vacuum.html)
 - [Progress Reporting](https://www.postgresql.org/docs/18/progress-reporting.html): `pg_stat_progress_vacuum`, `pg_stat_progress_cluster`
-- [Automatic Vacuuming 설정](https://www.postgresql.org/docs/18/runtime-config-autovacuum.html)
 - PostgreSQL 인터널 [3편 데이터 저장 구조](/posts/postgresql/03-storage-layout/), [4편 MVCC](/posts/postgresql/04-mvcc/), [5편 VACUUM](/posts/postgresql/05-vacuum/)
 
