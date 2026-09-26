@@ -1,0 +1,456 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+3e19c2ef163bd5c15ab3764be1d4ad5ac3b7c653546533e2ec413d63ceef3992
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET shared_preload_libraries = pg_stat_statements, auto_explain;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_min_duration_statement = '1s';
+ALTER SYSTEM
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+postgres=# ALTER SYSTEM SET auto_explain.log_min_duration = '20ms';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# CREATE EXTENSION pg_stat_statements;
+CREATE EXTENSION
+
+
+######## 1. 데이터 준비
+
+# orders 100만 행: 대형 고객 1이 40%, 중형 고객 2~11이 3%씩, 소형 고객 2만 명이 나머지
+
+postgres=# CREATE TABLE orders (id bigint PRIMARY KEY, customer_id int, status text, amount int);
+CREATE TABLE
+
+postgres=# INSERT INTO orders
+postgres-# SELECT g,
+postgres-#        CASE WHEN g % 10 < 4 THEN 1
+postgres-#             WHEN g % 10 < 7 THEN 2 + (g / 10) % 10
+postgres-#             ELSE 12 + (g / 10) % 20000 END,
+postgres-#        'done', g % 997
+postgres-# FROM generate_series(1, 1000000) g;
+INSERT 0 1000000
+
+postgres=# CREATE TABLE shipments (id bigserial PRIMARY KEY, order_id bigint, state text);
+CREATE TABLE
+
+postgres=# INSERT INTO shipments (order_id, state) SELECT g, 'delivered' FROM generate_series(1, 1000000) g;
+INSERT 0 1000000
+
+postgres=# CREATE INDEX ON orders (status);
+CREATE INDEX
+
+postgres=# CREATE INDEX ON orders (customer_id);
+CREATE INDEX
+
+postgres=# CREATE INDEX ON shipments (state);
+CREATE INDEX
+
+# 재현을 위해 두 테이블의 autovacuum을 끈다. 실제로는 대량 적재 직후 autoanalyze가 돌기 전에 같은 일이 생긴다
+
+postgres=# ALTER TABLE orders SET (autovacuum_enabled = false);
+ALTER TABLE
+
+postgres=# ALTER TABLE shipments SET (autovacuum_enabled = false);
+ALTER TABLE
+
+postgres=# ANALYZE orders;
+ANALYZE
+
+postgres=# ANALYZE shipments;
+ANALYZE
+
+
+######## 2. 대량 적재 직후: 통계가 데이터를 따라오지 못한다
+
+postgres=# INSERT INTO orders SELECT g, 12 + g % 20000, 'pending', 1 FROM generate_series(1000001, 1100000) g;
+INSERT 0 100000
+
+postgres=# INSERT INTO shipments (order_id, state) SELECT g, 'ready' FROM generate_series(1000001, 1100000) g;
+INSERT 0 100000
+
+postgres=# SELECT relname, n_live_tup, n_mod_since_analyze, last_analyze, last_autoanalyze
+postgres-# FROM pg_stat_user_tables WHERE relname IN ('orders', 'shipments') ORDER BY relname;
+  relname  | n_live_tup | n_mod_since_analyze |         last_analyze          | last_autoanalyze 
+-----------+------------+---------------------+-------------------------------+------------------
+ orders    |    1100000 |              100000 | 2026-09-26 10:01:27.095322+00 | 
+ shipments |    1100000 |              100000 | 2026-09-26 10:01:27.164381+00 | 
+(2 rows)
+
+
+postgres=# SELECT tablename, attname, most_common_vals, most_common_freqs
+postgres-# FROM pg_stats WHERE attname IN ('status', 'state') ORDER BY tablename;
+ tablename | attname | most_common_vals | most_common_freqs 
+-----------+---------+------------------+-------------------
+ orders    | status  | {done}           | {1}
+ shipments | state   | {delivered}      | {1}
+(2 rows)
+
+
+postgres=# EXPLAIN SELECT count(*) FROM orders o JOIN shipments s ON s.order_id = o.id
+postgres-# WHERE o.status = 'pending' AND s.state = 'ready';
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Aggregate  (cost=8.90..8.91 rows=1 width=8)
+   ->  Nested Loop  (cost=0.85..8.90 rows=1 width=0)
+         Join Filter: (o.id = s.order_id)
+         ->  Index Scan using orders_status_idx on orders o  (cost=0.43..4.45 rows=1 width=8)
+               Index Cond: (status = 'pending'::text)
+         ->  Index Scan using shipments_state_idx on shipments s  (cost=0.43..4.45 rows=1 width=8)
+               Index Cond: (state = 'ready'::text)
+(7 rows)
+
+
+# 세션 A 시작: psql -X 
+
+A=# SET application_name = 'batch';
+SET
+
+A=# SET statement_timeout = '10s';
+SET
+
+A=# \timing on
+Timing is on.
+
+A=# SELECT count(*) FROM orders o JOIN shipments s ON s.order_id = o.id
+A-# WHERE o.status = 'pending' AND s.state = 'ready';
+
+postgres=# SELECT pid, state, wait_event_type, wait_event, now() - query_start AS running, left(query, 40) AS query
+postgres-# FROM pg_stat_activity WHERE application_name = 'batch';
+ pid | state  | wait_event_type | wait_event |     running     |                  query                   
+-----+--------+-----------------+------------+-----------------+------------------------------------------
+ 236 | active |                 |            | 00:00:02.706459 | SELECT count(*) FROM orders o JOIN shipm
+(1 row)
+
+
+$ top -b -n 1 -u postgres | sed -n '7,9p'
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+    236 postgres  20   0  227632  51228  47976 R 100.0   0.2   0:02.90 postgres
+      1 postgres  20   0     872    504    460 S   0.0   0.0   0:00.00 docker-+
+[exit=0]
+
+# 세션 A: 앞 명령의 결과를 기다림
+ERROR:  canceling statement due to statement timeout
+Time: 10000.218 ms (00:10.000)
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 1 -E 'statement timeout'
+2026-09-26 10:01:42.785 UTC [236] postgres@postgres/batch ERROR:  canceling statement due to statement timeout
+2026-09-26 10:01:42.785 UTC [236] postgres@postgres/batch STATEMENT:  SELECT count(*) FROM orders o JOIN shipments s ON s.order_id = o.id
+[exit=0]
+
+postgres=# ANALYZE orders;
+ANALYZE
+
+postgres=# ANALYZE shipments;
+ANALYZE
+
+postgres=# SELECT tablename, attname, most_common_vals, most_common_freqs
+postgres-# FROM pg_stats WHERE attname IN ('status', 'state') ORDER BY tablename;
+ tablename | attname | most_common_vals  |    most_common_freqs     
+-----------+---------+-------------------+--------------------------
+ orders    | status  | {done,pending}    | {0.91033334,0.089666665}
+ shipments | state   | {delivered,ready} | {0.9112333,0.088766664}
+(2 rows)
+
+
+postgres=# EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM orders o JOIN shipments s ON s.order_id = o.id
+postgres-# WHERE o.status = 'pending' AND s.state = 'ready';
+                                                                                   QUERY PLAN                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=6533.59..6533.60 rows=1 width=8) (actual time=16.348..17.140 rows=1.00 loops=1)
+   Buffers: shared hit=1590
+   ->  Gather  (cost=6533.37..6533.58 rows=2 width=8) (actual time=16.294..17.138 rows=2.00 loops=1)
+         Workers Planned: 1
+         Workers Launched: 1
+         Buffers: shared hit=1590
+         ->  Partial Aggregate  (cost=5533.37..5533.38 rows=1 width=8) (actual time=15.436..15.437 rows=1.00 loops=2)
+               Buffers: shared hit=1590
+               ->  Parallel Hash Join  (cost=3014.03..5520.50 rows=5150 width=0) (actual time=6.971..14.137 rows=50000.00 loops=2)
+                     Hash Cond: (s.order_id = o.id)
+                     Buffers: shared hit=1590
+                     ->  Parallel Index Scan using shipments_state_idx on shipments s  (cost=0.43..2356.12 rows=57437 width=8) (actual time=0.020..2.557 rows=50000.00 loops=2)
+                           Index Cond: (state = 'ready'::text)
+                           Index Searches: 1
+                           Buffers: shared hit=798
+                     ->  Parallel Hash  (cost=2288.37..2288.37 rows=58019 width=8) (actual time=6.609..6.609 rows=50000.00 loops=2)
+                           Buckets: 131072  Batches: 1  Memory Usage: 4960kB
+                           Buffers: shared hit=792
+                           ->  Parallel Index Scan using orders_status_idx on orders o  (cost=0.43..2288.37 rows=58019 width=8) (actual time=0.014..3.291 rows=50000.00 loops=2)
+                                 Index Cond: (status = 'pending'::text)
+                                 Index Searches: 1
+                                 Buffers: shared hit=792
+ Planning:
+   Buffers: shared hit=269
+ Planning Time: 0.343 ms
+ Execution Time: 17.181 ms
+(26 rows)
+
+
+A=# SELECT count(*) FROM orders o JOIN shipments s ON s.order_id = o.id
+A-# WHERE o.status = 'pending' AND s.state = 'ready';
+ count  
+--------
+ 100000
+(1 row)
+
+Time: 30.682 ms
+
+
+######## 3. prepared statement: 여섯 번째 실행부터 계획이 바뀐다
+
+postgres=# SELECT pg_stat_statements_reset() IS NOT NULL AS reset;
+ reset 
+-------
+ t
+(1 row)
+
+
+# 세션 B 시작: psql -X 
+
+B=# SET application_name = 'app';
+SET
+
+B=# \timing on
+Timing is on.
+
+B=# PREPARE by_cust(int) AS SELECT count(*), sum(amount) FROM orders WHERE customer_id = $1;
+PREPARE
+Time: 0.823 ms
+
+B=# EXECUTE by_cust(2);
+ count |   sum    
+-------+----------
+ 30000 | 14936400
+(1 row)
+
+Time: 26.800 ms
+
+B=# EXECUTE by_cust(3);
+ count |   sum    
+-------+----------
+ 30000 | 14937300
+(1 row)
+
+Time: 15.639 ms
+
+B=# EXECUTE by_cust(4);
+ count |   sum    
+-------+----------
+ 30000 | 14938200
+(1 row)
+
+Time: 7.056 ms
+
+B=# EXECUTE by_cust(5);
+ count |   sum    
+-------+----------
+ 30000 | 14939100
+(1 row)
+
+Time: 15.405 ms
+
+B=# EXECUTE by_cust(6);
+ count |   sum    
+-------+----------
+ 30000 | 14940000
+(1 row)
+
+Time: 7.095 ms
+
+B=# SELECT name, generic_plans, custom_plans FROM pg_prepared_statements;
+  name   | generic_plans | custom_plans 
+---------+---------------+--------------
+ by_cust |             0 |            5
+(1 row)
+
+Time: 1.384 ms
+
+B=# EXECUTE by_cust(7);
+ count |   sum    
+-------+----------
+ 30000 | 14940900
+(1 row)
+
+Time: 19.671 ms
+
+B=# SELECT name, generic_plans, custom_plans FROM pg_prepared_statements;
+  name   | generic_plans | custom_plans 
+---------+---------------+--------------
+ by_cust |             1 |            5
+(1 row)
+
+Time: 0.641 ms
+
+# 대형 고객 1
+
+B=# EXECUTE by_cust(1);
+ count  |    sum    
+--------+-----------
+ 400000 | 199198818
+(1 row)
+
+Time: 34.710 ms
+
+B=# EXPLAIN (ANALYZE, BUFFERS) EXECUTE by_cust(1);
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=378.70..378.71 rows=1 width=16) (actual time=45.930..45.931 rows=1.00 loops=1)
+   Buffers: shared hit=6709
+   ->  Index Scan using orders_customer_id_idx on orders  (cost=0.43..378.18 rows=104 width=4) (actual time=0.043..26.661 rows=400000.00 loops=1)
+         Index Cond: (customer_id = $1)
+         Index Searches: 1
+         Buffers: shared hit=6709
+ Planning Time: 0.023 ms
+ Execution Time: 46.001 ms
+(8 rows)
+
+Time: 46.294 ms
+
+# psql에서 상수로 넣어 확인하면 다른 계획이 나온다
+
+postgres=# EXPLAIN (ANALYZE, BUFFERS) SELECT count(*), sum(amount) FROM orders WHERE customer_id = 1;
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=14575.83..14575.84 rows=1 width=16) (actual time=18.435..19.389 rows=1.00 loops=1)
+   Buffers: shared hit=7007
+   ->  Gather  (cost=14575.61..14575.82 rows=2 width=16) (actual time=18.378..19.385 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=7007
+         ->  Partial Aggregate  (cost=13575.61..13575.62 rows=1 width=16) (actual time=17.176..17.176 rows=1.00 loops=3)
+               Buffers: shared hit=7007
+               ->  Parallel Seq Scan on orders  (cost=0.00..12736.17 rows=167888 width=4) (actual time=0.008..12.608 rows=133333.33 loops=3)
+                     Filter: (customer_id = 1)
+                     Rows Removed by Filter: 233333
+                     Buffers: shared hit=7007
+ Planning:
+   Buffers: shared hit=103
+ Planning Time: 0.239 ms
+ Execution Time: 19.441 ms
+(16 rows)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 8 -E 'duration: [0-9.]+ ms  plan:' | tail -n 20
+2026-09-26 10:01:51.084 UTC [447] postgres@postgres/app LOG:  duration: 25.169 ms  plan:
+	Query Text: PREPARE by_cust(int) AS SELECT count(*), sum(amount) FROM orders WHERE customer_id = $1;
+	Query Parameters: $1 = '2'
+	Aggregate  (cost=7971.08..7971.09 rows=1 width=16)
+	  ->  Bitmap Heap Scan on orders  (cost=398.78..7809.56 rows=32303 width=4)
+	        Recheck Cond: (customer_id = 2)
+	        ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..390.70 rows=32303 width=0)
+	              Index Cond: (customer_id = 2)
+2026-09-26 10:02:00.107 UTC [447] postgres@postgres/app LOG:  duration: 34.445 ms  plan:
+	Query Text: PREPARE by_cust(int) AS SELECT count(*), sum(amount) FROM orders WHERE customer_id = $1;
+	Query Parameters: $1 = '1'
+	Aggregate  (cost=378.70..378.71 rows=1 width=16)
+	  ->  Index Scan using orders_customer_id_idx on orders  (cost=0.43..378.18 rows=104 width=4)
+	        Index Cond: (customer_id = $1)
+2026-09-26 10:02:03.120 UTC [447] postgres@postgres/app LOG:  duration: 45.933 ms  plan:
+	Query Text: PREPARE by_cust(int) AS SELECT count(*), sum(amount) FROM orders WHERE customer_id = $1;
+	Query Parameters: $1 = '1'
+	Aggregate  (cost=378.70..378.71 rows=1 width=16)
+	  ->  Index Scan using orders_customer_id_idx on orders  (cost=0.43..378.18 rows=104 width=4)
+	        Index Cond: (customer_id = $1)
+[exit=0]
+
+postgres=# SELECT left(query, 60) AS query, calls,
+postgres-#        round(min_exec_time::numeric, 2) AS min_ms, round(max_exec_time::numeric, 2) AS max_ms,
+postgres-#        round(mean_exec_time::numeric, 2) AS mean_ms, round(stddev_exec_time::numeric, 2) AS stddev_ms
+postgres-# FROM pg_stat_statements WHERE query LIKE '%customer_id = $1%';
+                            query                             | calls | min_ms | max_ms | mean_ms | stddev_ms 
+--------------------------------------------------------------+-------+--------+--------+---------+-----------
+ EXPLAIN (ANALYZE, BUFFERS) SELECT count(*), sum(amount) FROM |     1 |  19.73 |  19.73 |   19.73 |      0.00
+ PREPARE by_cust(int) AS SELECT count(*), sum(amount) FROM or |     7 |   6.72 |  34.44 |   17.34 |      9.22
+(2 rows)
+
+
+
+######## 4. 조치: plan_cache_mode
+
+B=# SET plan_cache_mode = force_custom_plan;
+SET
+Time: 0.479 ms
+
+B=# EXECUTE by_cust(1);
+ count  |    sum    
+--------+-----------
+ 400000 | 199198818
+(1 row)
+
+Time: 14.115 ms
+
+B=# EXPLAIN (ANALYZE, BUFFERS) EXECUTE by_cust(1);
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=14575.83..14575.84 rows=1 width=16) (actual time=18.611..19.685 rows=1.00 loops=1)
+   Buffers: shared hit=7007
+   ->  Gather  (cost=14575.61..14575.82 rows=2 width=16) (actual time=18.553..19.681 rows=3.00 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=7007
+         ->  Partial Aggregate  (cost=13575.61..13575.62 rows=1 width=16) (actual time=17.297..17.297 rows=1.00 loops=3)
+               Buffers: shared hit=7007
+               ->  Parallel Seq Scan on orders  (cost=0.00..12736.17 rows=167888 width=4) (actual time=0.008..12.643 rows=133333.33 loops=3)
+                     Filter: (customer_id = 1)
+                     Rows Removed by Filter: 233333
+                     Buffers: shared hit=7007
+ Planning Time: 0.067 ms
+ Execution Time: 19.704 ms
+(14 rows)
+
+Time: 19.936 ms
+
+B=# EXECUTE by_cust(2);
+ count |   sum    
+-------+----------
+ 30000 | 14936400
+(1 row)
+
+Time: 5.853 ms
+
+B=# SELECT name, generic_plans, custom_plans FROM pg_prepared_statements;
+  name   | generic_plans | custom_plans 
+---------+---------------+--------------
+ by_cust |             3 |            8
+(1 row)
+
+Time: 0.173 ms
+
