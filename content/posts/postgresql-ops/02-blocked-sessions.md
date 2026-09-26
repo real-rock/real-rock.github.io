@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 운영 2: 세션들이 멈춰 있다"
 date: 2026-09-26T18:00:00+09:00
-draft: true
+draft: false
 series: ["PostgreSQL 운영"]
 categories: ["PostgreSQL"]
 subcategory: "운영"
