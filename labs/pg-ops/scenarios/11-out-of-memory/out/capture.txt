@@ -2,7 +2,7 @@
 ######## 0. 실습 환경
 
 $ docker run -d --init --name pgops --hostname pgops --memory 768m --memory-swap 768m pg-ops:rocky9-pg18 sleep infinity
-374e360a362da1b3f96fa6689103ee0582316d7d8b7994249b07be9a0827809e
+092672c20e33873844b0c1d2d4c95421c901a6c9ea9dd4babda8ec4458896965
 [exit=0]
 
 $ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
@@ -24,7 +24,13 @@ postgres (PostgreSQL) 18.6
 [exit=0]
 
 $ cat /sys/fs/cgroup/memory.max
+$ grep -n -i -A 1 'oom' /usr/lib/systemd/system/postgresql-18.service
 805306368
+36:# Disable OOM kill on postgres main process
+37:OOMScoreAdjust=-1000
+38:Environment=PG_OOM_ADJUST_FILE=/proc/self/oom_score_adj
+39:Environment=PG_OOM_ADJUST_VALUE=0
+40-
 [exit=0]
 
 postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
@@ -84,8 +90,8 @@ SET
                Buffers: shared hit=2304 read=22720
  Planning:
    Buffers: shared hit=105 read=4
- Planning Time: 0.196 ms
- Execution Time: 697.833 ms
+ Planning Time: 0.195 ms
+ Execution Time: 693.372 ms
 (12 rows)
 
 
@@ -104,8 +110,8 @@ SET
                Buffers: shared hit=2398 read=22626
  Planning:
    Buffers: shared hit=109
- Planning Time: 0.202 ms
- Execution Time: 648.403 ms
+ Planning Time: 0.169 ms
+ Execution Time: 656.771 ms
 (12 rows)
 
 
@@ -115,9 +121,9 @@ SET
 # 세션 A 시작: psql -X 
 
 A=# SET application_name = 'report';
+SET
 
 A=# SET work_mem = '1GB';
-SET
 SET
 
 A=# \timing on
@@ -128,8 +134,8 @@ A=# SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k HAVING md5(md5(
 $ ps -o pid,rss,cmd -p $(psql -XAtc "SELECT pid FROM pg_stat_activity WHERE application_name = 'report'")
 $ cat /sys/fs/cgroup/memory.current
     PID   RSS CMD
-    132 136308 postgres: postgres postgres [local] SELECT
-700321792
+    132 134908 postgres: postgres postgres [local] SELECT
+699432960
 [exit=0]
 
 postgres=# SELECT pg_log_backend_memory_contexts(pid) FROM pg_stat_activity WHERE application_name = 'report';
@@ -145,12 +151,12 @@ postgres=# SELECT pg_log_backend_memory_contexts(pid) FROM pg_stat_activity WHER
  3000000
 (1 row)
 
-Time: 5923.947 ms (00:05.924)
+Time: 6000.451 ms (00:06.000)
 
 $ tail -n 1000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'Grand total|level: 1; ExecutorState|level: [0-9]+; HashAgg' | tail -n 4
-2026-09-26 10:49:31.961 UTC [132] postgres@postgres/report LOG:  level: 5; HashAgg table context: 58720144 total in 17 blocks; 6179000 free; 52541144 used
-2026-09-26 10:49:31.961 UTC [132] postgres@postgres/report LOG:  level: 5; HashAgg meta context: 67117104 total in 2 blocks; 4456 free (0 chunks); 67112648 used
-2026-09-26 10:49:31.961 UTC [132] postgres@postgres/report LOG:  Grand total: 127374888 bytes in 276 blocks; 6619896 free (305 chunks); 120754992 used
+2026-09-26 10:52:35.436 UTC [132] postgres@postgres/report LOG:  level: 5; HashAgg table context: 58720144 total in 17 blocks; 7620496 free; 51099648 used
+2026-09-26 10:52:35.436 UTC [132] postgres@postgres/report LOG:  level: 5; HashAgg meta context: 67117104 total in 2 blocks; 4456 free (0 chunks); 67112648 used
+2026-09-26 10:52:35.436 UTC [132] postgres@postgres/report LOG:  Grand total: 127374888 bytes in 276 blocks; 8061392 free (305 chunks); 119313496 used
 [exit=0]
 
 
@@ -167,30 +173,30 @@ sock_throttled 0
 [exit=0]
 
 postgres=# SELECT pg_postmaster_start_time();
-   pg_postmaster_start_time    
--------------------------------
- 2026-09-26 10:49:18.878137+00
+   pg_postmaster_start_time   
+------------------------------
+ 2026-09-26 10:52:22.35438+00
 (1 row)
 
 
 $ for i in 1 2 3 4; do PGAPPNAME=report$i PGOPTIONS='-c work_mem=1GB' nohup psql -X -c "SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k) s;" > /tmp/heavy_$i.out 2>&1 & done
 $ sleep 25
 $ cat /tmp/heavy_1.out /tmp/heavy_2.out /tmp/heavy_3.out /tmp/heavy_4.out
-server closed the connection unexpectedly
-	This probably means the server terminated abnormally
-	before or while processing the request.
-connection to server was lost
-server closed the connection unexpectedly
-	This probably means the server terminated abnormally
-	before or while processing the request.
-connection to server was lost
-server closed the connection unexpectedly
-	This probably means the server terminated abnormally
-	before or while processing the request.
-connection to server was lost
 WARNING:  terminating connection because of crash of another server process
 DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
 HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
 server closed the connection unexpectedly
 	This probably means the server terminated abnormally
 	before or while processing the request.
@@ -200,7 +206,7 @@ connection to server was lost
 $ cat /sys/fs/cgroup/memory.events
 low 0
 high 0
-max 1652
+max 1505
 oom 13
 oom_kill 3
 oom_group_kill 0
@@ -208,25 +214,42 @@ sock_throttled 0
 [exit=0]
 
 $ tail -n 1000 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'terminated by signal|Failed process|terminating any other|all server processes terminated|not properly shut down|redo done|ready to accept' | tail -n 8
-2026-09-26 10:49:18.882 UTC [27] LOG:  database system is ready to accept connections
-2026-09-26 10:49:41.309 UTC [27] LOG:  client backend (PID 300) was terminated by signal 9: Killed
-2026-09-26 10:49:41.309 UTC [27] DETAIL:  Failed process was running: SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k) s;
-2026-09-26 10:49:41.309 UTC [27] LOG:  terminating any other active server processes
-2026-09-26 10:49:41.315 UTC [27] LOG:  all server processes terminated; reinitializing
-2026-09-26 10:49:41.352 UTC [305] LOG:  database system was not properly shut down; automatic recovery in progress
-2026-09-26 10:49:42.097 UTC [305] LOG:  redo done at 0/12C9CD40 system usage: CPU: user: 0.52 s, system: 0.22 s, elapsed: 0.74 s
-2026-09-26 10:49:42.249 UTC [27] LOG:  database system is ready to accept connections
+2026-09-26 10:52:22.358 UTC [26] LOG:  database system is ready to accept connections
+2026-09-26 10:52:44.770 UTC [26] LOG:  client backend (PID 299) was terminated by signal 9: Killed
+2026-09-26 10:52:44.770 UTC [26] DETAIL:  Failed process was running: SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k) s;
+2026-09-26 10:52:44.770 UTC [26] LOG:  terminating any other active server processes
+2026-09-26 10:52:44.777 UTC [26] LOG:  all server processes terminated; reinitializing
+2026-09-26 10:52:44.818 UTC [305] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-26 10:52:45.628 UTC [305] LOG:  redo done at 0/12C9CD40 system usage: CPU: user: 0.59 s, system: 0.20 s, elapsed: 0.80 s
+2026-09-26 10:52:45.770 UTC [26] LOG:  database system is ready to accept connections
 [exit=0]
 
 postgres=# SELECT pg_postmaster_start_time(), now();
-   pg_postmaster_start_time    |              now              
--------------------------------+-------------------------------
- 2026-09-26 10:49:18.878137+00 | 2026-09-26 10:50:06.163151+00
+   pg_postmaster_start_time   |             now              
+------------------------------+------------------------------
+ 2026-09-26 10:52:22.35438+00 | 2026-09-26 10:53:09.60796+00
 (1 row)
 
 
 
 ######## 4. work_mem을 줄이면
+
+# 64MB: 해시 한도는 64MB x hash_mem_multiplier(2) = 128MB
+
+$ for i in 1 2 3 4; do PGAPPNAME=report$i PGOPTIONS='-c work_mem=64MB' nohup psql -X -c "SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k) s;" > /tmp/mid_$i.out 2>&1 & done
+$ sleep 25
+$ grep -h -E 'count|server closed|crash of another' /tmp/mid_1.out /tmp/mid_2.out /tmp/mid_3.out /tmp/mid_4.out
+$ grep oom_kill /sys/fs/cgroup/memory.events
+WARNING:  terminating connection because of crash of another server process
+server closed the connection unexpectedly
+WARNING:  terminating connection because of crash of another server process
+server closed the connection unexpectedly
+server closed the connection unexpectedly
+server closed the connection unexpectedly
+oom_kill 5
+[exit=0]
+
+# 16MB
 
 $ for i in 1 2 3 4; do PGAPPNAME=report$i PGOPTIONS='-c work_mem=16MB' nohup psql -X -c "\\timing on" -c "SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k) s;" > /tmp/small_$i.out 2>&1 & done
 $ sleep 25
@@ -238,33 +261,33 @@ Timing is on.
  3000000
 (1 row)
 
-Time: 1365.194 ms (00:01.365)
+Time: 1215.095 ms (00:01.215)
 Timing is on.
   count  
 ---------
  3000000
 (1 row)
 
-Time: 1418.037 ms (00:01.418)
+Time: 1256.357 ms (00:01.256)
 Timing is on.
   count  
 ---------
  3000000
 (1 row)
 
-Time: 1409.537 ms (00:01.410)
+Time: 1253.183 ms (00:01.253)
 Timing is on.
   count  
 ---------
  3000000
 (1 row)
 
-Time: 1367.949 ms (00:01.368)
+Time: 1232.279 ms (00:01.232)
 low 0
 high 0
-max 4683
-oom 13
-oom_kill 3
+max 4855
+oom 20
+oom_kill 5
 oom_group_kill 0
 sock_throttled 0
 [exit=0]

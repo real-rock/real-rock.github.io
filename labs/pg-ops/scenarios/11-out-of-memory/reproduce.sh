@@ -14,6 +14,7 @@ fresh_cluster --memory 768m --memory-swap 768m
 env_info
 pg <<'SH'
 cat /sys/fs/cgroup/memory.max
+grep -n -i -A 1 'oom' /usr/lib/systemd/system/postgresql-18.service
 SH
 q "ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';"
 q "ALTER SYSTEM SET max_parallel_workers_per_gather = 0;"
@@ -67,6 +68,14 @@ SH
 q "SELECT pg_postmaster_start_time(), now();"
 
 step "4. work_mem을 줄이면"
+note "64MB: 해시 한도는 64MB x hash_mem_multiplier(2) = 128MB"
+pg <<'SH'
+for i in 1 2 3 4; do PGAPPNAME=report$i PGOPTIONS='-c work_mem=64MB' nohup psql -X -c "SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k) s;" > /tmp/mid_$i.out 2>&1 & done
+sleep 25
+grep -h -E 'count|server closed|crash of another' /tmp/mid_1.out /tmp/mid_2.out /tmp/mid_3.out /tmp/mid_4.out
+grep oom_kill /sys/fs/cgroup/memory.events
+SH
+note "16MB"
 pg <<'SH'
 for i in 1 2 3 4; do PGAPPNAME=report$i PGOPTIONS='-c work_mem=16MB' nohup psql -X -c "\\timing on" -c "SELECT count(*) FROM (SELECT k, count(*) FROM big GROUP BY k) s;" > /tmp/small_$i.out 2>&1 & done
 sleep 25
