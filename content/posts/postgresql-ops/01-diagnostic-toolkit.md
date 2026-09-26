@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 운영 1: 진단 도구상자"
 date: 2026-09-26T08:00:00+09:00
-draft: true
+draft: false
 series: ["PostgreSQL 운영"]
 categories: ["PostgreSQL"]
 subcategory: "운영"
