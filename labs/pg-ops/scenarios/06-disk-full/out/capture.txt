@@ -1,0 +1,320 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops --tmpfs /pgfs:rw,size=600m,uid=26,gid=26,mode=0755 -e PGDATA=/pgfs/data pg-ops:rocky9-pg18 sleep infinity
+1eb52c3c724db2835bc5b12437ddf599607886b260afbac79c71c0ef31e8e040
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+$ df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M   39M  562M   7% /pgfs
+[exit=0]
+
+$ mkdir -p /var/lib/pgsql/log /var/lib/pgsql/archive
+[exit=0]
+
+postgres=# ALTER SYSTEM SET log_directory = '/var/lib/pgsql/log';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET archive_mode = on;
+ALTER SYSTEM
+
+# 아카이브 대상이 망가진 상황을 흉내 낸다: 명령이 항상 실패한다
+
+postgres=# ALTER SYSTEM SET archive_command = 'false';
+ALTER SYSTEM
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 1. 아카이브 실패: WAL이 지워지지 않는다
+
+$ pgbench -i -s 10 -q postgres 2>&1 | tail -n 1
+done in 0.42 s (drop tables 0.00 s, create tables 0.00 s, client-side generate 0.29 s, vacuum 0.03 s, primary keys 0.09 s).
+[exit=0]
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+postgres=# SELECT pg_size_pretty(pg_database_size('postgres')) AS db,
+postgres-#        (SELECT pg_size_pretty(sum(size)) FROM pg_ls_waldir()) AS pg_wal,
+postgres-#        (SELECT count(*) FROM pg_ls_waldir()) AS wal_files;
+   db   | pg_wal | wal_files 
+--------+--------+-----------
+ 157 MB | 144 MB |         9
+(1 row)
+
+
+postgres=# SELECT archived_count, failed_count, last_failed_wal, last_failed_time
+postgres-# FROM pg_stat_archiver;
+ archived_count | failed_count |     last_failed_wal      |       last_failed_time        
+----------------+--------------+--------------------------+-------------------------------
+              0 |            1 | 000000010000000000000001 | 2026-09-26 10:23:01.860649+00
+(1 row)
+
+
+$ ls $PGDATA/pg_wal/archive_status | head -n 3
+$ ls $PGDATA/pg_wal/archive_status | grep -c '\.ready$'
+000000010000000000000001.ready
+000000010000000000000002.ready
+000000010000000000000003.ready
+8
+[exit=0]
+
+$ tail -n 600 "$(ls -t /var/lib/pgsql/log/*.log | head -1)" | grep -A 1 -E 'archive command failed' | tail -n 2
+2026-09-26 10:23:01.860 UTC [106] LOG:  archive command failed with exit code 1
+2026-09-26 10:23:01.860 UTC [106] DETAIL:  The failed archive command was: false
+[exit=0]
+
+$ df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M  317M  284M  53% /pgfs
+[exit=0]
+
+# 아카이브 대상을 고친다
+
+postgres=# ALTER SYSTEM SET archive_command = 'test ! -f /var/lib/pgsql/archive/%f && cp %p /var/lib/pgsql/archive/%f';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# SELECT archived_count, failed_count, last_archived_wal FROM pg_stat_archiver;
+ archived_count | failed_count |    last_archived_wal     
+----------------+--------------+--------------------------
+              8 |            1 | 000000010000000000000008
+(1 row)
+
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+postgres=# SELECT pg_size_pretty(pg_database_size('postgres')) AS db,
+postgres-#        (SELECT pg_size_pretty(sum(size)) FROM pg_ls_waldir()) AS pg_wal,
+postgres-#        (SELECT count(*) FROM pg_ls_waldir()) AS wal_files;
+   db   | pg_wal | wal_files 
+--------+--------+-----------
+ 157 MB | 144 MB |         9
+(1 row)
+
+
+$ df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M  317M  284M  53% /pgfs
+[exit=0]
+
+
+######## 2. 쓰지 않는 replication slot: WAL이 계속 쌓인다
+
+postgres=# SELECT pg_create_physical_replication_slot('standby1', true);
+ pg_create_physical_replication_slot 
+-------------------------------------
+ (standby1,0/927BDC0)
+(1 row)
+
+
+postgres=# SELECT slot_name, active, restart_lsn, wal_status, safe_wal_size FROM pg_replication_slots;
+ slot_name | active | restart_lsn | wal_status | safe_wal_size 
+-----------+--------+-------------+------------+---------------
+ standby1  | f      | 0/927BDC0   | reserved   |              
+(1 row)
+
+
+postgres=# SHOW max_slot_wal_keep_size;
+ max_slot_wal_keep_size 
+------------------------
+ -1
+(1 row)
+
+
+$ pgbench -n -c 4 -T 20 postgres 2>&1 | grep -E 'processed|tps'
+number of transactions actually processed: 251116
+tps = 12556.039820 (without initial connection time)
+[exit=0]
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+postgres=# SELECT pg_size_pretty(pg_database_size('postgres')) AS db,
+postgres-#        (SELECT pg_size_pretty(sum(size)) FROM pg_ls_waldir()) AS pg_wal,
+postgres-#        (SELECT count(*) FROM pg_ls_waldir()) AS wal_files;
+   db   | pg_wal | wal_files 
+--------+--------+-----------
+ 172 MB | 256 MB |        16
+(1 row)
+
+
+postgres=# SELECT slot_name, active, restart_lsn,
+postgres-#        pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained,
+postgres-#        wal_status
+postgres-# FROM pg_replication_slots;
+ slot_name | active | restart_lsn | retained | wal_status 
+-----------+--------+-------------+----------+------------
+ standby1  | f      | 0/927BDC0   | 249 MB   | reserved
+(1 row)
+
+
+$ df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M  444M  157M  74% /pgfs
+[exit=0]
+
+
+######## 3. 디스크가 가득 찬다
+
+# 비상용 여유 공간: 미리 50MB짜리 파일을 만들어 둔다
+
+$ dd if=/dev/zero of=/pgfs/ballast bs=1M count=50 status=none && ls -lh /pgfs/ballast
+-rw-r--r-- 1 postgres postgres 50M Sep 26 10:23 /pgfs/ballast
+[exit=0]
+
+$ timeout 300 pgbench -n -c 4 -T 280 postgres 2>&1 | tail -n 6
+number of transactions actually processed: 19799
+number of failed transactions: 0 (0.000%)
+latency average = 0.323 ms
+initial connection time = 3.756 ms
+tps = 12382.834023 (without initial connection time)
+pgbench: error: Run was aborted; the above results are incomplete.
+[exit=0]
+
+$ df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M  591M  9.8M  99% /pgfs
+[exit=0]
+
+$ tail -n 600 "$(ls -t /var/lib/pgsql/log/*.log | head -1)" | grep -E 'PANIC|No space left|terminated by signal|terminating any other|reinitializing|interrupted|aborting startup|shut down|redo' | tail -n 20
+2026-09-26 10:23:01.658 UTC [103] LOG:  database system was shut down at 2026-09-26 10:23:01 UTC
+2026-09-26 10:23:02.302 UTC [101] LOG:  checkpoint complete: wrote 2050 buffers (12.5%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.001 s, total=0.006 s; sync files=54, longest=0.001 s, average=0.000 s; distance=126082 kB, estimate=126082 kB; lsn=0/927BD48, redo lsn=0/927BCF0
+2026-09-26 10:23:07.849 UTC [101] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 8 recycled; write=0.001 s, sync=0.001 s, total=0.001 s; sync files=0, longest=0.000 s, average=0.000 s; distance=0 kB, estimate=113474 kB; lsn=0/927BE18, redo lsn=0/927BDC0
+2026-09-26 10:23:28.273 UTC [101] LOG:  checkpoint complete: wrote 16340 buffers (99.7%), wrote 40 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.028 s, sync=0.001 s, total=0.029 s; sync files=16, longest=0.001 s, average=0.001 s; distance=255071 kB, estimate=255071 kB; lsn=0/18B93B78, redo lsn=0/18B93B20
+2026-09-26 10:23:30.180 UTC [316] postgres@postgres/pgbench PANIC:  could not write to file "pg_wal/xlogtemp.316": No space left on device
+2026-09-26 10:23:30.182 UTC [96] LOG:  client backend (PID 316) was terminated by signal 6: Aborted
+2026-09-26 10:23:30.182 UTC [96] LOG:  terminating any other active server processes
+2026-09-26 10:23:30.182 UTC [106] FATAL:  archive command was terminated by signal 3: Quit
+2026-09-26 10:23:30.187 UTC [96] LOG:  all server processes terminated; reinitializing
+2026-09-26 10:23:30.204 UTC [328] LOG:  database system was interrupted; last known up at 2026-09-26 10:23:28 UTC
+2026-09-26 10:23:30.206 UTC [328] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-26 10:23:30.206 UTC [328] LOG:  redo starts at 0/18B93B20
+2026-09-26 10:23:30.292 UTC [328] LOG:  redo done at 0/1EFFF3D0 system usage: CPU: user: 0.05 s, system: 0.03 s, elapsed: 0.08 s
+2026-09-26 10:23:30.294 UTC [328] FATAL:  could not write to file "pg_wal/xlogtemp.328": No space left on device
+2026-09-26 10:23:30.298 UTC [96] LOG:  terminating any other active server processes
+2026-09-26 10:23:30.308 UTC [96] LOG:  database system is shut down
+[exit=0]
+
+$ pg_ctl -D $PGDATA status
+pg_ctl: no server running
+[exit=3]
+
+
+######## 4. 복구: 비상 공간을 풀고, 원인을 없앤다
+
+$ rm /pgfs/ballast
+$ df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M  541M   60M  91% /pgfs
+[exit=0]
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ tail -n 600 "$(ls -t /var/lib/pgsql/log/*.log | head -1)" | grep -E 'redo|ready to accept' | tail -n 4
+2026-09-26 10:23:30.531 UTC [380] LOG:  redo starts at 0/18B93B20
+2026-09-26 10:23:30.617 UTC [380] LOG:  redo done at 0/1EFFF3D0 system usage: CPU: user: 0.04 s, system: 0.04 s, elapsed: 0.08 s
+2026-09-26 10:23:30.643 UTC [378] LOG:  checkpoint complete: wrote 11979 buffers (73.1%), wrote 4 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.022 s, sync=0.001 s, total=0.022 s; sync files=11, longest=0.001 s, average=0.000 s; distance=102833 kB, estimate=102833 kB; lsn=0/1F000058, redo lsn=0/1F000058
+2026-09-26 10:23:30.644 UTC [373] LOG:  database system is ready to accept connections
+[exit=0]
+
+postgres=# SELECT slot_name, active, wal_status FROM pg_replication_slots;
+ slot_name | active | wal_status 
+-----------+--------+------------
+ standby1  | f      | reserved
+(1 row)
+
+
+postgres=# SELECT pg_drop_replication_slot('standby1');
+ pg_drop_replication_slot 
+--------------------------
+ 
+(1 row)
+
+
+postgres=# CHECKPOINT;
+CHECKPOINT
+
+postgres=# SELECT pg_size_pretty(pg_database_size('postgres')) AS db,
+postgres-#        (SELECT pg_size_pretty(sum(size)) FROM pg_ls_waldir()) AS pg_wal,
+postgres-#        (SELECT count(*) FROM pg_ls_waldir()) AS wal_files;
+   db   | pg_wal | wal_files 
+--------+--------+-----------
+ 173 MB | 224 MB |        14
+(1 row)
+
+
+$ df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M  413M  188M  69% /pgfs
+[exit=0]
+
+
+######## 5. temp file: 쿼리만 실패한다
+
+postgres=# SET temp_file_limit = '20MB';
+postgres-# SELECT count(*) FROM (SELECT * FROM pgbench_accounts ORDER BY filler, aid OFFSET 0) s;
+ERROR:  temporary file size exceeds "temp_file_limit" (20480kB)
+CONTEXT:  parallel worker
+SET
+
+# 제한이 없으면 디스크가 찰 때까지 쓴다. 여유 공간을 30MB만 남기고 해 본다
+
+$ avail=$(df --output=avail -m /pgfs | tail -n 1); dd if=/dev/zero of=/pgfs/filler bs=1M count=$((avail - 30)) status=none; df -h /pgfs
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           600M  571M   30M  96% /pgfs
+[exit=0]
+
+postgres=# SET max_parallel_workers_per_gather = 0;
+postgres-# SELECT count(*) FROM (SELECT * FROM pgbench_accounts ORDER BY filler, aid OFFSET 0) s;
+SET
+ERROR:  could not write to file "base/pgsql_tmp/pgsql_tmp459.0": No space left on device
+
+postgres=# SELECT 1 AS still_alive;
+ still_alive 
+-------------
+           1
+(1 row)
+
+
+$ rm /pgfs/filler
+[exit=0]
+
