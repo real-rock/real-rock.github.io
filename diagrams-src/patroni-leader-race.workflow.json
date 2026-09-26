@@ -1,0 +1,212 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "leader key가 사라졌을 때 replica가 하는 판단",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "security": {
+     "label": "DCS 작업"
+    },
+    "backend": {
+     "label": "자기 점검"
+    },
+    "database": {
+     "label": "PostgreSQL 작업"
+    },
+    "external": {
+     "label": "경쟁에서 빠짐"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "self",
+    "label": "자기 점검",
+    "focus": [
+     "gone",
+     "candidate",
+     "lag"
+    ],
+    "note": "nofailover 태그가 있거나 pause 상태이면 후보가 아닙니다. 받은 WAL이 DCS에 기록된 leader의 마지막 위치보다 maximum_lag_on_failover 넘게 뒤처져도 빠집니다."
+   },
+   {
+    "id": "compare",
+    "label": "서로 비교",
+    "focus": [
+     "lag",
+     "ask",
+     "follow"
+    ],
+    "note": "다른 멤버의 REST API(GET /patroni)에 물어 WAL 위치를 비교합니다. 나보다 앞선 멤버가 있으면 양보합니다."
+   },
+   {
+    "id": "win",
+    "label": "승격",
+    "focus": [
+     "ask",
+     "acquire",
+     "promote",
+     "follow"
+    ],
+    "note": "leader key는 없을 때만 만들 수 있으므로 동시에 시도해도 한 노드만 성공합니다. 성공한 노드가 promote하고 나머지는 새 leader를 따릅니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "race",
+   "label": "replica의 Patroni"
+  },
+  {
+   "id": "out",
+   "label": "양보",
+   "variant": "exception"
+  }
+ ],
+ "mainPath": [
+  "gone",
+  "candidate",
+  "lag",
+  "ask",
+  "acquire",
+  "promote"
+ ],
+ "nodes": [
+  {
+   "id": "gone",
+   "lane": "race",
+   "col": 0,
+   "type": "security",
+   "label": "leader key 없음",
+   "sublabel": "lease 만료",
+   "width": 150
+  },
+  {
+   "id": "candidate",
+   "lane": "race",
+   "col": 1,
+   "type": "backend",
+   "label": "후보인가",
+   "sublabel": "nofailover, pause",
+   "width": 150
+  },
+  {
+   "id": "lag",
+   "lane": "race",
+   "col": 2,
+   "type": "backend",
+   "label": "지연 확인",
+   "sublabel": "maximum_lag_on_failover",
+   "width": 180
+  },
+  {
+   "id": "ask",
+   "lane": "race",
+   "col": 3,
+   "type": "backend",
+   "label": "다른 멤버와 비교",
+   "sublabel": "GET /patroni",
+   "width": 160
+  },
+  {
+   "id": "acquire",
+   "lane": "race",
+   "col": 4,
+   "type": "security",
+   "label": "leader key 생성",
+   "sublabel": "없을 때만 성공",
+   "width": 160
+  },
+  {
+   "id": "promote",
+   "lane": "race",
+   "col": 5,
+   "type": "database",
+   "label": "promote",
+   "sublabel": "timeline + 1",
+   "width": 140
+  },
+  {
+   "id": "skip",
+   "lane": "out",
+   "col": 2,
+   "type": "external",
+   "label": "경쟁에서 빠짐",
+   "sublabel": "not healthy enough",
+   "width": 170
+  },
+  {
+   "id": "follow",
+   "lane": "out",
+   "col": 4,
+   "type": "external",
+   "label": "다른 노드를 따름",
+   "sublabel": "새 leader에 복제 연결",
+   "width": 180
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "gone",
+   "to": "candidate",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "candidate",
+   "to": "lag",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "lag",
+   "to": "ask",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "ask",
+   "to": "acquire",
+   "label": "내가 가장 앞섬",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "acquire",
+   "to": "promote",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e6",
+   "from": "candidate",
+   "to": "skip",
+   "label": "아니다",
+   "role": "branch"
+  },
+  {
+   "id": "e7",
+   "from": "lag",
+   "to": "skip",
+   "label": "너무 뒤처짐",
+   "role": "branch"
+  },
+  {
+   "id": "e8",
+   "from": "ask",
+   "to": "follow",
+   "label": "앞선 멤버 있음",
+   "role": "branch"
+  },
+  {
+   "id": "e9",
+   "from": "acquire",
+   "to": "follow",
+   "label": "선점당함",
+   "role": "branch"
+  }
+ ]
+}

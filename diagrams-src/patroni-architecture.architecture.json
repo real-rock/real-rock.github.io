@@ -1,0 +1,315 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "Patroni 클러스터: 누가 누구와 이야기하는가",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1300,
+   720
+  ],
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "external": {
+     "label": "애플리케이션"
+    },
+    "messagebus": {
+     "label": "연결 라우팅"
+    },
+    "database": {
+     "label": "PostgreSQL"
+    },
+    "backend": {
+     "label": "Patroni 데몬"
+    },
+    "security": {
+     "label": "DCS"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "write",
+    "label": "쓰기 경로",
+    "focus": [
+     "app",
+     "haproxy",
+     "pg1"
+    ],
+    "note": "HAProxy는 각 노드의 Patroni REST API(GET /primary)에 200을 돌려주는 노드 하나로만 쓰기 연결을 보냅니다."
+   },
+   {
+    "id": "replication",
+    "label": "복제",
+    "focus": [
+     "pg1",
+     "pg2",
+     "pg3"
+    ],
+    "note": "복제 자체는 PostgreSQL의 스트리밍 복제입니다. Patroni는 누가 primary인지 정하고 replica의 primary_conninfo를 써 줄 뿐입니다."
+   },
+   {
+    "id": "leader",
+    "label": "leader key",
+    "focus": [
+     "patroni1",
+     "patroni2",
+     "patroni3",
+     "etcd"
+    ],
+    "note": "leader인 Patroni는 loop_wait마다 leader key의 lease를 갱신합니다. 나머지는 key가 사라지는지 지켜보다가, 사라지면 서로 WAL 위치를 비교해 가장 앞선 노드가 key를 차지합니다."
+   }
+  ]
+ },
+ "components": [
+  {
+   "id": "app",
+   "type": "external",
+   "label": "애플리케이션",
+   "sublabel": "쓰기 5000, 읽기 5001",
+   "pos": [
+    40,
+    324
+   ],
+   "size": [
+    190,
+    72
+   ]
+  },
+  {
+   "id": "haproxy",
+   "type": "messagebus",
+   "label": "HAProxy",
+   "sublabel": "GET /primary, /replica",
+   "pos": [
+    300,
+    324
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "pg2",
+   "type": "database",
+   "label": "PostgreSQL (pg2)",
+   "sublabel": "replica, 읽기 전용",
+   "pos": [
+    580,
+    80
+   ],
+   "size": [
+    210,
+    72
+   ]
+  },
+  {
+   "id": "pg1",
+   "type": "database",
+   "label": "PostgreSQL (pg1)",
+   "sublabel": "primary",
+   "pos": [
+    580,
+    324
+   ],
+   "size": [
+    210,
+    72
+   ]
+  },
+  {
+   "id": "pg3",
+   "type": "database",
+   "label": "PostgreSQL (pg3)",
+   "sublabel": "replica, 읽기 전용",
+   "pos": [
+    580,
+    568
+   ],
+   "size": [
+    210,
+    72
+   ]
+  },
+  {
+   "id": "patroni2",
+   "type": "backend",
+   "label": "Patroni",
+   "sublabel": "REST API :8008",
+   "pos": [
+    850,
+    80
+   ],
+   "size": [
+    180,
+    72
+   ]
+  },
+  {
+   "id": "patroni1",
+   "type": "backend",
+   "label": "Patroni",
+   "sublabel": "REST API :8008",
+   "pos": [
+    850,
+    324
+   ],
+   "size": [
+    180,
+    72
+   ]
+  },
+  {
+   "id": "patroni3",
+   "type": "backend",
+   "label": "Patroni",
+   "sublabel": "REST API :8008",
+   "pos": [
+    850,
+    568
+   ],
+   "size": [
+    180,
+    72
+   ]
+  },
+  {
+   "id": "etcd",
+   "type": "security",
+   "label": "etcd 클러스터",
+   "sublabel": "3대, Raft 쿼럼",
+   "pos": [
+    1090,
+    324
+   ],
+   "size": [
+    180,
+    72
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "pg2 노드",
+   "wraps": [
+    "pg2",
+    "patroni2"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "pg1 노드 (leader)",
+   "wraps": [
+    "pg1",
+    "patroni1"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "pg3 노드",
+   "wraps": [
+    "pg3",
+    "patroni3"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "c1",
+   "from": "app",
+   "to": "haproxy",
+   "label": "접속"
+  },
+  {
+   "id": "c2",
+   "from": "haproxy",
+   "to": "pg1",
+   "label": "쓰기",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c3",
+   "from": "haproxy",
+   "to": "pg2",
+   "label": "읽기",
+   "variant": "dashed",
+   "fromSide": "top",
+   "toSide": "left"
+  },
+  {
+   "id": "c4",
+   "from": "haproxy",
+   "to": "pg3",
+   "label": "읽기",
+   "variant": "dashed",
+   "fromSide": "bottom",
+   "toSide": "left"
+  },
+  {
+   "id": "c5",
+   "from": "pg1",
+   "to": "pg2",
+   "label": "WAL 스트리밍",
+   "labelAt": [
+    685,
+    242
+   ]
+  },
+  {
+   "id": "c6",
+   "from": "pg1",
+   "to": "pg3",
+   "label": "WAL 스트리밍",
+   "labelAt": [
+    685,
+    486
+   ]
+  },
+  {
+   "id": "c7",
+   "from": "patroni1",
+   "to": "pg1",
+   "label": "관리"
+  },
+  {
+   "id": "c8",
+   "from": "patroni2",
+   "to": "pg2",
+   "label": "관리"
+  },
+  {
+   "id": "c9",
+   "from": "patroni3",
+   "to": "pg3",
+   "label": "관리"
+  },
+  {
+   "id": "c10",
+   "from": "patroni1",
+   "to": "etcd",
+   "label": "lease 갱신",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c11",
+   "from": "patroni2",
+   "to": "etcd",
+   "label": "watch",
+   "variant": "dashed",
+   "fromSide": "right",
+   "toSide": "top"
+  },
+  {
+   "id": "c12",
+   "from": "patroni3",
+   "to": "etcd",
+   "label": "watch",
+   "variant": "dashed",
+   "fromSide": "right",
+   "toSide": "bottom"
+  }
+ ]
+}

@@ -1,0 +1,200 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "etcd와 끊긴 primary: 강등이 승격보다 먼저 일어난다",
+  "quality_profile": "showcase",
+  "viewBox": [
+   960,
+   620
+  ],
+  "column_fit": "spread",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "emphasis": {
+     "label": "leader 교대"
+    },
+    "default": {
+     "label": "요청"
+    },
+    "return": {
+     "label": "응답, 알림"
+    },
+    "dashed": {
+     "label": "실패, 재시도"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "normal",
+    "label": "정상",
+    "focus": [
+     "patroni2",
+     "etcd"
+    ],
+    "note": "leader인 pg2의 Patroni는 10초(loop_wait)마다 lease를 갱신합니다. 마지막 갱신은 22:32:28이었습니다."
+   },
+   {
+    "id": "demote",
+    "label": "자진 강등",
+    "focus": [
+     "patroni2",
+     "etcd",
+     "pgsql2",
+     "client"
+    ],
+    "note": "22:32:32에 etcd로 가는 연결을 막았습니다. 다음 loop부터 갱신이 실패하고, retry_timeout(10초) 안에 성공하지 못하자 22:32:46에 스스로 read-only로 내려갑니다."
+   },
+   {
+    "id": "promote",
+    "label": "승격",
+    "focus": [
+     "etcd",
+     "patroni1",
+     "pgsql1",
+     "client"
+    ],
+    "note": "leader key는 마지막 갱신 뒤 TTL 30초가 지난 22:32:58에 사라지고, 그제서야 pg1이 key를 잡고 promote합니다. 두 primary가 동시에 쓰기를 받는 구간이 없습니다."
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "client",
+   "type": "external",
+   "label": "클라이언트",
+   "sublabel": "HAProxy 경유"
+  },
+  {
+   "id": "pgsql2",
+   "type": "database",
+   "label": "PostgreSQL",
+   "sublabel": "pg2 (primary)"
+  },
+  {
+   "id": "patroni2",
+   "type": "backend",
+   "label": "Patroni",
+   "sublabel": "pg2"
+  },
+  {
+   "id": "etcd",
+   "type": "security",
+   "label": "etcd",
+   "sublabel": "leader key, TTL 30초"
+  },
+  {
+   "id": "patroni1",
+   "type": "backend",
+   "label": "Patroni",
+   "sublabel": "pg1"
+  },
+  {
+   "id": "pgsql1",
+   "type": "database",
+   "label": "PostgreSQL",
+   "sublabel": "pg1 (replica)"
+  }
+ ],
+ "segments": [
+  {
+   "from": 160,
+   "to": 236,
+   "label": "정상"
+  },
+  {
+   "from": 242,
+   "to": 402,
+   "label": "강등"
+  },
+  {
+   "from": 408,
+   "to": 560,
+   "label": "승격"
+  }
+ ],
+ "messages": [
+  {
+   "id": "m1",
+   "from": "client",
+   "to": "pgsql2",
+   "y": 176,
+   "label": "INSERT 성공",
+   "variant": "default"
+  },
+  {
+   "id": "m2",
+   "from": "patroni2",
+   "to": "etcd",
+   "y": 212,
+   "label": "22:32:28 lease 갱신",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m3",
+   "from": "patroni2",
+   "to": "etcd",
+   "y": 262,
+   "label": "22:32:38 갱신 실패 (차단)",
+   "variant": "dashed"
+  },
+  {
+   "id": "m4",
+   "from": "patroni2",
+   "to": "etcd",
+   "y": 296,
+   "label": "retry_timeout 10초 재시도",
+   "variant": "dashed"
+  },
+  {
+   "id": "m5",
+   "from": "patroni2",
+   "to": "pgsql2",
+   "y": 334,
+   "label": "22:32:46 demote",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m6",
+   "from": "pgsql2",
+   "to": "client",
+   "y": 372,
+   "label": "22:32:47 read-only 오류",
+   "variant": "return"
+  },
+  {
+   "id": "m7",
+   "from": "etcd",
+   "to": "patroni1",
+   "y": 428,
+   "label": "22:32:58 key 만료",
+   "variant": "return"
+  },
+  {
+   "id": "m8",
+   "from": "patroni1",
+   "to": "etcd",
+   "y": 462,
+   "label": "leader key 획득",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m9",
+   "from": "patroni1",
+   "to": "pgsql1",
+   "y": 496,
+   "label": "promote",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m10",
+   "from": "client",
+   "to": "pgsql1",
+   "y": 536,
+   "label": "22:32:59 INSERT 성공",
+   "variant": "default"
+  }
+ ]
+}
