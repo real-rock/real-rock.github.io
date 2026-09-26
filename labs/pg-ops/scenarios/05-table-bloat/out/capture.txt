@@ -1,0 +1,420 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+e56300d51f0fbf8308cec2db5ffc0f8679607aba0bda921570a6ff5f40738319
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_autovacuum_min_duration = 0;
+ALTER SYSTEM
+
+# 실습에서 autovacuum이 빨리 돌도록 naptime을 줄인다 (운영 권장값 아님)
+
+postgres=# ALTER SYSTEM SET autovacuum_naptime = '5s';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# CREATE EXTENSION pgstattuple;
+CREATE EXTENSION
+
+
+######## 1. 테이블 준비
+
+postgres=# CREATE TABLE items (id int PRIMARY KEY, status text, payload text);
+CREATE TABLE
+
+postgres=# CREATE INDEX items_status_idx ON items (status);
+CREATE INDEX
+
+# bloat가 쌓이는 과정을 보려고 이 테이블의 autovacuum을 끈다
+
+postgres=# ALTER TABLE items SET (autovacuum_enabled = false);
+ALTER TABLE
+
+postgres=# INSERT INTO items SELECT g, 'new', repeat('x', 200) FROM generate_series(1, 1000000) g;
+INSERT 0 1000000
+
+postgres=# VACUUM ANALYZE items;
+VACUUM
+
+postgres=# SELECT pg_size_pretty(pg_table_size('items')) AS table_size,
+postgres-#        pg_size_pretty(pg_relation_size('items_pkey')) AS pkey,
+postgres-#        pg_size_pretty(pg_relation_size('items_status_idx')) AS status_idx;
+ table_size | pkey  | status_idx 
+------------+-------+------------
+ 237 MB     | 21 MB | 6312 kB
+(1 row)
+
+
+postgres=# SELECT tuple_count, dead_tuple_count, round(dead_tuple_percent::numeric, 1) AS dead_pct,
+postgres-#        round(free_percent::numeric, 1) AS free_pct, pg_size_pretty(table_len) AS table_len
+postgres-# FROM pgstattuple('items');
+ tuple_count | dead_tuple_count | dead_pct | free_pct | table_len 
+-------------+------------------+----------+----------+-----------
+     1000000 |                0 |      0.0 |      1.4 | 237 MB
+(1 row)
+
+
+postgres=# SELECT 'items_status_idx' AS index, leaf_pages, round(avg_leaf_density::numeric, 1) AS avg_leaf_density,
+postgres-#        pg_size_pretty(index_size) AS size
+postgres-# FROM pgstatindex('items_status_idx');
+      index       | leaf_pages | avg_leaf_density |  size   
+------------------+------------+------------------+---------
+ items_status_idx |        783 |             96.1 | 6312 kB
+(1 row)
+
+
+
+######## 2. 대량 UPDATE로 부풀리기
+
+postgres=# UPDATE items SET status = 'paid';
+UPDATE 1000000
+
+postgres=# UPDATE items SET status = 'shipped';
+UPDATE 1000000
+
+postgres=# UPDATE items SET status = 'done';
+UPDATE 1000000
+
+postgres=# SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 'items';
+ n_live_tup | n_dead_tup 
+------------+------------
+    1000000 |    3000000
+(1 row)
+
+
+postgres=# SELECT pg_size_pretty(pg_table_size('items')) AS table_size,
+postgres-#        pg_size_pretty(pg_relation_size('items_pkey')) AS pkey,
+postgres-#        pg_size_pretty(pg_relation_size('items_status_idx')) AS status_idx;
+ table_size | pkey  | status_idx 
+------------+-------+------------
+ 947 MB     | 43 MB | 25 MB
+(1 row)
+
+
+postgres=# SELECT tuple_count, dead_tuple_count, round(dead_tuple_percent::numeric, 1) AS dead_pct,
+postgres-#        round(free_percent::numeric, 1) AS free_pct, pg_size_pretty(table_len) AS table_len
+postgres-# FROM pgstattuple('items');
+ tuple_count | dead_tuple_count | dead_pct | free_pct | table_len 
+-------------+------------------+----------+----------+-----------
+     1000000 |          1000000 |     24.2 |     49.8 | 947 MB
+(1 row)
+
+
+
+######## 3. VACUUM은 공간을 비우지만 파일을 줄이지 않는다
+
+postgres=# VACUUM (VERBOSE) items;
+INFO:  vacuuming "postgres.public.items"
+INFO:  launched 1 parallel vacuum worker for index vacuuming (planned: 1)
+INFO:  finished vacuuming "postgres.public.items": index scans: 1
+pages: 0 removed, 121212 remain, 121212 scanned (100.00% of total), 0 eagerly scanned
+tuples: 1000000 removed, 1000000 remain, 0 are dead but not yet removable
+removable cutoff: 772, which was 0 XIDs old when operation ended
+new relfrozenxid: 771, which is 15 XIDs ahead of previous value
+frozen: 2 pages from table (0.00% of total) had 33 tuples frozen
+visibility map: 121212 pages set all-visible, 90909 pages set all-frozen (0 were all-visible)
+index scan needed: 90910 pages from table (75.00% of total) had 3000000 dead item identifiers removed
+index "items_pkey": pages: 5486 in total, 0 newly deleted, 0 currently deleted, 0 reusable
+index "items_status_idx": pages: 3151 in total, 2358 newly deleted, 2358 currently deleted, 0 reusable
+avg read rate: 2486.773 MB/s, avg write rate: 1741.955 MB/s
+buffer usage: 156210 hits, 204743 reads, 143420 dirtied
+WAL usage: 254976 records, 129073 full page images, 306909696 bytes, 15297 buffers full
+system usage: CPU: user: 0.37 s, system: 0.15 s, elapsed: 0.64 s
+INFO:  vacuuming "postgres.pg_toast.pg_toast_16394"
+INFO:  finished vacuuming "postgres.pg_toast.pg_toast_16394": index scans: 0
+pages: 0 removed, 0 remain, 0 scanned (100.00% of total), 0 eagerly scanned
+tuples: 0 removed, 0 remain, 0 are dead but not yet removable
+removable cutoff: 772, which was 0 XIDs old when operation ended
+new relfrozenxid: 772, which is 15 XIDs ahead of previous value
+frozen: 0 pages from table (100.00% of total) had 0 tuples frozen
+visibility map: 0 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+index scan not needed: 0 pages from table (100.00% of total) had 0 dead item identifiers removed
+avg read rate: 132.415 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 27 hits, 1 reads, 0 dirtied
+WAL usage: 1 records, 0 full page images, 258 bytes, 0 buffers full
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+VACUUM
+
+postgres=# SELECT pg_size_pretty(pg_table_size('items')) AS table_size,
+postgres-#        pg_size_pretty(pg_relation_size('items_pkey')) AS pkey,
+postgres-#        pg_size_pretty(pg_relation_size('items_status_idx')) AS status_idx;
+ table_size | pkey  | status_idx 
+------------+-------+------------
+ 947 MB     | 43 MB | 25 MB
+(1 row)
+
+
+postgres=# SELECT tuple_count, dead_tuple_count, round(dead_tuple_percent::numeric, 1) AS dead_pct,
+postgres-#        round(free_percent::numeric, 1) AS free_pct, pg_size_pretty(table_len) AS table_len
+postgres-# FROM pgstattuple('items');
+ tuple_count | dead_tuple_count | dead_pct | free_pct | table_len 
+-------------+------------------+----------+----------+-----------
+     1000000 |                0 |      0.0 |     75.1 | 947 MB
+(1 row)
+
+
+postgres=# SELECT 'items_status_idx' AS index, leaf_pages, round(avg_leaf_density::numeric, 1) AS avg_leaf_density,
+postgres-#        pg_size_pretty(index_size) AS size
+postgres-# FROM pgstatindex('items_status_idx');
+      index       | leaf_pages | avg_leaf_density | size  
+------------------+------------+------------------+-------
+ items_status_idx |        785 |             95.9 | 25 MB
+(1 row)
+
+
+# 비운 자리는 새 행이 다시 쓴다
+
+postgres=# INSERT INTO items SELECT g, 'new', repeat('x', 200) FROM generate_series(1000001, 1500000) g;
+INSERT 0 500000
+
+postgres=# SELECT pg_size_pretty(pg_table_size('items')) AS table_size,
+postgres-#        pg_size_pretty(pg_relation_size('items_pkey')) AS pkey,
+postgres-#        pg_size_pretty(pg_relation_size('items_status_idx')) AS status_idx;
+ table_size | pkey  | status_idx 
+------------+-------+------------
+ 947 MB     | 54 MB | 28 MB
+(1 row)
+
+
+postgres=# SELECT tuple_count, dead_tuple_count, round(dead_tuple_percent::numeric, 1) AS dead_pct,
+postgres-#        round(free_percent::numeric, 1) AS free_pct, pg_size_pretty(table_len) AS table_len
+postgres-# FROM pgstattuple('items');
+ tuple_count | dead_tuple_count | dead_pct | free_pct | table_len 
+-------------+------------------+----------+----------+-----------
+     1500000 |                0 |      0.0 |     62.8 | 947 MB
+(1 row)
+
+
+
+######## 4. REINDEX CONCURRENTLY
+
+postgres=# REINDEX INDEX CONCURRENTLY items_status_idx;
+REINDEX
+
+postgres=# SELECT pg_size_pretty(pg_table_size('items')) AS table_size,
+postgres-#        pg_size_pretty(pg_relation_size('items_pkey')) AS pkey,
+postgres-#        pg_size_pretty(pg_relation_size('items_status_idx')) AS status_idx;
+ table_size | pkey  | status_idx 
+------------+-------+------------
+ 947 MB     | 54 MB | 10176 kB
+(1 row)
+
+
+postgres=# SELECT 'items_status_idx' AS index, leaf_pages, round(avg_leaf_density::numeric, 1) AS avg_leaf_density,
+postgres-#        pg_size_pretty(index_size) AS size
+postgres-# FROM pgstatindex('items_status_idx');
+      index       | leaf_pages | avg_leaf_density |   size   
+------------------+------------+------------------+----------
+ items_status_idx |       1263 |             90.0 | 10176 kB
+(1 row)
+
+
+
+######## 5. VACUUM FULL은 테이블을 막는다
+
+postgres=# DELETE FROM items WHERE id > 1000000;
+DELETE 500000
+
+postgres=# VACUUM items;
+VACUUM
+
+postgres=# SELECT tuple_count, dead_tuple_count, round(dead_tuple_percent::numeric, 1) AS dead_pct,
+postgres-#        round(free_percent::numeric, 1) AS free_pct, pg_size_pretty(table_len) AS table_len
+postgres-# FROM pgstattuple('items');
+ tuple_count | dead_tuple_count | dead_pct | free_pct | table_len 
+-------------+------------------+----------+----------+-----------
+     1000000 |                0 |      0.0 |     75.1 | 947 MB
+(1 row)
+
+
+# 세션 A 시작: psql -X 
+
+A=# SET application_name = 'maint';
+SET
+
+A=# \timing on
+Timing is on.
+
+# 세션 B 시작: psql -X 
+
+B=# SET application_name = 'app';
+SET
+
+B=# \timing on
+Timing is on.
+
+A=# VACUUM FULL items;
+VACUUM
+Time: 627.885 ms
+
+postgres=# SELECT pg_size_pretty(pg_table_size('items')) AS table_size,
+postgres-#        pg_size_pretty(pg_relation_size('items_pkey')) AS pkey,
+postgres-#        pg_size_pretty(pg_relation_size('items_status_idx')) AS status_idx;
+ table_size | pkey  | status_idx 
+------------+-------+------------
+ 237 MB     | 21 MB | 6792 kB
+(1 row)
+
+
+postgres=# SELECT tuple_count, dead_tuple_count, round(dead_tuple_percent::numeric, 1) AS dead_pct,
+postgres-#        round(free_percent::numeric, 1) AS free_pct, pg_size_pretty(table_len) AS table_len
+postgres-# FROM pgstattuple('items');
+ tuple_count | dead_tuple_count | dead_pct | free_pct | table_len 
+-------------+------------------+----------+----------+-----------
+     1000000 |                0 |      0.0 |      1.4 | 237 MB
+(1 row)
+
+
+# VACUUM FULL이 도는 동안 다른 세션은 그 테이블을 읽지도 못한다. 더 큰 테이블로 본다
+
+postgres=# CREATE TABLE big (id int PRIMARY KEY, payload text);
+CREATE TABLE
+
+postgres=# INSERT INTO big SELECT g, repeat('x', 200) FROM generate_series(1, 4000000) g;
+INSERT 0 4000000
+
+postgres=# SELECT pg_size_pretty(pg_table_size('big')) AS big_size;
+ big_size 
+----------
+ 919 MB
+(1 row)
+
+
+A=# VACUUM FULL big;
+
+B=# SELECT count(*) FROM big WHERE id = 1;
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type, wait_event, left(query, 40) AS query
+postgres-# FROM pg_stat_activity WHERE application_name IN ('maint', 'app') ORDER BY pid;
+ pid |  app  | state  | wait_event_type | wait_event |                 query                  
+-----+-------+--------+-----------------+------------+----------------------------------------
+ 295 | maint | active | LWLock          | WALWrite   | VACUUM FULL big;
+ 355 | app   | active | Lock            | relation   | SELECT count(*) FROM big WHERE id = 1;
+(2 rows)
+
+
+postgres=# SELECT pid, command, phase, heap_tuples_scanned, heap_tuples_written
+postgres-# FROM pg_stat_progress_cluster;
+ pid |   command   |       phase       | heap_tuples_scanned | heap_tuples_written 
+-----+-------------+-------------------+---------------------+---------------------
+ 295 | VACUUM FULL | seq scanning heap |             1431808 |             1431808
+(1 row)
+
+
+postgres=# SELECT l.pid, a.application_name AS app, l.mode, l.granted
+postgres-# FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+postgres-# WHERE l.locktype = 'relation' AND l.relation = 'big'::regclass ORDER BY l.granted DESC;
+ pid |  app  |        mode         | granted 
+-----+-------+---------------------+---------
+ 295 | maint | AccessExclusiveLock | t
+ 355 | app   | AccessShareLock     | f
+(2 rows)
+
+
+# 세션 A: 앞 명령의 결과를 기다림
+VACUUM
+Time: 3951.015 ms (00:03.951)
+
+# 세션 B: 앞 명령의 결과를 기다림
+ count 
+-------
+     1
+(1 row)
+
+Time: 3479.863 ms (00:03.480)
+
+
+######## 6. autovacuum 기준
+
+postgres=# SELECT name, setting FROM pg_settings
+postgres-# WHERE name IN ('autovacuum_vacuum_threshold', 'autovacuum_vacuum_scale_factor',
+postgres-#                'autovacuum_vacuum_max_threshold', 'autovacuum_vacuum_insert_threshold',
+postgres-#                'autovacuum_vacuum_insert_scale_factor')
+postgres-# ORDER BY name;
+                 name                  |  setting  
+---------------------------------------+-----------
+ autovacuum_vacuum_insert_scale_factor | 0.2
+ autovacuum_vacuum_insert_threshold    | 1000
+ autovacuum_vacuum_max_threshold       | 100000000
+ autovacuum_vacuum_scale_factor        | 0.2
+ autovacuum_vacuum_threshold           | 50
+(5 rows)
+
+
+postgres=# CREATE TABLE events (id int PRIMARY KEY, state text);
+CREATE TABLE
+
+postgres=# INSERT INTO events SELECT g, 'new' FROM generate_series(1, 1000000) g;
+INSERT 0 1000000
+
+postgres=# VACUUM ANALYZE events;
+VACUUM
+
+postgres=# UPDATE events SET state = 'seen' WHERE id <= 150000;
+UPDATE 150000
+
+postgres=# SELECT s.relname, s.n_live_tup, s.n_dead_tup,
+postgres-#        50 + 0.2 * c.reltuples AS vacuum_threshold, s.last_autovacuum
+postgres-# FROM pg_stat_user_tables s JOIN pg_class c ON c.oid = s.relid
+postgres-# WHERE s.relname = 'events';
+ relname | n_live_tup | n_dead_tup | vacuum_threshold | last_autovacuum 
+---------+------------+------------+------------------+-----------------
+ events  |    1000000 |     150000 |           200050 | 
+(1 row)
+
+
+# 15초 뒤: dead tuple이 기준(20%)에 못 미쳐 autovacuum이 돌지 않았다
+
+postgres=# SELECT relname, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE relname = 'events';
+ relname | n_dead_tup | last_autovacuum | autovacuum_count 
+---------+------------+-----------------+------------------
+ events  |     150000 |                 |                0
+(1 row)
+
+
+postgres=# ALTER TABLE events SET (autovacuum_vacuum_scale_factor = 0.05);
+ALTER TABLE
+
+postgres=# SELECT relname, n_dead_tup, last_autovacuum, autovacuum_count FROM pg_stat_user_tables WHERE relname = 'events';
+ relname | n_dead_tup |        last_autovacuum        | autovacuum_count 
+---------+------------+-------------------------------+------------------
+ events  |          0 | 2026-09-26 10:19:50.168624+00 |                1
+(1 row)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 4 -E 'automatic vacuum of table "postgres.public.events"'
+2026-09-26 10:19:50.168 UTC [646] LOG:  automatic vacuum of table "postgres.public.events": index scans: 1
+	pages: 0 removed, 5236 remain, 1476 scanned (28.19% of total), 0 eagerly scanned
+	tuples: 150000 removed, 868345 remain, 0 are dead but not yet removable
+	removable cutoff: 789, which was 0 XIDs old when operation ended
+	frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+[exit=0]
+
