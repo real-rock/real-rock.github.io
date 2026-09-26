@@ -10,6 +10,12 @@
 <link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | absURL }}">
 <link rel="manifest" href="{{ "site.webmanifest" | absURL }}">
 
+{{- /* Google AdSense: 로컬 hugo server(development)에서는 넣지 않습니다 */ -}}
+{{- with and hugo.IsProduction site.Params.adsenseClient }}
+<meta name="google-adsense-account" content="{{ . }}">
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={{ . }}" crossorigin="anonymous"></script>
+{{- end }}
+
 {{- /* 연재 목차를 접어 둔 상태를 화면이 그려지기 전에 적용 */ -}}
 <script>try { if (localStorage.getItem("rail-series") === "off") document.documentElement.dataset.rail = "off"; } catch (e) {}</script>
 

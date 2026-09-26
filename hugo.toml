@@ -25,6 +25,9 @@ enableEmoji = true
   ShowCodeCopyButtons = true
   profile = "MongoDB와 PostgreSQL을 다루는 DBA"   # 홈 사이드바 프로필 한 줄
 
+  # Google AdSense 게시자 ID. 스크립트는 production 빌드에서만 넣습니다(extend_head.html)
+  adsenseClient = "ca-pub-2328462223207350"
+
   # 파비콘: static/ 아래 파일. 원본은 favicon.svg(JetBrains Mono J + 강조색 커서)
   [params.assets]
     favicon = "favicon.ico"
