@@ -1,0 +1,429 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+3dbf80d9133e3ff67fccc01347f02b224067a6441e3a29f87860b15a4fd08661
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET log_lock_waits = on;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# CREATE TABLE orders (id int PRIMARY KEY, status text);
+CREATE TABLE
+
+postgres=# INSERT INTO orders SELECT g, 'new' FROM generate_series(1, 3) g;
+INSERT 0 3
+
+postgres=# SHOW deadlock_timeout;
+ deadlock_timeout 
+------------------
+ 1s
+(1 row)
+
+
+
+######## 1. 행 락: 한 세션이 여러 세션을 막는다
+
+# 세션 A 시작: psql -X 
+
+A=# SET application_name = 'app_a';
+SET
+
+# 세션 B 시작: psql -X 
+
+B=# SET application_name = 'app_b';
+SET
+
+# 세션 C 시작: psql -X 
+
+C=# SET application_name = 'app_c';
+SET
+
+A=# BEGIN;
+BEGIN
+
+A=# UPDATE orders SET status = 'paid' WHERE id = 1;
+UPDATE 1
+
+B=# UPDATE orders SET status = 'canceled' WHERE id = 1;
+
+C=# UPDATE orders SET status = 'shipped' WHERE id = 1;
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type AS wtype, wait_event,
+postgres-#        pg_blocking_pids(pid) AS blocked_by, left(query, 45) AS query
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY xact_start NULLS LAST, pid;
+ pid |  app  |        state        | wtype  |  wait_event   | blocked_by |                     query                     
+-----+-------+---------------------+--------+---------------+------------+-----------------------------------------------
+ 104 | app_a | idle in transaction | Client | ClientRead    | {}         | UPDATE orders SET status = 'paid' WHERE id = 
+ 141 | app_b | active              | Lock   | transactionid | {104}      | UPDATE orders SET status = 'canceled' WHERE i
+ 178 | app_c | active              | Lock   | tuple         | {141}      | UPDATE orders SET status = 'shipped' WHERE id
+(3 rows)
+
+
+postgres=# SELECT l.pid, a.application_name AS app, l.locktype, l.transactionid AS xid,
+postgres-#        l.page, l.tuple, l.mode, l.granted
+postgres-# FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+postgres-# WHERE l.locktype IN ('transactionid', 'tuple') AND a.application_name LIKE 'app_%'
+postgres-# ORDER BY l.granted DESC, l.pid;
+ pid |  app  |   locktype    | xid | page | tuple |     mode      | granted 
+-----+-------+---------------+-----+------+-------+---------------+---------
+ 104 | app_a | transactionid | 754 |      |       | ExclusiveLock | t
+ 141 | app_b | tuple         |     |    0 |     1 | ExclusiveLock | t
+ 141 | app_b | transactionid | 755 |      |       | ExclusiveLock | t
+ 178 | app_c | transactionid | 756 |      |       | ExclusiveLock | t
+ 141 | app_b | transactionid | 754 |      |       | ShareLock     | f
+ 178 | app_c | tuple         |     |    0 |     1 | ExclusiveLock | f
+(6 rows)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'still waiting|Process holding|STATEMENT'
+2026-09-26 09:49:39.566 UTC [141] postgres@postgres/app_b LOG:  process 141 still waiting for ShareLock on transaction 754 after 1000.154 ms
+2026-09-26 09:49:39.566 UTC [141] postgres@postgres/app_b DETAIL:  Process holding the lock: 104. Wait queue: 141.
+2026-09-26 09:49:39.566 UTC [141] postgres@postgres/app_b STATEMENT:  UPDATE orders SET status = 'canceled' WHERE id = 1;
+2026-09-26 09:49:40.864 UTC [178] postgres@postgres/app_c LOG:  process 178 still waiting for ExclusiveLock on tuple (0,1) of relation 16384 of database 5 after 1000.504 ms
+2026-09-26 09:49:40.864 UTC [178] postgres@postgres/app_c DETAIL:  Process holding the lock: 141. Wait queue: 178.
+2026-09-26 09:49:40.864 UTC [178] postgres@postgres/app_c STATEMENT:  UPDATE orders SET status = 'shipped' WHERE id = 1;
+[exit=0]
+
+# 로그의 relation, database는 OID로 찍힌다
+
+postgres=# SELECT (SELECT oid FROM pg_class WHERE relname = 'orders') AS orders_oid,
+postgres-#        (SELECT oid FROM pg_database WHERE datname = 'postgres') AS postgres_oid;
+ orders_oid | postgres_oid 
+------------+--------------
+      16384 |            5
+(1 row)
+
+
+# 막고 있는 세션(A)은 idle in transaction이다. pg_cancel_backend는 실행 중인 쿼리가 없으니 소용이 없다
+
+postgres=# SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name = 'app_a';
+ pg_cancel_backend 
+-------------------
+ t
+(1 row)
+
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type AS wtype, wait_event,
+postgres-#        pg_blocking_pids(pid) AS blocked_by, left(query, 45) AS query
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY xact_start NULLS LAST, pid;
+ pid |  app  |        state        | wtype  |  wait_event   | blocked_by |                     query                     
+-----+-------+---------------------+--------+---------------+------------+-----------------------------------------------
+ 104 | app_a | idle in transaction | Client | ClientRead    | {}         | UPDATE orders SET status = 'paid' WHERE id = 
+ 141 | app_b | active              | Lock   | transactionid | {104}      | UPDATE orders SET status = 'canceled' WHERE i
+ 178 | app_c | active              | Lock   | tuple         | {141}      | UPDATE orders SET status = 'shipped' WHERE id
+(3 rows)
+
+
+postgres=# SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'app_a';
+ pg_terminate_backend 
+----------------------
+ t
+(1 row)
+
+
+# 세션 B: 앞 명령의 결과를 기다림
+UPDATE 1
+
+# 세션 C: 앞 명령의 결과를 기다림
+UPDATE 1
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type AS wtype, wait_event,
+postgres-#        pg_blocking_pids(pid) AS blocked_by, left(query, 45) AS query
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY xact_start NULLS LAST, pid;
+ pid |  app  | state | wtype  | wait_event | blocked_by |                     query                     
+-----+-------+-------+--------+------------+------------+-----------------------------------------------
+ 141 | app_b | idle  | Client | ClientRead | {}         | UPDATE orders SET status = 'canceled' WHERE i
+ 178 | app_c | idle  | Client | ClientRead | {}         | UPDATE orders SET status = 'shipped' WHERE id
+(2 rows)
+
+
+A=# SELECT 1;
+FATAL:  terminating connection due to administrator command
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
+
+postgres=# SELECT id, status FROM orders WHERE id = 1;
+ id | status  
+----+---------
+  1 | shipped
+(1 row)
+
+
+
+######## 2. DDL이 만드는 락 큐
+
+# 세션 A 시작: psql -X 
+
+A=# SET application_name = 'app_a';
+SET
+
+# 세션 B 시작: psql -X 
+
+B=# SET application_name = 'app_b';
+SET
+
+A=# BEGIN;
+BEGIN
+
+A=# SELECT count(*) FROM orders;
+ count 
+-------
+     3
+(1 row)
+
+
+B=# ALTER TABLE orders ADD COLUMN note text;
+
+# 평범한 SELECT 5개를 띄운다
+
+$ for i in 1 2 3 4 5; do PGAPPNAME=reader nohup psql -X -c "SELECT count(*) FROM orders" > /tmp/reader_$i.out 2>&1 & done
+[exit=0]
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type AS wtype, wait_event,
+postgres-#        pg_blocking_pids(pid) AS blocked_by, left(query, 45) AS query
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY xact_start NULLS LAST, pid;
+ pid |  app   |        state        | wtype  | wait_event | blocked_by |                  query                   
+-----+--------+---------------------+--------+------------+------------+------------------------------------------
+ 445 | app_a  | idle in transaction | Client | ClientRead | {}         | SELECT count(*) FROM orders;
+ 482 | app_b  | active              | Lock   | relation   | {445}      | ALTER TABLE orders ADD COLUMN note text;
+ 582 | reader | active              | Lock   | relation   | {482}      | SELECT count(*) FROM orders
+ 583 | reader | active              | Lock   | relation   | {482}      | SELECT count(*) FROM orders
+ 584 | reader | active              | Lock   | relation   | {482}      | SELECT count(*) FROM orders
+ 585 | reader | active              | Lock   | relation   | {482}      | SELECT count(*) FROM orders
+ 586 | reader | active              | Lock   | relation   | {482}      | SELECT count(*) FROM orders
+(7 rows)
+
+
+postgres=# SELECT l.pid, a.application_name AS app, l.mode, l.granted,
+postgres-#        now() - l.waitstart AS waiting
+postgres-# FROM pg_locks l JOIN pg_stat_activity a USING (pid)
+postgres-# WHERE l.locktype = 'relation' AND l.relation = 'orders'::regclass
+postgres-# ORDER BY l.granted DESC, l.waitstart, l.pid;
+ pid |  app   |        mode         | granted |     waiting     
+-----+--------+---------------------+---------+-----------------
+ 445 | app_a  | AccessShareLock     | t       | 
+ 482 | app_b  | AccessExclusiveLock | f       | 00:00:03.994895
+ 582 | reader | AccessShareLock     | f       | 00:00:02.147873
+ 583 | reader | AccessShareLock     | f       | 00:00:02.147817
+ 584 | reader | AccessShareLock     | f       | 00:00:02.147746
+ 585 | reader | AccessShareLock     | f       | 00:00:02.147622
+ 586 | reader | AccessShareLock     | f       | 00:00:02.147417
+(7 rows)
+
+
+postgres=# SELECT count(*) FILTER (WHERE wait_event_type = 'Lock') AS waiting,
+postgres-#        max(now() - query_start) FILTER (WHERE wait_event_type = 'Lock') AS longest_wait
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend';
+ waiting |  longest_wait   
+---------+-----------------
+       6 | 00:00:04.054387
+(1 row)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'still waiting for AccessShareLock' | head -n 2
+2026-09-26 09:49:59.638 UTC [583] postgres@postgres/reader LOG:  process 583 still waiting for AccessShareLock on relation 16384 of database 5 after 1001.405 ms at character 22
+2026-09-26 09:49:59.638 UTC [585] postgres@postgres/reader LOG:  process 585 still waiting for AccessShareLock on relation 16384 of database 5 after 1001.535 ms at character 22
+[exit=0]
+
+# A가 트랜잭션을 끝내면 줄이 한꺼번에 풀린다
+
+A=# ROLLBACK;
+ROLLBACK
+
+# 세션 B: 앞 명령의 결과를 기다림
+ALTER TABLE
+
+$ cat /tmp/reader_1.out
+ count 
+-------
+     3
+(1 row)
+
+[exit=0]
+
+
+######## 3. lock_timeout으로 DDL이 줄을 막지 않게 한다
+
+# 세션 A 시작: psql -X 
+
+A=# SET application_name = 'app_a';
+SET
+
+# 세션 B 시작: psql -X 
+
+B=# SET application_name = 'app_b';
+SET
+
+A=# BEGIN;
+BEGIN
+
+A=# SELECT count(*) FROM orders;
+ count 
+-------
+     3
+(1 row)
+
+
+B=# SET lock_timeout = '2s';
+SET
+
+B=# ALTER TABLE orders ADD COLUMN memo text;
+
+$ for i in 1 2 3; do PGAPPNAME=reader nohup psql -X -c "SELECT count(*) FROM orders" > /tmp/reader2_$i.out 2>&1 & done
+[exit=0]
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type AS wtype, wait_event,
+postgres-#        pg_blocking_pids(pid) AS blocked_by, left(query, 45) AS query
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY xact_start NULLS LAST, pid;
+ pid |  app   |        state        | wtype  | wait_event | blocked_by |                  query                   
+-----+--------+---------------------+--------+------------+------------+------------------------------------------
+ 695 | app_a  | idle in transaction | Client | ClientRead | {}         | SELECT count(*) FROM orders;
+ 732 | app_b  | active              | Lock   | relation   | {695}      | ALTER TABLE orders ADD COLUMN memo text;
+ 853 | reader | active              | Lock   | relation   | {732}      | SELECT count(*) FROM orders
+ 852 | reader | active              | Lock   | relation   | {732}      | SELECT count(*) FROM orders
+ 854 | reader | active              | Lock   | relation   | {732}      | SELECT count(*) FROM orders
+(5 rows)
+
+
+# 세션 B: 앞 명령의 결과를 기다림
+ERROR:  canceling statement due to lock timeout
+
+postgres=# SELECT pid, application_name AS app, state, wait_event_type AS wtype, wait_event,
+postgres-#        pg_blocking_pids(pid) AS blocked_by, left(query, 45) AS query
+postgres-# FROM pg_stat_activity
+postgres-# WHERE backend_type = 'client backend' AND pid <> pg_backend_pid()
+postgres-# ORDER BY xact_start NULLS LAST, pid;
+ pid |  app  |        state        | wtype  | wait_event | blocked_by |                  query                   
+-----+-------+---------------------+--------+------------+------------+------------------------------------------
+ 695 | app_a | idle in transaction | Client | ClientRead | {}         | SELECT count(*) FROM orders;
+ 732 | app_b | idle                | Client | ClientRead | {}         | ALTER TABLE orders ADD COLUMN memo text;
+(2 rows)
+
+
+$ cat /tmp/reader2_1.out
+ count 
+-------
+     3
+(1 row)
+
+[exit=0]
+
+A=# ROLLBACK;
+ROLLBACK
+
+# A가 끝난 뒤 다시 시도하면 바로 성공한다
+
+B=# ALTER TABLE orders ADD COLUMN memo text;
+ALTER TABLE
+
+
+######## 4. deadlock
+
+# 세션 A 시작: psql -X 
+
+A=# SET application_name = 'app_a';
+SET
+
+# 세션 B 시작: psql -X 
+
+B=# SET application_name = 'app_b';
+SET
+
+A=# BEGIN;
+BEGIN
+
+A=# UPDATE orders SET status = 'a' WHERE id = 1;
+UPDATE 1
+
+B=# BEGIN;
+BEGIN
+
+B=# UPDATE orders SET status = 'b' WHERE id = 2;
+UPDATE 1
+
+A=# UPDATE orders SET status = 'a' WHERE id = 2;
+
+B=# UPDATE orders SET status = 'b' WHERE id = 1;
+ERROR:  deadlock detected
+DETAIL:  Process 1002 waits for ShareLock on transaction 760; blocked by process 965.
+Process 965 waits for ShareLock on transaction 772; blocked by process 1002.
+HINT:  See server log for query details.
+CONTEXT:  while updating tuple (0,6) in relation "orders"
+
+# 세션 A: 앞 명령의 결과를 기다림
+UPDATE 1
+
+B=# COMMIT;
+ROLLBACK
+
+A=# COMMIT;
+COMMIT
+
+postgres=# SELECT id, status FROM orders ORDER BY id;
+ id | status 
+----+--------
+  1 | a
+  2 | a
+  3 | new
+(3 rows)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 6 -E 'ERROR:  deadlock detected'
+2026-09-26 09:50:34.438 UTC [1002] postgres@postgres/app_b ERROR:  deadlock detected
+2026-09-26 09:50:34.438 UTC [1002] postgres@postgres/app_b DETAIL:  Process 1002 waits for ShareLock on transaction 760; blocked by process 965.
+	Process 965 waits for ShareLock on transaction 772; blocked by process 1002.
+	Process 1002: UPDATE orders SET status = 'b' WHERE id = 1;
+	Process 965: UPDATE orders SET status = 'a' WHERE id = 2;
+2026-09-26 09:50:34.438 UTC [1002] postgres@postgres/app_b HINT:  See server log for query details.
+2026-09-26 09:50:34.438 UTC [1002] postgres@postgres/app_b CONTEXT:  while updating tuple (0,6) in relation "orders"
+[exit=0]
+
+postgres=# SELECT datname, deadlocks FROM pg_stat_database WHERE datname = 'postgres';
+ datname  | deadlocks 
+----------+-----------
+ postgres |         1
+(1 row)
+
+
