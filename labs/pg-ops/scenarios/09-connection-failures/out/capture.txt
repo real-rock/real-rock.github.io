@@ -1,0 +1,312 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pgops --hostname pgops  pg-ops:rocky9-pg18 sleep infinity
+bb6deea1fb1768889edb772bbac70754b2119634c20e08749fe9ac0a854e31bf
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+postgres=# ALTER SYSTEM SET max_connections = 20;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET reserved_connections = 2;
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET listen_addresses = '*';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+postgres=# ALTER SYSTEM SET log_connections = 'authorization,setup_durations';
+ALTER SYSTEM
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+postgres=# SELECT name, setting FROM pg_settings
+postgres-# WHERE name IN ('max_connections', 'superuser_reserved_connections', 'reserved_connections', 'log_connections')
+postgres-# ORDER BY name;
+              name              |            setting            
+--------------------------------+-------------------------------
+ log_connections                | authorization,setup_durations
+ max_connections                | 20
+ reserved_connections           | 2
+ superuser_reserved_connections | 3
+(4 rows)
+
+
+postgres=# CREATE ROLE app LOGIN;
+CREATE ROLE
+
+postgres=# CREATE ROLE monitor LOGIN;
+CREATE ROLE
+
+postgres=# GRANT pg_use_reserved_connections TO monitor;
+GRANT ROLE
+
+
+######## 1. 슬롯이 찬다
+
+# 애플리케이션이 커넥션을 15개 열어 두고 쓰지 않는다 (커넥션 누수)
+
+$ for i in $(seq 1 15); do nohup bash -c 'sleep 900 | psql -X -U app -d postgres -v ON_ERROR_STOP=1 >/dev/null' >/dev/null 2>&1 & done
+$ sleep 2
+[exit=0]
+
+postgres=# SELECT usename, application_name AS app, state, count(*)
+postgres-# FROM pg_stat_activity WHERE backend_type = 'client backend'
+postgres-# GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+ usename  | app  | state  | count 
+----------+------+--------+-------
+ app      | psql | idle   |    15
+ postgres | psql | active |     1
+(2 rows)
+
+
+$ psql -X -U app -d postgres -c 'SELECT 1'
+psql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: FATAL:  remaining connection slots are reserved for roles with privileges of the "pg_use_reserved_connections" role
+[exit=2]
+
+$ psql -X -U monitor -d postgres -c 'SELECT 1'
+ ?column? 
+----------
+        1
+(1 row)
+
+[exit=0]
+
+# monitor도 2개를 열어 두면
+
+$ for i in 1 2; do nohup bash -c 'sleep 900 | psql -X -U monitor -d postgres >/dev/null' >/dev/null 2>&1 & done
+$ sleep 1
+$ psql -X -U monitor -d postgres -c 'SELECT 1'
+psql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: FATAL:  remaining connection slots are reserved for roles with the SUPERUSER attribute
+[exit=2]
+
+postgres=# SELECT count(*) AS used, current_setting('max_connections') AS max FROM pg_stat_activity WHERE backend_type = 'client backend';
+ used | max 
+------+-----
+   18 | 20
+(1 row)
+
+
+# 슈퍼유저 슬롯 3개까지 누군가 차지하면
+
+$ for i in 1 2 3; do nohup bash -c 'sleep 900 | psql -X -U postgres -d postgres >/dev/null' >/dev/null 2>&1 & done
+$ sleep 1
+$ psql -X -c 'SELECT 1'
+psql: error: connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed: FATAL:  sorry, too many clients already
+[exit=2]
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'too many clients|reserved for' | tail -n 3
+2026-09-26 10:39:00.646 UTC [210] app@postgres/[unknown] FATAL:  remaining connection slots are reserved for roles with privileges of the "pg_use_reserved_connections" role
+2026-09-26 10:39:01.777 UTC [235] monitor@postgres/[unknown] FATAL:  remaining connection slots are reserved for roles with the SUPERUSER attribute
+2026-09-26 10:39:02.940 UTC [263] postgres@postgres/[unknown] FATAL:  sorry, too many clients already
+[exit=0]
+
+
+######## 2. 들어갈 수 없을 때: OS에서 idle 세션 하나를 끝낸다
+
+$ ps -u postgres -o pid,cmd | grep 'postgres: app postgres \[local\] idle' | grep -v grep | head -n 3
+    179 postgres: app postgres [local] idle
+    180 postgres: app postgres [local] idle
+    181 postgres: app postgres [local] idle
+[exit=0]
+
+$ kill -TERM $(ps -u postgres -o pid,cmd | grep 'postgres: app postgres \[local\] idle' | grep -v grep | head -n 1 | awk '{print $1}')
+$ sleep 1
+[exit=0]
+
+postgres=# SELECT usename, application_name AS app, state, count(*)
+postgres-# FROM pg_stat_activity WHERE backend_type = 'client backend'
+postgres-# GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+ usename  | app  | state  | count 
+----------+------+--------+-------
+ app      | psql | idle   |    14
+ postgres | psql | idle   |     3
+ monitor  | psql | idle   |     2
+ postgres | psql | active |     1
+(4 rows)
+
+
+postgres=# SELECT pid, usename, state, now() - state_change AS idle_for, backend_start
+postgres-# FROM pg_stat_activity WHERE usename = 'app' ORDER BY backend_start LIMIT 3;
+ pid | usename | state |    idle_for     |         backend_start         
+-----+---------+-------+-----------------+-------------------------------
+ 181 | app     | idle  | 00:00:05.783947 | 2026-09-26 10:38:58.506671+00
+ 180 | app     | idle  | 00:00:05.784385 | 2026-09-26 10:38:58.507287+00
+ 182 | app     | idle  | 00:00:05.783392 | 2026-09-26 10:38:58.507389+00
+(3 rows)
+
+
+postgres=# SELECT count(pg_terminate_backend(pid)) AS terminated
+postgres-# FROM pg_stat_activity
+postgres-# WHERE usename IN ('app', 'monitor') AND state = 'idle' AND state_change < now() - interval '5 seconds';
+ terminated 
+------------
+         14
+(1 row)
+
+
+postgres=# SELECT count(*) AS used FROM pg_stat_activity WHERE backend_type = 'client backend';
+ used 
+------
+    6
+(1 row)
+
+
+
+######## 3. idle_session_timeout
+
+postgres=# ALTER ROLE app SET idle_session_timeout = '3s';
+ALTER ROLE
+
+# 세션 X 시작: psql -X -U app -d postgres
+
+X=# SELECT current_user;
+ current_user 
+--------------
+ app
+(1 row)
+
+
+X=# SELECT 1;
+FATAL:  terminating connection due to idle-session timeout
+server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+connection to server was lost
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'idle-session timeout' | tail -n 1
+2026-09-26 10:39:09.537 UTC [348] app@postgres/psql FATAL:  terminating connection due to idle-session timeout
+[exit=0]
+
+postgres=# ALTER ROLE app RESET idle_session_timeout;
+ALTER ROLE
+
+
+######## 4. pg_hba.conf와 인증
+
+$ hostname -i
+172.17.0.4
+[exit=0]
+
+$ psql -X -h $(hostname -i) -U app -d postgres -c 'SELECT 1'
+psql: error: connection to server at "172.17.0.4", port 5432 failed: FATAL:  no pg_hba.conf entry for host "172.17.0.4", user "app", database "postgres", no encryption
+[exit=2]
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 1 -E 'no pg_hba.conf entry' | tail -n 2
+2026-09-26 10:39:12.669 UTC [435] app@postgres/[unknown] FATAL:  no pg_hba.conf entry for host "172.17.0.4", user "app", database "postgres", no encryption
+[exit=0]
+
+postgres=# SELECT line_number, type, database, user_name, address, auth_method
+postgres-# FROM pg_hba_file_rules ORDER BY line_number;
+ line_number | type  |   database    | user_name |  address  | auth_method 
+-------------+-------+---------------+-----------+-----------+-------------
+         117 | local | {all}         | {all}     |           | trust
+         119 | host  | {all}         | {all}     | 127.0.0.1 | trust
+         121 | host  | {all}         | {all}     | ::1       | trust
+         124 | local | {replication} | {all}     |           | trust
+         125 | host  | {replication} | {all}     | 127.0.0.1 | trust
+         126 | host  | {replication} | {all}     | ::1       | trust
+(6 rows)
+
+
+$ echo 'host all app samenet scram-sha-256' >> $PGDATA/pg_hba.conf
+[exit=0]
+
+postgres=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+postgres=# SELECT line_number, type, database, user_name, address, auth_method
+postgres-# FROM pg_hba_file_rules WHERE user_name @> '{app}';
+ line_number | type | database | user_name | address |  auth_method  
+-------------+------+----------+-----------+---------+---------------
+         127 | host | {all}    | {app}     | samenet | scram-sha-256
+(1 row)
+
+
+# 아직 app에 비밀번호가 없다
+
+$ PGPASSWORD=wrong psql -X -h $(hostname -i) -U app -d postgres -c 'SELECT 1'
+psql: error: connection to server at "172.17.0.4", port 5432 failed: FATAL:  password authentication failed for user "app"
+[exit=2]
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 1 -E 'password authentication failed' | tail -n 2
+2026-09-26 10:39:12.974 UTC [483] app@postgres/[unknown] FATAL:  password authentication failed for user "app"
+2026-09-26 10:39:12.974 UTC [483] app@postgres/[unknown] DETAIL:  User "app" has no password assigned.
+[exit=0]
+
+# 비밀번호는 컨테이너 안에서 무작위로 만든다
+
+$ head -c 18 /dev/urandom | base64 > /var/lib/pgsql/app.pw
+$ echo "ALTER ROLE app PASSWORD :'pw';" | psql -X -q -v pw="$(cat /var/lib/pgsql/app.pw)"
+[exit=0]
+
+$ PGPASSWORD=wrong psql -X -h $(hostname -i) -U app -d postgres -c 'SELECT 1'
+psql: error: connection to server at "172.17.0.4", port 5432 failed: FATAL:  password authentication failed for user "app"
+[exit=2]
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -A 1 -E 'password authentication failed' | tail -n 2
+2026-09-26 10:39:13.154 UTC [516] app@postgres/[unknown] FATAL:  password authentication failed for user "app"
+2026-09-26 10:39:13.154 UTC [516] app@postgres/[unknown] DETAIL:  Connection matched file "/var/lib/pgsql/18/data/pg_hba.conf" line 127: "host all app samenet scram-sha-256"
+[exit=0]
+
+$ PGPASSWORD="$(cat /var/lib/pgsql/app.pw)" psql -X -h $(hostname -i) -U app -d postgres -c 'SELECT current_user, inet_server_addr()'
+ current_user | inet_server_addr 
+--------------+------------------
+ app          | 172.17.0.4
+(1 row)
+
+[exit=0]
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'connection authenticated|connection authorized|connection ready' | tail -n 3
+2026-09-26 10:39:13.091 UTC [507] postgres@postgres/psql LOG:  connection ready: setup total=1.195 ms, fork=0.241 ms, authentication=0.099 ms
+2026-09-26 10:39:13.274 UTC [538] app@postgres/[unknown] LOG:  connection authorized: user=app database=postgres application_name=psql
+2026-09-26 10:39:13.274 UTC [538] app@postgres/psql LOG:  connection ready: setup total=4.464 ms, fork=0.236 ms, authentication=3.265 ms
+[exit=0]
+
+
+######## 5. 커넥션을 맺는 비용
+
+$ pgbench -i -s 1 -q postgres 2>&1 | tail -n 1
+done in 0.07 s (drop tables 0.00 s, create tables 0.00 s, client-side generate 0.04 s, vacuum 0.01 s, primary keys 0.01 s).
+[exit=0]
+
+$ pgbench -n -S -c 4 -T 5 postgres 2>&1 | grep -E 'number of transactions actually|average connection time|tps'
+number of transactions actually processed: 388940
+tps = 77846.384789 (without initial connection time)
+[exit=0]
+
+$ pgbench -n -S -c 4 -T 5 -C postgres 2>&1 | grep -E 'number of transactions actually|average connection time|tps'
+number of transactions actually processed: 5706
+average connection time = 0.869 ms
+tps = 1141.107114 (including reconnection times)
+[exit=0]
+
