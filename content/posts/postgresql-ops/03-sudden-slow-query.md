@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 운영 3: 쿼리가 갑자기 느려졌다"
 date: 2026-09-26T19:00:00+09:00
-draft: true
+draft: false
 series: ["PostgreSQL 운영"]
 categories: ["PostgreSQL"]
 subcategory: "운영"
