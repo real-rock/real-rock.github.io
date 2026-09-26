@@ -1,7 +1,7 @@
 ---
 title: "PostgreSQL 운영 4: 긴 트랜잭션과 idle in transaction"
 date: 2026-09-26T19:05:00+09:00
-draft: true
+draft: false
 series: ["PostgreSQL 운영"]
 categories: ["PostgreSQL"]
 subcategory: "운영"
