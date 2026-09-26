@@ -23,7 +23,7 @@ description: "dead tuple, FSM, Visibility Map"
 - dead tuple이 쌓였는데도 VACUUM이 지우지 못하는 경우는 언제인가
 - autovacuum은 언제 도는가
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## VACUUM이 하는 일
 
@@ -296,7 +296,7 @@ removable cutoff: 766, which was 1 XIDs old when operation ended
 B=# SELECT pid, state, backend_xmin, now() - xact_start > interval '0' AS in_xact FROM pg_stat_activity WHERE backend_xmin IS NOT NULL AND pid <> pg_backend_pid();
  pid |        state        | backend_xmin | in_xact 
 -----+---------------------+--------------+---------
- 119 | idle in transaction |          766 | t
+ 115 | idle in transaction |          766 | t
 (1 row)
 ```
 
@@ -543,10 +543,10 @@ postgres=# SELECT n_dead_tup, autovacuum_count FROM pg_stat_user_tables WHERE re
 
 ```console
 $ grep -A8 'automatic vacuum of table "postgres.public.av"' /home/postgres/server.log | grep -E 'automatic vacuum|tuples:|index scan'
-2026-09-24 03:40:42.396 UTC [274] LOG:  automatic vacuum of table "postgres.public.av": index scans: 0
+2026-09-26 10:08:59.784 UTC [271] LOG:  automatic vacuum of table "postgres.public.av": index scans: 0
 	tuples: 0 removed, 10000 remain, 0 are dead but not yet removable
 	index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
-2026-09-24 03:40:51.454 UTC [300] LOG:  automatic vacuum of table "postgres.public.av": index scans: 1
+2026-09-26 10:09:09.096 UTC [297] LOG:  automatic vacuum of table "postgres.public.av": index scans: 1
 	tuples: 1500 removed, 8893 remain, 0 are dead but not yet removable
 	index scan needed: 14 pages from table (24.14% of total) had 3000 dead item identifiers removed
 ```

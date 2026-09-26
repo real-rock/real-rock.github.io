@@ -31,7 +31,7 @@ description: "shared buffers, work_mem, WAL buffers"
 | `maintenance_work_mem` | backend 개인 | 64MB | VACUUM, CREATE INDEX 같은 유지보수 작업 |
 | `temp_buffers` | backend 개인 | 8MB | 임시 테이블 전용 페이지 캐시 |
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## 한눈에 보기
 
@@ -322,10 +322,10 @@ postgres=# EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) SELECT count(*)
 ---------------------------------------------------------
  Aggregate (actual rows=1.00 loops=1)
    Buffers: shared read=1728
-   I/O Timings: shared read=0.267
+   I/O Timings: shared read=0.246
    ->  Seq Scan on small (actual rows=100000.00 loops=1)
          Buffers: shared read=1728
-         I/O Timings: shared read=0.267
+         I/O Timings: shared read=0.246
  Planning:
    Buffers: shared hit=24
 (8 rows)
@@ -334,10 +334,10 @@ postgres=# EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) SELECT count(*)
 ```console
 $ grep -E '^(MemTotal|Cached):' /proc/meminfo
 MemTotal:       32810480 kB
-Cached:          2181352 kB
+Cached:         13826596 kB
 ```
 
-1728페이지(14MB)를 read했는데 `I/O Timings`는 0.267ms입니다. PG18에서 이 값은 **backend가 읽기를 요청하는 데 쓴 시간과 완료를 기다린 시간의 합**입니다([요청](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L1953-L1967), [대기](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L1691-L1713)). io worker가 미리 읽어 두면 기다리는 시간이 줄어드니, 파일을 읽는 데 실제로 걸린 시간과는 다릅니다. 그래도 14MB에 0.267ms라면 실제 디스크를 거쳤다고 보기는 어렵습니다. 방금 만든 파일이라 **운영체제의 페이지 캐시**(`Cached` 약 2GB)에 남아 있었을 가능성이 큽니다.
+1728페이지(14MB)를 read했는데 `I/O Timings`는 0.246ms입니다. PG18에서 이 값은 **backend가 읽기를 요청하는 데 쓴 시간과 완료를 기다린 시간의 합**입니다([요청](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L1953-L1967), [대기](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L1691-L1713)). io worker가 미리 읽어 두면 기다리는 시간이 줄어드니, 파일을 읽는 데 실제로 걸린 시간과는 다릅니다. 그래도 14MB에 0.246ms라면 실제 디스크를 거쳤다고 보기는 어렵습니다. 방금 만든 파일이라 **운영체제의 페이지 캐시**(`Cached` 약 13GB)에 남아 있었을 가능성이 큽니다.
 
 PostgreSQL은 파일을 운영체제를 통해 읽습니다(direct I/O를 쓰지 않는 기본 설정). 그래서 같은 페이지가 shared buffers와 운영체제 페이지 캐시에 **두 번** 캐시될 수 있습니다. PostgreSQL 입장의 "read"가 곧 느린 디스크 읽기는 아니라는 점을 기억해 두면 됩니다.
 
@@ -574,7 +574,7 @@ postgres=# EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) SELECT * FROM b
 
 ```console
 $ grep 'temporary file' /home/postgres/server.log | tail -3
-2026-09-24 03:09:26.736 UTC [140] LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp140.0", size 69197824
+2026-09-26 10:07:55.017 UTC [137] LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp137.0", size 69197824
 ```
 
 같은 정렬인데 `work_mem`이 4MB일 때는 `external merge  Disk: 67576kB`, 즉 약 66MB를 임시 파일에 쓰고 병합했습니다. 서버 로그에도 `temporary file: ... size 69197824`가 남았습니다(`log_temp_files = 0`은 모든 임시 파일을 로그에 남기라는 뜻입니다). 256MB로 올리자 `quicksort  Memory: 99577kB`, 즉 약 97MB를 메모리에서 정렬했습니다. 디스크에 쓴 크기(66MB)보다 메모리에서 쓴 크기(97MB)가 큰 이유는 메모리 안에서는 행마다 포인터와 관리 정보가 붙기 때문입니다.
@@ -636,7 +636,7 @@ postgres-# SELECT count(*) FROM big b1 JOIN big b2 USING (id);
 `log_temp_files`를 켜 두면 임시 파일을 만든 쿼리가 서버 로그에 남습니다. 0이면 모든 임시 파일, 예를 들어 `10MB`로 두면 10MB 이상인 것만 남습니다.
 
 ```text
-2026-09-24 03:09:26.736 UTC [140] LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp140.0", size 69197824
+2026-09-26 10:07:55.017 UTC [137] LOG:  temporary file: path "base/pgsql_tmp/pgsql_tmp137.0", size 69197824
 ```
 
 `EXPLAIN (ANALYZE)`에서 `Sort Method: external merge`나 `Batches:`가 1보다 큰 해시가 보이면 `work_mem`이 부족하다는 신호입니다. 이런 쿼리만 골라 세션 단위로 `work_mem`을 올리면, 전역 메모리 위험 없이 성능을 높일 수 있습니다.

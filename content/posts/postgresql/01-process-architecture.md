@@ -23,7 +23,7 @@ description: "postmaster, backend, 백그라운드 프로세스들의 역할"
 
 DB 내부를 처음 보는 개발자도 따라올 수 있도록 용어가 처음 나올 때마다 뜻을 풀어 쓰겠습니다.
 
-> **기준 버전**: 이 연재는 PostgreSQL 18을 기준으로 합니다. 정확히는 `REL_18_STABLE` 브랜치의 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16)(18.6 개발 버전)입니다. 본문의 소스 링크는 모두 이 커밋에 고정했고, 실습 결과는 이 소스를 그대로 빌드해 실행한 출력입니다.
+> **기준 버전**: 이 연재는 PostgreSQL 18을 기준으로 합니다. 정확히는 `REL_18_STABLE` 브랜치의 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16)(18.6 개발 버전)입니다. 본문의 소스 링크는 모두 이 커밋에 고정했고, 실습 결과는 이 소스를 Rocky Linux 9.8에서 그대로 빌드해 실행한 출력입니다.
 
 먼저 결론부터 정리하면 이렇습니다.
 
@@ -60,27 +60,27 @@ waiting for server to start.... done
 server started
 $ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
     PID    PPID CMD
-     37       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
-     38      37  \_ postgres: io worker 0
-     39      37  \_ postgres: io worker 1
-     40      37  \_ postgres: io worker 2
-     41      37  \_ postgres: checkpointer 
-     42      37  \_ postgres: background writer 
-     44      37  \_ postgres: walwriter 
-     45      37  \_ postgres: autovacuum launcher 
-     46      37  \_ postgres: logical replication launcher 
+     33       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+     34      33  \_ postgres: io worker 0
+     35      33  \_ postgres: io worker 1
+     36      33  \_ postgres: io worker 2
+     37      33  \_ postgres: checkpointer 
+     38      33  \_ postgres: background writer 
+     40      33  \_ postgres: walwriter 
+     41      33  \_ postgres: autovacuum launcher 
+     42      33  \_ postgres: logical replication launcher 
 $ head -1 $PGDATA/postmaster.pid
-37
+33
 $ cat /home/postgres/server.log
-2026-09-24 01:41:45.623 UTC [37] LOG:  starting PostgreSQL 18.6 on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit
-2026-09-24 01:41:45.623 UTC [37] LOG:  listening on IPv6 address "::1", port 5432
-2026-09-24 01:41:45.623 UTC [37] LOG:  listening on IPv4 address "127.0.0.1", port 5432
-2026-09-24 01:41:45.624 UTC [37] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
-2026-09-24 01:41:45.625 UTC [43] LOG:  database system was shut down at 2026-09-24 01:41:45 UTC
-2026-09-24 01:41:45.626 UTC [37] LOG:  database system is ready to accept connections
+2026-09-26 10:24:03.341 UTC [33] LOG:  starting PostgreSQL 18.6 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-14), 64-bit
+2026-09-26 10:24:03.341 UTC [33] LOG:  listening on IPv6 address "::1", port 5432
+2026-09-26 10:24:03.341 UTC [33] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-09-26 10:24:03.342 UTC [33] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-26 10:24:03.346 UTC [39] LOG:  database system was shut down at 2026-09-26 10:24:02 UTC
+2026-09-26 10:24:03.347 UTC [33] LOG:  database system is ready to accept connections
 ```
 
-그림에 있던 프로세스들이 그대로 보이고, **모든 프로세스의 부모(PPID)가 37번 postmaster입니다.** 백그라운드 프로세스든 뭐든 fork는 postmaster만 합니다. 43번이 비어 있는 이유는 [기동 순서](#기동-순서)에서 다룹니다.
+그림에 있던 프로세스들이 그대로 보이고, **모든 프로세스의 부모(PPID)가 33번 postmaster입니다.** 백그라운드 프로세스든 뭐든 fork는 postmaster만 합니다. 39번이 비어 있는 이유는 [기동 순서](#기동-순서)에서 다룹니다.
 
 ## postmaster: 문을 지키고 자식을 감시하는 프로세스
 
@@ -101,19 +101,19 @@ postmaster는 서버를 띄웠을 때 가장 먼저 실행되는 프로세스입
 postgres=# SELECT pid, backend_type FROM pg_stat_activity ORDER BY pid;
  pid |         backend_type         
 -----+------------------------------
-  38 | io worker
-  39 | io worker
-  40 | io worker
-  41 | checkpointer
-  42 | background writer
-  44 | walwriter
-  45 | autovacuum launcher
-  46 | logical replication launcher
-  70 | client backend
+  34 | io worker
+  35 | io worker
+  36 | io worker
+  37 | checkpointer
+  38 | background writer
+  40 | walwriter
+  41 | autovacuum launcher
+  42 | logical replication launcher
+  66 | client backend
 (9 rows)
 ```
 
-`backend_type` 열의 문자열은 [`GetBackendTypeDesc()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/init/miscinit.c)가 정한 이름입니다. 70번은 이 쿼리를 실행한 psql의 backend입니다. 앞의 `ps`에는 있던 **postmaster(37)가 이 목록에는 없습니다.** PGPROC 배열에 들어가지 않는다는 설계가 그대로 드러나는 부분입니다.
+`backend_type` 열의 문자열은 [`GetBackendTypeDesc()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/init/miscinit.c)가 정한 이름입니다. 66번은 이 쿼리를 실행한 psql의 backend입니다. 앞의 `ps`에는 있던 **postmaster(33)가 이 목록에는 없습니다.** PGPROC 배열에 들어가지 않는다는 설계가 그대로 드러나는 부분입니다.
 
 ### 본체는 기다렸다가 fork하는 무한 루프
 
@@ -200,49 +200,49 @@ $ psql -X -q &
 $ psql -X -c "SELECT pg_sleep(3600)" &
 $ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
     PID    PPID CMD
-     37       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+     33       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
 ...  (앞과 같은 백그라운드 프로세스 8줄)
-     87      37  \_ postgres: postgres postgres 127.0.0.1(53408) idle
-     96      37  \_ postgres: postgres postgres [local] idle
-    103      37  \_ postgres: postgres postgres [local] SELECT
+     83      33  \_ postgres: postgres postgres 127.0.0.1(45092) idle
+     92      33  \_ postgres: postgres postgres [local] idle
+     99      33  \_ postgres: postgres postgres [local] SELECT
 ```
 
-접속 세 개에 backend 세 개(87, 96, 103)가 생겼고, 부모는 모두 postmaster입니다. backend는 `ps`의 프로세스 이름을 `사용자 DB 접속지 상태` 형식으로 바꿔 둡니다. `idle`은 명령을 기다리는 중, `SELECT`는 쿼리를 실행하는 중이라는 뜻이라, `ps`만으로도 각 세션이 무엇을 하는지 대략 알 수 있습니다.
+접속 세 개에 backend 세 개(83, 92, 99)가 생겼고, 부모는 모두 postmaster입니다. backend는 `ps`의 프로세스 이름을 `사용자 DB 접속지 상태` 형식으로 바꿔 둡니다. `idle`은 명령을 기다리는 중, `SELECT`는 쿼리를 실행하는 중이라는 뜻이라, `ps`만으로도 각 세션이 무엇을 하는지 대략 알 수 있습니다.
 
 ```psql
 postgres=# SELECT pid, backend_type, client_addr, state, query FROM pg_stat_activity WHERE backend_type = 'client backend' ORDER BY pid;
  pid |  backend_type  | client_addr | state  |                                                            query                                                             
 -----+----------------+-------------+--------+------------------------------------------------------------------------------------------------------------------------------
-  87 | client backend | 127.0.0.1   | idle   | 
-  96 | client backend |             | idle   | 
- 103 | client backend |             | active | SELECT pg_sleep(3600)
- 119 | client backend |             | active | SELECT pid, backend_type, client_addr, state, query FROM pg_stat_activity WHERE backend_type = 'client backend' ORDER BY pid
+  83 | client backend | 127.0.0.1   | idle   | 
+  92 | client backend |             | idle   | 
+  99 | client backend |             | active | SELECT pg_sleep(3600)
+ 115 | client backend |             | active | SELECT pid, backend_type, client_addr, state, query FROM pg_stat_activity WHERE backend_type = 'client backend' ORDER BY pid
 (4 rows)
 ```
 
 ```console
 $ grep -E 'connection (received|authenticated|authorized|ready)' /home/postgres/server.log | head -8
-2026-09-24 01:41:46.064 UTC [87] not initialized LOG:  connection received: host=127.0.0.1 port=53408
-2026-09-24 01:41:46.064 UTC [87] client backend LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:119)
-2026-09-24 01:41:46.064 UTC [87] client backend LOG:  connection authorized: user=postgres database=postgres application_name=psql
-2026-09-24 01:41:46.065 UTC [87] client backend LOG:  connection ready: setup total=1.032 ms, fork=0.146 ms, authentication=0.083 ms
-2026-09-24 01:41:46.113 UTC [96] not initialized LOG:  connection received: host=[local]
-2026-09-24 01:41:46.113 UTC [96] client backend LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:117)
-2026-09-24 01:41:46.113 UTC [96] client backend LOG:  connection authorized: user=postgres database=postgres application_name=psql
-2026-09-24 01:41:46.113 UTC [96] client backend LOG:  connection ready: setup total=1.047 ms, fork=0.140 ms, authentication=0.083 ms
+2026-09-26 10:24:03.750 UTC [83] not initialized LOG:  connection received: host=127.0.0.1 port=45092
+2026-09-26 10:24:03.751 UTC [83] client backend LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:119)
+2026-09-26 10:24:03.751 UTC [83] client backend LOG:  connection authorized: user=postgres database=postgres application_name=psql
+2026-09-26 10:24:03.752 UTC [83] client backend LOG:  connection ready: setup total=1.821 ms, fork=0.140 ms, authentication=0.154 ms
+2026-09-26 10:24:03.792 UTC [92] not initialized LOG:  connection received: host=[local]
+2026-09-26 10:24:03.792 UTC [92] client backend LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:117)
+2026-09-26 10:24:03.792 UTC [92] client backend LOG:  connection authorized: user=postgres database=postgres application_name=psql
+2026-09-26 10:24:03.792 UTC [92] client backend LOG:  connection ready: setup total=1.050 ms, fork=0.170 ms, authentication=0.089 ms
 ```
 
 로그가 위 그림의 흐름을 그대로 보여 줍니다.
 
-- `connection received`를 남긴 것은 postmaster가 아니라 **이미 fork된 87번 프로세스**입니다. 그런데 backend 타입이 `not initialized`로 찍혀 있습니다. fork 직후에는 아직 자기가 일반 backend인지 walsender인지 모르는 상태이기 때문입니다. StartupMessage를 읽은 뒤에야 `client backend`로 정해집니다.
-- `setup total=1.032 ms` 가운데 `fork=0.146 ms`입니다. 로컬에서 `trust` 인증을 쓴 조건이라 짧지만, 이 1ms 남짓은 접속할 때마다 드는 비용입니다.
+- `connection received`를 남긴 것은 postmaster가 아니라 **이미 fork된 83번 프로세스**입니다. 그런데 backend 타입이 `not initialized`로 찍혀 있습니다. fork 직후에는 아직 자기가 일반 backend인지 walsender인지 모르는 상태이기 때문입니다. StartupMessage를 읽은 뒤에야 `client backend`로 정해집니다.
+- `setup total=1.821 ms` 가운데 `fork=0.140 ms`입니다. 로컬에서 `trust` 인증을 쓴 조건이라 짧지만, 이 2ms 가까운 시간은 접속할 때마다 드는 비용입니다.
 
 #### 운영에서는: 커넥션이 많을수록 비싸다
 
 접속 하나가 프로세스 하나이므로, 커넥션 수는 곧 프로세스 수입니다. 비용은 세 군데서 나옵니다.
 
-- **접속할 때마다 드는 비용**: 위 로그에서 접속 준비에 약 1ms(fork 약 0.15ms)가 걸렸습니다. 로컬 소켓에 `trust` 인증을 쓴 가장 가벼운 조건입니다. 네트워크 왕복, TLS, 비밀번호 인증이 붙으면 더 걸립니다. 요청마다 새로 접속하는 애플리케이션이라면 이 비용을 매번 냅니다.
-- **프로세스마다 드는 메모리**: idle backend 하나의 개인 메모리는 약 1.8MB였습니다([공유 메모리](#공유-메모리는-모든-프로세스에-같은-주소로-붙어-있다)에서 확인). 쿼리를 실행하면 카탈로그 캐시와 정렬, 해시에 쓰는 작업 메모리(`work_mem`)가 여기에 더해집니다. 작업 메모리는 [2편](/posts/postgresql/02-memory-architecture/)에서 다룹니다.
+- **접속할 때마다 드는 비용**: 위 로그에서 접속 준비에 1-2ms(fork 약 0.15ms)가 걸렸습니다. 로컬 소켓에 `trust` 인증을 쓴 가장 가벼운 조건입니다. 네트워크 왕복, TLS, 비밀번호 인증이 붙으면 더 걸립니다. 요청마다 새로 접속하는 애플리케이션이라면 이 비용을 매번 냅니다.
+- **프로세스마다 드는 메모리**: idle backend 하나의 개인 메모리는 약 1.6MB였습니다([공유 메모리](#공유-메모리는-모든-프로세스에-같은-주소로-붙어-있다)에서 확인). 쿼리를 실행하면 카탈로그 캐시와 정렬, 해시에 쓰는 작업 메모리(`work_mem`)가 여기에 더해집니다. 작업 메모리는 [2편](/posts/postgresql/02-memory-architecture/)에서 다룹니다.
 - **공유 자원 경쟁**: 모든 backend가 같은 공유 메모리의 락과 PGPROC 배열을 씁니다. 프로세스가 많아지면 그만큼 경쟁과 문맥 전환(context switch)이 늘어납니다.
 
 그래서 수천 개의 애플리케이션 커넥션을 그대로 PostgreSQL에 붙이지 않고, **PgBouncer 같은 커넥션 풀러**를 앞에 둡니다. 풀러는 애플리케이션의 접속은 많이 받고, PostgreSQL에는 적은 수의 접속만 유지하면서 backend를 돌려 씁니다. fork와 인증 비용은 한 번만 내고, 프로세스 수도 일정하게 유지됩니다.
@@ -270,11 +270,11 @@ $ for i in 1 2 3 4 5; do psql -X -q & done
 $ psql -X -c "SELECT 1"
 psql: error: connection to server on socket "/tmp/.s.PGSQL.5432" failed: FATAL:  sorry, too many clients already
 $ grep -B1 'too many clients' /home/postgres/server.log
-2026-09-24 01:41:58.942 UTC [309] not initialized LOG:  connection received: host=[local]
-2026-09-24 01:41:58.942 UTC [309] client backend FATAL:  sorry, too many clients already
+2026-09-26 10:24:14.697 UTC [389] not initialized LOG:  connection received: host=[local]
+2026-09-26 10:24:14.697 UTC [389] client backend FATAL:  sorry, too many clients already
 ```
 
-거절 메시지를 남긴 것은 postmaster가 아니라 **309번 프로세스**입니다. 자리가 없는 접속도 먼저 fork되고, 자식이 PGPROC 자리를 얻으려다 실패해서 스스로 FATAL로 끝난 것입니다. (실습이 끝난 뒤 설정은 RESET하고 재시작했습니다.)
+거절 메시지를 남긴 것은 postmaster가 아니라 **389번 프로세스**입니다. 자리가 없는 접속도 먼저 fork되고, 자식이 PGPROC 자리를 얻으려다 실패해서 스스로 FATAL로 끝난 것입니다. (실습이 끝난 뒤 설정은 RESET하고 재시작했습니다.)
 
 #### 운영에서는: 거절될 접속도 fork 비용을 낸다
 
@@ -295,29 +295,29 @@ $ mkdir -p /home/postgres/wal
 $ pg_receivewal -D /home/postgres/wal &
 $ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
     PID    PPID CMD
-    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    412       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
 ...  (백그라운드 프로세스 8줄)
-    450     332  \_ postgres: walsender postgres [local] streaming 0/3FD1BB8
+    530     412  \_ postgres: walsender postgres [local] streaming 0/3FCE280
 $ ps -o pid,ppid,cmd -C pg_receivewal
     PID    PPID CMD
-    443       0 pg_receivewal -D /home/postgres/wal
+    523       0 pg_receivewal -D /home/postgres/wal
 $ WS=$(pgrep -f 'postgres: walsender')
 $ grep "\[$WS\]" /home/postgres/server.log
-2026-09-24 01:42:05.115 UTC [450] not initialized LOG:  connection received: host=[local]
-2026-09-24 01:42:05.115 UTC [450] walsender LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:124)
-2026-09-24 01:42:05.115 UTC [450] walsender LOG:  replication connection authorized: user=postgres application_name=pg_receivewal
-2026-09-24 01:42:05.115 UTC [450] walsender LOG:  connection ready: setup total=0.710 ms, fork=0.107 ms, authentication=0.112 ms
+2026-09-26 10:24:20.908 UTC [530] not initialized LOG:  connection received: host=[local]
+2026-09-26 10:24:20.909 UTC [530] walsender LOG:  connection authenticated: user="postgres" method=trust (/var/lib/postgresql/data/pg_hba.conf:124)
+2026-09-26 10:24:20.909 UTC [530] walsender LOG:  replication connection authorized: user=postgres application_name=pg_receivewal
+2026-09-26 10:24:20.909 UTC [530] walsender LOG:  connection ready: setup total=1.240 ms, fork=0.149 ms, authentication=0.218 ms
 ```
 
 ```psql
 postgres=# SELECT pid, backend_type, application_name, state FROM pg_stat_activity WHERE backend_type = 'walsender';
  pid | backend_type | application_name | state  
 -----+--------------+------------------+--------
- 450 | walsender    | pg_receivewal    | active
+ 530 | walsender    | pg_receivewal    | active
 (1 row)
 ```
 
-450번은 일반 접속과 똑같이 `not initialized` 상태로 fork되었다가, StartupMessage에서 복제 요청을 확인한 순간부터 `walsender`로 찍힙니다. 인증에 쓰인 규칙도 일반 접속(117, 119행)과 달리 `pg_hba.conf`의 124행, 즉 `replication` 항목입니다. 복제의 동작은 [9편](/posts/postgresql/09-streaming-replication/)에서 다룹니다.
+530번은 일반 접속과 똑같이 `not initialized` 상태로 fork되었다가, StartupMessage에서 복제 요청을 확인한 순간부터 `walsender`로 찍힙니다. 인증에 쓰인 규칙도 일반 접속(117, 119행)과 달리 `pg_hba.conf`의 124행, 즉 `replication` 항목입니다. 복제의 동작은 [9편](/posts/postgresql/09-streaming-replication/)에서 다룹니다.
 
 ## 백그라운드 프로세스: 뒷일을 나눠 맡는 프로세스들
 
@@ -348,9 +348,9 @@ PostgreSQL 18이 만들 수 있는 프로세스 종류는 [`BackendType`](https:
 
 [앞에서 본 `ps` 결과](#서버를-띄우면-생기는-프로세스)의 PID 번호가 바로 이 순서입니다.
 
-- io worker(38-40) → checkpointer(41) → background writer(42) 순서로, `PostmasterMain()`의 코드 순서와 같습니다.
-- **43번이 비어 있습니다.** 서버 로그에서 `database system was shut down at ...`을 남긴 프로세스가 43번이고, 이것이 startup 프로세스입니다. 정상 종료 후의 기동이라 재생할 WAL이 없어 바로 끝났습니다.
-- 그 뒤에 walwriter(44), autovacuum launcher(45)가 떴습니다. startup이 끝나 PM_RUN이 된 뒤에 walwriter를 띄운다는 소스 조건과 정확히 맞습니다.
+- io worker(34-36) → checkpointer(37) → background writer(38) 순서로, `PostmasterMain()`의 코드 순서와 같습니다.
+- **39번이 비어 있습니다.** 서버 로그에서 `database system was shut down at ...`을 남긴 프로세스가 39번이고, 이것이 startup 프로세스입니다. 정상 종료 후의 기동이라 재생할 WAL이 없어 바로 끝났습니다.
+- 그 뒤에 walwriter(40), autovacuum launcher(41)가 떴습니다. startup이 끝나 PM_RUN이 된 뒤에 walwriter를 띄운다는 소스 조건과 정확히 맞습니다.
 
 ### 보조 프로세스와 logger
 
@@ -384,37 +384,37 @@ server started
 $ sleep 1
 $ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
     PID    PPID CMD
-    560       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
-    561     560  \_ postgres: logger 
-    562     560  \_ postgres: io worker 0
-    563     560  \_ postgres: io worker 1
-    564     560  \_ postgres: io worker 2
-    565     560  \_ postgres: checkpointer 
-    566     560  \_ postgres: background writer 
-    568     560  \_ postgres: walwriter 
-    569     560  \_ postgres: autovacuum launcher 
-    570     560  \_ postgres: archiver 
-    571     560  \_ postgres: logical replication launcher 
+    641       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    642     641  \_ postgres: logger 
+    643     641  \_ postgres: io worker 0
+    644     641  \_ postgres: io worker 1
+    645     641  \_ postgres: io worker 2
+    646     641  \_ postgres: checkpointer 
+    647     641  \_ postgres: background writer 
+    649     641  \_ postgres: walwriter 
+    650     641  \_ postgres: autovacuum launcher 
+    651     641  \_ postgres: archiver 
+    652     641  \_ postgres: logical replication launcher 
 ```
 
 ```psql
 postgres=# SELECT pid, backend_type FROM pg_stat_activity ORDER BY pid;
  pid |         backend_type         
 -----+------------------------------
- 562 | io worker
- 563 | io worker
- 564 | io worker
- 565 | checkpointer
- 566 | background writer
- 568 | walwriter
- 569 | autovacuum launcher
- 570 | archiver
- 571 | logical replication launcher
- 582 | client backend
+ 643 | io worker
+ 644 | io worker
+ 645 | io worker
+ 646 | checkpointer
+ 647 | background writer
+ 649 | walwriter
+ 650 | autovacuum launcher
+ 651 | archiver
+ 652 | logical replication launcher
+ 663 | client backend
 (10 rows)
 ```
 
-logger(561)는 다른 어떤 자식보다 먼저 떴습니다. 이후 프로세스들의 로그를 받아 적어야 하기 때문입니다. archiver(570)는 `pg_stat_activity`에 보이지만 **logger는 보이지 않습니다.** 공유 메모리에 붙지 않는 프로세스라서 그렇습니다.
+logger(642)는 다른 어떤 자식보다 먼저 떴습니다. 이후 프로세스들의 로그를 받아 적어야 하기 때문입니다. archiver(651)는 `pg_stat_activity`에 보이지만 **logger는 보이지 않습니다.** 공유 메모리에 붙지 않는 프로세스라서 그렇습니다.
 
 ## PG18의 새 프로세스: io worker
 
@@ -452,11 +452,11 @@ postgres=# SELECT pg_reload_conf();
 ```console
 $ sleep 1
 $ ps -u postgres -o pid,ppid,cmd | grep 'io worker' | grep -v grep
-     38      37 postgres: io worker 0
-     39      37 postgres: io worker 1
-     40      37 postgres: io worker 2
-    145      37 postgres: io worker 3
-    146      37 postgres: io worker 4
+     34      33 postgres: io worker 0
+     35      33 postgres: io worker 1
+     36      33 postgres: io worker 2
+    141      33 postgres: io worker 3
+    142      33 postgres: io worker 4
 ```
 
 ```psql
@@ -471,12 +471,12 @@ postgres=# SELECT pg_reload_conf();
 ```console
 $ sleep 1
 $ ps -u postgres -o pid,ppid,cmd | grep 'io worker' | grep -v grep
-     38      37 postgres: io worker 0
-     39      37 postgres: io worker 1
-     40      37 postgres: io worker 2
+     34      33 postgres: io worker 0
+     35      33 postgres: io worker 1
+     36      33 postgres: io worker 2
 ```
 
-reload만으로 io worker가 5개로 늘었다가(145, 146 추가) 다시 3개로 줄었습니다. reload 요청(SIGHUP)을 받은 postmaster가 `maybe_adjust_io_workers()`로 개수를 맞춘 결과입니다.
+reload만으로 io worker가 5개로 늘었다가(141, 142 추가) 다시 3개로 줄었습니다. reload 요청(SIGHUP)을 받은 postmaster가 `maybe_adjust_io_workers()`로 개수를 맞춘 결과입니다.
 
 ## 프로세스끼리 소통하는 방법
 
@@ -528,25 +528,25 @@ $ for p in $PM $(pgrep -f 'postgres: postgres postgres \[local\] idle'); do
 >   echo "== PID $p  $(ps -o cmd= -p $p)"
 >   grep ' rw-s ' /proc/$p/maps | awk '{print "   ", $1, $6, $7}'
 > done
-== PID 332  /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
-    ffff7cb27000-ffff860d9000 /dev/zero (deleted)
-    ffff88938000-ffff88940000 /dev/shm/PostgreSQL.2214466610 
-    ffff889a9000-ffff889aa000 /SYSV000fb191 (deleted)
-== PID 502  postgres: postgres postgres [local] idle
-    ffff7c994000-ffff7c9c5000 /dev/shm/PostgreSQL.3907697562 
-    ffff7ca06000-ffff7cb06000 /dev/shm/PostgreSQL.2641106026 
-    ffff7cb27000-ffff860d9000 /dev/zero (deleted)
-    ffff88938000-ffff88940000 /dev/shm/PostgreSQL.2214466610 
-    ffff889a9000-ffff889aa000 /SYSV000fb191 (deleted)
-== PID 512  postgres: postgres postgres [local] idle
-    ffff7ca06000-ffff7cb06000 /dev/shm/PostgreSQL.2641106026 
-    ffff7cb27000-ffff860d9000 /dev/zero (deleted)
-    ffff88938000-ffff88940000 /dev/shm/PostgreSQL.2214466610 
-    ffff889a9000-ffff889aa000 /SYSV000fb191 (deleted)
+== PID 412  /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    ffffaf5e3000-ffffaf5eb000 /dev/shm/PostgreSQL.1630556078 
+    ffffaf5eb000-ffffaf5ec000 /SYSV00137e8a (deleted)
+    ffffaf5ec000-ffffb8b9e000 /dev/zero (deleted)
+== PID 583  postgres: postgres postgres [local] idle
+    ffffaf450000-ffffaf481000 /dev/shm/PostgreSQL.3330517350 
+    ffffaf4c2000-ffffaf5c2000 /dev/shm/PostgreSQL.3445492072 
+    ffffaf5e3000-ffffaf5eb000 /dev/shm/PostgreSQL.1630556078 
+    ffffaf5eb000-ffffaf5ec000 /SYSV00137e8a (deleted)
+    ffffaf5ec000-ffffb8b9e000 /dev/zero (deleted)
+== PID 593  postgres: postgres postgres [local] idle
+    ffffaf4c2000-ffffaf5c2000 /dev/shm/PostgreSQL.3445492072 
+    ffffaf5e3000-ffffaf5eb000 /dev/shm/PostgreSQL.1630556078 
+    ffffaf5eb000-ffffaf5ec000 /SYSV00137e8a (deleted)
+    ffffaf5ec000-ffffb8b9e000 /dev/zero (deleted)
 ```
 
-- `ffff7cb27000-ffff860d9000 /dev/zero (deleted)`가 본체 공유 메모리입니다. 주소 범위를 계산하면 156,966,912바이트, 약 150MB로 `shared_memory_size`와 같습니다. **세 프로세스 모두 정확히 같은 주소에 붙어 있습니다.** postmaster가 만든 매핑을 fork로 물려받았기 때문입니다. `/dev/zero (deleted)`는 `shared_memory_type = mmap`일 때 익명 공유 매핑이 `/proc`에 표시되는 방식입니다.
-- `/SYSV000fb191`는 몇 바이트짜리 System V 공유 메모리입니다. 데이터를 담는 곳이 아니라, 같은 데이터 디렉터리에 postmaster가 두 개 뜨는 일을 막는 잠금 장치로 씁니다([`sysv_shmem.c`의 주석](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/port/sysv_shmem.c#L43-L46)).
+- `ffffaf5ec000-ffffb8b9e000 /dev/zero (deleted)`가 본체 공유 메모리입니다. 주소 범위를 계산하면 156,966,912바이트, 약 150MB로 `shared_memory_size`와 같습니다. **세 프로세스 모두 정확히 같은 주소에 붙어 있습니다.** postmaster가 만든 매핑을 fork로 물려받았기 때문입니다. `/dev/zero (deleted)`는 `shared_memory_type = mmap`일 때 익명 공유 매핑이 `/proc`에 표시되는 방식입니다.
+- `/SYSV00137e8a`는 몇 바이트짜리 System V 공유 메모리입니다. 데이터를 담는 곳이 아니라, 같은 데이터 디렉터리에 postmaster가 두 개 뜨는 일을 막는 잠금 장치로 씁니다([`sysv_shmem.c`의 주석](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/port/sysv_shmem.c#L43-L46)).
 - `/dev/shm/PostgreSQL.*`는 필요할 때 따로 만들어 붙이는 동적 공유 메모리(DSM)입니다. 프로세스마다 붙어 있는 조각이 다른 것도 그래서입니다.
 
 이번에는 메모리 사용량을 봅니다. `VmRSS`는 `ps`나 `top`이 보여 주는 RSS 값이고, 리눅스는 이를 개인 메모리(`RssAnon`), 파일 매핑(`RssFile`), 공유 메모리(`RssShmem`)로 나눠 보여 줍니다.
@@ -557,21 +557,21 @@ $ for p in $PM $(pgrep -f 'postgres: postgres postgres \[local\] idle'); do
 >   echo "== PID $p  $(ps -o cmd= -p $p)"
 >   grep -E '^(VmRSS|RssAnon|RssShmem)' /proc/$p/status
 > done
-== PID 332  /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
-VmRSS:	   22792 kB
-RssAnon:	     956 kB
+== PID 412  /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+VmRSS:	   22336 kB
+RssAnon:	     796 kB
 RssShmem:	   13372 kB
-== PID 502  postgres: postgres postgres [local] idle
-VmRSS:	   34768 kB
-RssAnon:	    2028 kB
-RssShmem:	   24640 kB
-== PID 512  postgres: postgres postgres [local] idle
-VmRSS:	   11684 kB
-RssAnon:	    1776 kB
-RssShmem:	    3472 kB
+== PID 583  postgres: postgres postgres [local] idle
+VmRSS:	   34524 kB
+RssAnon:	    1848 kB
+RssShmem:	   24520 kB
+== PID 593  postgres: postgres postgres [local] idle
+VmRSS:	   11388 kB
+RssAnon:	    1616 kB
+RssShmem:	    3280 kB
 ```
 
-테이블을 읽은 502번은 RSS가 34MB로, 아무것도 안 한 512번(11MB)의 세 배입니다. 하지만 늘어난 부분은 거의 `RssShmem`(24MB)이고, 자기만 쓰는 `RssAnon`은 2MB 정도로 비슷합니다. 21MB 테이블을 shared buffers로 읽어 들이면서 **공유 메모리 페이지를 만진 만큼 그 프로세스의 RSS에 잡힌 것**입니다. 같은 페이지를 다른 backend가 만지면 그쪽 RSS에도 똑같이 잡힙니다.
+테이블을 읽은 583번은 RSS가 34MB로, 아무것도 안 한 593번(11MB)의 세 배입니다. 하지만 늘어난 부분은 거의 `RssShmem`(24MB)이고, 자기만 쓰는 `RssAnon`은 1.6-1.8MB로 비슷합니다. 21MB 테이블을 shared buffers로 읽어 들이면서 **공유 메모리 페이지를 만진 만큼 그 프로세스의 RSS에 잡힌 것**입니다. 같은 페이지를 다른 backend가 만지면 그쪽 RSS에도 똑같이 잡힙니다.
 
 #### 운영에서는: RSS를 합산하면 메모리 사용량이 부풀려진다
 
@@ -583,7 +583,7 @@ RssShmem:	    3472 kB
 
 #### autovacuum worker는 누가 fork하나
 
-autovacuum이 자주 돌도록 `autovacuum_naptime`을 1초로 줄이고, 테이블 전체를 UPDATE해서 청소할 거리(dead tuple)를 만듭니다. 그다음 worker가 나타날 때까지 `ps`를 0.25초 간격으로 확인합니다.
+autovacuum이 자주 돌도록 `autovacuum_naptime`을 1초로 줄이고, 테이블 전체를 UPDATE해서 청소할 거리(dead tuple)를 만듭니다. 그다음 worker가 나타날 때까지 `ps`를 0.01초 간격으로 확인합니다.
 
 ```psql
 postgres=# ALTER SYSTEM SET autovacuum_naptime = '1s';
@@ -600,22 +600,20 @@ postgres=# UPDATE av_test SET v = 1;
 ```
 
 ```console
-$ for i in $(seq 1 40); do
+$ for i in $(seq 1 1000); do
 >   ps -u postgres -o pid,ppid,cmd | grep 'autovacuum worker' | grep -v grep && break
->   sleep 0.25
+>   sleep 0.01
 > done
-    213      37 postgres: autovacuum worker postgres
+    294      33 postgres: autovacuum worker postgres
 $ sleep 3
 $ grep -E 'autovacuum worker LOG:  automatic (vacuum|analyze) of table "postgres.public.av_test"' /home/postgres/server.log | cut -c1-120
-2026-09-24 01:41:51.298 UTC [179] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
-2026-09-24 01:41:51.352 UTC [179] autovacuum worker LOG:  automatic analyze of table "postgres.public.av_test"
-2026-09-24 01:41:52.291 UTC [197] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
-2026-09-24 01:41:53.289 UTC [213] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
-2026-09-24 01:41:54.297 UTC [217] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
-2026-09-24 01:41:55.285 UTC [219] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+2026-09-26 10:24:09.034 UTC [294] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+2026-09-26 10:24:09.079 UTC [294] autovacuum worker LOG:  automatic analyze of table "postgres.public.av_test"
+2026-09-26 10:24:10.032 UTC [297] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
+2026-09-26 10:24:11.028 UTC [299] autovacuum worker LOG:  automatic vacuum of table "postgres.public.av_test": index sca
 ```
 
-`ps`로 잡은 213번 worker의 **부모는 launcher(45)가 아니라 postmaster(37)입니다.** 로그를 보면 179, 197, 213, 217, 219처럼 worker가 약 1초마다 새 PID로 생겼다 사라집니다. worker는 할 일을 마치면 종료하고, 다음 주기에 launcher가 다시 요청하면 postmaster가 새로 fork합니다. (실습용 설정은 이 단계 끝에서 `ALTER SYSTEM RESET`으로 되돌렸습니다.) VACUUM 자체는 [5편](/posts/postgresql/05-vacuum/)에서 다룹니다.
+`ps`로 잡은 294번 worker의 **부모는 launcher(41)가 아니라 postmaster(33)입니다.** 로그를 보면 294, 297, 299처럼 worker가 약 1초마다 새 PID로 생겼다 사라집니다. worker는 할 일을 마치면 종료하고, 다음 주기에 launcher가 다시 요청하면 postmaster가 새로 fork합니다. (실습용 설정은 이 단계 끝에서 `ALTER SYSTEM RESET`으로 되돌렸습니다.) VACUUM 자체는 [5편](/posts/postgresql/05-vacuum/)에서 다룹니다.
 
 ### postmaster 생존 확인
 
@@ -626,11 +624,11 @@ $ grep -E 'autovacuum worker LOG:  automatic (vacuum|analyze) of table "postgres
 postmaster 자체에 `kill -9`를 보냅니다. **운영 서버에서는 절대 하면 안 되는 일입니다.**
 
 ```console
-$ kill -9 560
+$ kill -9 641
 $ sleep 2
 $ ps -u postgres -o pid,ppid,stat,cmd | grep -v -e 'ps -u' -e 'sleep infinity'
     PID    PPID STAT CMD
-    583       0 Ss   bash -s
+    664       0 Ss   bash -s
 ```
 
 `bash -s`는 이 명령을 실행한 셸입니다. PostgreSQL 프로세스는 하나도 남지 않았습니다. 부모가 죽은 것을 알아챈 자식들이 스스로 종료했습니다.
@@ -645,38 +643,44 @@ waiting for server to start.... done
 server started
 $ sleep 1
 $ tail -n 8 $PGDATA/log/$(ls -t $PGDATA/log | head -1)
-2026-09-24 01:42:13.447 UTC [609] postmaster LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
-2026-09-24 01:42:13.449 UTC [616] startup LOG:  database system was interrupted; last known up at 2026-09-24 01:42:10 UTC
-2026-09-24 01:42:13.473 UTC [616] startup LOG:  database system was not properly shut down; automatic recovery in progress
-2026-09-24 01:42:13.475 UTC [616] startup LOG:  unexpected pageaddr 0/26EC000 in WAL segment 000000010000000000000005, LSN 0/56EC000, offset 7258112
-2026-09-24 01:42:13.475 UTC [616] startup LOG:  redo is not required
-2026-09-24 01:42:13.476 UTC [614] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
-2026-09-24 01:42:13.478 UTC [614] checkpointer LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.003 s; sync files=2, longest=0.001 s, average=0.001 s; distance=0 kB, estimate=0 kB; lsn=0/56EC048, redo lsn=0/56EC048
-2026-09-24 01:42:13.478 UTC [609] postmaster LOG:  database system is ready to accept connections
+2026-09-26 10:24:29.194 UTC [689] postmaster LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-26 10:24:29.196 UTC [696] startup LOG:  database system was interrupted; last known up at 2026-09-26 10:24:25 UTC
+2026-09-26 10:24:29.222 UTC [696] startup LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-26 10:24:29.223 UTC [696] startup LOG:  unexpected pageaddr 0/26EA000 in WAL segment 000000010000000000000005, LSN 0/56EA000, offset 7249920
+2026-09-26 10:24:29.223 UTC [696] startup LOG:  redo is not required
+2026-09-26 10:24:29.225 UTC [694] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-09-26 10:24:29.229 UTC [694] checkpointer LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.005 s; sync files=2, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=6 kB; lsn=0/56EA048, redo lsn=0/56EA048
+2026-09-26 10:24:29.230 UTC [689] postmaster LOG:  database system is ready to accept connections
 ```
 
-`postmaster.pid`가 남아 있어서 `pg_ctl`이 "다른 서버가 떠 있을 수도 있다"고 경고했지만, 파일에 적힌 PID의 프로세스가 없으니 그대로 기동했습니다. 정상 종료가 아니었으므로 startup이 복구 과정을 거쳤습니다. 마지막 체크포인트 이후 변경이 없어서 `redo is not required`로 끝났습니다.
+`postmaster.pid`가 남아 있어서 `pg_ctl`이 "다른 서버가 떠 있을 수도 있다"고 경고했지만, 파일에 적힌 PID의 프로세스가 없으니 그대로 기동했습니다. 정상 종료가 아니었으므로 startup이 복구 과정을 거쳤습니다. 마지막 체크포인트 뒤로 재생할 WAL 레코드가 없어서 `redo is not required`로 끝났습니다.
 
 #### 운영에서는: 컨테이너에서는 PID 1이 좀비를 치워야 한다
 
-PostgreSQL을 컨테이너에서 띄울 때 PID 1을 `sleep infinity` 같은 프로세스로 두면, 위처럼 postmaster가 죽은 뒤 재기동이 실패할 수 있습니다. 실제로 겪었던 기록입니다.
+PostgreSQL을 컨테이너에서 띄울 때 PID 1을 `sleep infinity` 같은 프로세스로 두면, 위처럼 postmaster가 죽은 뒤 재기동이 실패할 수 있습니다. `--init` 없이 띄운 컨테이너에서 재현한 기록입니다.
 
 ```text
-2026-09-24 01:39:36.364 UTC [642] postmaster FATAL:  lock file "postmaster.pid" already exists
-2026-09-24 01:39:36.364 UTC [642] postmaster HINT:  Is another postmaster (PID 615) running in data directory "/var/lib/postgresql/data"?
+2026-09-26 10:12:12.213 UTC [56] postmaster FATAL:  lock file "postmaster.pid" already exists
+2026-09-26 10:12:12.213 UTC [56] postmaster HINT:  Is another postmaster (PID 26) running in data directory "/var/lib/postgresql/data"?
 ```
 
 ```text
     PID    PPID STAT CMD
-      1       0 Ss   sleep infinity
-    615       1 Zs   [postgres] <defunct>
-    616       1 Zs   [postgres] <defunct>
-    617       1 Zs   [postgres] <defunct>
+      1       0 Ss   /usr/bin/coreutils --coreutils-prog-shebang=sleep /usr/bin/sleep infinity
+     26       1 Zs   [postgres] <defunct>
+     27       1 Zs   [postgres] <defunct>
+     28       1 Zs   [postgres] <defunct>
+     29       1 Zs   [postgres] <defunct>
+     30       1 Zs   [postgres] <defunct>
+     31       1 Zs   [postgres] <defunct>
+     33       1 Zs   [postgres] <defunct>
+     34       1 Zs   [postgres] <defunct>
+     35       1 Zs   [postgres] <defunct>
 ```
 
-(`ps` 출력에서 PostgreSQL과 관계없는 좀비 줄은 생략했습니다.)
+(`ps` 출력에서 이 명령을 실행한 셸(`bash -s`) 줄은 생략했습니다. PID 1은 `sleep infinity`이고, 실습 이미지에서는 `sleep`이 coreutils 단일 바이너리를 거쳐 실행되어 이렇게 표시됩니다.)
 
-postmaster가 죽자 자식들의 부모는 PID 1로 바뀌었습니다. 그런데 `sleep`은 끝난 자식 프로세스를 회수(`wait`)하지 않으므로, 죽은 postmaster(615)가 좀비(`Z`)로 남았습니다. 좀비도 PID는 차지하고 있어서, 새 postmaster는 `postmaster.pid`에 적힌 615번이 아직 살아 있다고 판단하고 기동을 거부했습니다. PostgreSQL을 컨테이너에서 직접 띄울 때 PID 1을 `sleep`이나 셸 스크립트로 두었다면 `--init`(tini)이나 좀비를 회수하는 init을 쓰는 것이 안전합니다. 공식 `postgres` 이미지처럼 postmaster 자체를 PID 1로 두는 경우에는, postmaster가 자식을 회수하므로 이 문제가 없습니다.
+postmaster가 죽자 자식들의 부모는 PID 1로 바뀌었습니다. 그런데 `sleep`은 끝난 자식 프로세스를 회수(`wait`)하지 않으므로, 죽은 postmaster(26)와 자식들이 모두 좀비(`Z`)로 남았습니다. 좀비도 PID는 차지하고 있어서, 새 postmaster는 `postmaster.pid`에 적힌 26번이 아직 살아 있다고 판단하고 기동을 거부했습니다. PostgreSQL을 컨테이너에서 직접 띄울 때 PID 1을 `sleep`이나 셸 스크립트로 두었다면 `--init`(tini)이나 좀비를 회수하는 init을 쓰는 것이 안전합니다. 공식 `postgres` 이미지처럼 postmaster 자체를 PID 1로 두는 경우에는, postmaster가 자식을 회수하므로 이 문제가 없습니다.
 
 ## backend 하나가 죽으면 왜 모두 재시작하나
 
@@ -712,24 +716,24 @@ postgres=# CREATE TABLE t AS SELECT generate_series(1, 1000) AS id;
 ```console
 $ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
     PID    PPID CMD
-    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
-    333     332  \_ postgres: io worker 0
-    334     332  \_ postgres: io worker 1
-    335     332  \_ postgres: io worker 2
-    336     332  \_ postgres: checkpointer 
-    337     332  \_ postgres: background writer 
-    339     332  \_ postgres: walwriter 
-    340     332  \_ postgres: autovacuum launcher 
-    341     332  \_ postgres: logical replication launcher 
-    350     332  \_ postgres: postgres postgres [local] idle
-    359     332  \_ postgres: postgres postgres [local] idle
-    367     332  \_ postgres: postgres postgres [local] SELECT
+    412       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    413     412  \_ postgres: io worker 0
+    414     412  \_ postgres: io worker 1
+    415     412  \_ postgres: io worker 2
+    416     412  \_ postgres: checkpointer 
+    417     412  \_ postgres: background writer 
+    419     412  \_ postgres: walwriter 
+    420     412  \_ postgres: autovacuum launcher 
+    421     412  \_ postgres: logical replication launcher 
+    430     412  \_ postgres: postgres postgres [local] idle
+    439     412  \_ postgres: postgres postgres [local] idle
+    447     412  \_ postgres: postgres postgres [local] SELECT
 ```
 
-**먼저 정상 종료.** idle 세션 하나(350)를 `pg_terminate_backend()`로 끝냅니다.
+**먼저 정상 종료.** idle 세션 하나(430)를 `pg_terminate_backend()`로 끝냅니다.
 
 ```psql
-postgres=# SELECT pg_terminate_backend(350);
+postgres=# SELECT pg_terminate_backend(430);
  pg_terminate_backend 
 ----------------------
  t
@@ -740,50 +744,50 @@ postgres=# SELECT pg_terminate_backend(350);
 $ sleep 1
 $ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
     PID    PPID CMD
-    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
-...  (333-341, 위와 같은 백그라운드 프로세스 8줄)
-    359     332  \_ postgres: postgres postgres [local] idle
-    367     332  \_ postgres: postgres postgres [local] SELECT
-$ grep '\[350\]' /home/postgres/server.log | tail -2
-2026-09-24 01:42:01.680 UTC [350] client backend FATAL:  terminating connection due to administrator command
-2026-09-24 01:42:01.680 UTC [350] client backend LOG:  disconnection: session time: 0:00:02.272 user=postgres database=postgres host=[local]
+    412       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+...  (413-421, 위와 같은 백그라운드 프로세스 8줄)
+    439     412  \_ postgres: postgres postgres [local] idle
+    447     412  \_ postgres: postgres postgres [local] SELECT
+$ grep '\[430\]' /home/postgres/server.log | tail -2
+2026-09-26 10:24:17.448 UTC [430] client backend FATAL:  terminating connection due to administrator command
+2026-09-26 10:24:17.448 UTC [430] client backend LOG:  disconnection: session time: 0:00:02.281 user=postgres database=postgres host=[local]
 ```
 
-350번만 사라졌고 나머지 PID는 그대로입니다. backend가 FATAL로 스스로 끝나면서 종료 코드 1을 냈기 때문에, postmaster는 정상 종료로 처리했습니다.
+430번만 사라졌고 나머지 PID는 그대로입니다. backend가 FATAL로 스스로 끝나면서 종료 코드 1을 냈기 때문에, postmaster는 정상 종료로 처리했습니다.
 
-**이번에는 비정상 종료.** 남은 idle 세션(359)에 `kill -9`를 보냅니다.
+**이번에는 비정상 종료.** 남은 idle 세션(439)에 `kill -9`를 보냅니다.
 
 ```console
-$ kill -9 359
+$ kill -9 439
 $ sleep 2
 $ PM=$(head -1 $PGDATA/postmaster.pid); ps -o pid,ppid,cmd --forest -p $PM --ppid $PM
     PID    PPID CMD
-    332       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
-    404     332  \_ postgres: io worker 0
-    405     332  \_ postgres: io worker 1
-    406     332  \_ postgres: io worker 2
-    408     332  \_ postgres: checkpointer 
-    409     332  \_ postgres: background writer 
-    410     332  \_ postgres: walwriter 
-    411     332  \_ postgres: autovacuum launcher 
-    412     332  \_ postgres: logical replication launcher 
+    412       1 /usr/local/pgsql/bin/postgres -D /var/lib/postgresql/data
+    484     412  \_ postgres: io worker 0
+    485     412  \_ postgres: io worker 1
+    486     412  \_ postgres: io worker 2
+    488     412  \_ postgres: checkpointer 
+    489     412  \_ postgres: background writer 
+    490     412  \_ postgres: walwriter 
+    491     412  \_ postgres: autovacuum launcher 
+    492     412  \_ postgres: logical replication launcher 
 ```
 
-postmaster(332)를 뺀 **모든 프로세스의 PID가 바뀌었습니다.** 백그라운드 프로세스까지 전부 새로 fork된 것이고, 아무 잘못이 없던 367번 세션도 사라졌습니다. 로그에 전 과정이 남아 있습니다.
+postmaster(412)를 뺀 **모든 프로세스의 PID가 바뀌었습니다.** 백그라운드 프로세스까지 전부 새로 fork된 것이고, 아무 잘못이 없던 447번 세션도 사라졌습니다. 로그에 전 과정이 남아 있습니다.
 
 ```console
 $ sed -n '/terminated by signal 9/,$p' /home/postgres/server.log
-2026-09-24 01:42:02.788 UTC [332] postmaster LOG:  client backend (PID 359) was terminated by signal 9: Killed
-2026-09-24 01:42:02.788 UTC [332] postmaster LOG:  terminating any other active server processes
-2026-09-24 01:42:02.789 UTC [332] postmaster LOG:  all server processes terminated; reinitializing
-2026-09-24 01:42:02.798 UTC [407] startup LOG:  database system was interrupted; last known up at 2026-09-24 01:41:59 UTC
-2026-09-24 01:42:02.828 UTC [407] startup LOG:  database system was not properly shut down; automatic recovery in progress
-2026-09-24 01:42:02.829 UTC [407] startup LOG:  redo starts at 0/3F9F888
-2026-09-24 01:42:02.832 UTC [407] startup LOG:  invalid record length at 0/3FC6978: expected at least 24, got 0
-2026-09-24 01:42:02.832 UTC [407] startup LOG:  redo done at 0/3FC67E0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
-2026-09-24 01:42:02.834 UTC [408] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
-2026-09-24 01:42:02.838 UTC [408] checkpointer LOG:  checkpoint complete: wrote 22 buffers (0.1%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.003 s, total=0.005 s; sync files=20, longest=0.001 s, average=0.001 s; distance=156 kB, estimate=156 kB; lsn=0/3FC6978, redo lsn=0/3FC6978
-2026-09-24 01:42:02.838 UTC [332] postmaster LOG:  database system is ready to accept connections
+2026-09-26 10:24:18.553 UTC [412] postmaster LOG:  client backend (PID 439) was terminated by signal 9: Killed
+2026-09-26 10:24:18.553 UTC [412] postmaster LOG:  terminating any other active server processes
+2026-09-26 10:24:18.553 UTC [412] postmaster LOG:  all server processes terminated; reinitializing
+2026-09-26 10:24:18.564 UTC [487] startup LOG:  database system was interrupted; last known up at 2026-09-26 10:24:14 UTC
+2026-09-26 10:24:18.597 UTC [487] startup LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-26 10:24:18.597 UTC [487] startup LOG:  redo starts at 0/3F9BF38
+2026-09-26 10:24:18.600 UTC [487] startup LOG:  invalid record length at 0/3FC3028: expected at least 24, got 0
+2026-09-26 10:24:18.600 UTC [487] startup LOG:  redo done at 0/3FC2E90 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-09-26 10:24:18.601 UTC [488] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-09-26 10:24:18.605 UTC [488] checkpointer LOG:  checkpoint complete: wrote 22 buffers (0.1%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.003 s, total=0.005 s; sync files=20, longest=0.001 s, average=0.001 s; distance=156 kB, estimate=156 kB; lsn=0/3FC3028, redo lsn=0/3FC3028
+2026-09-26 10:24:18.606 UTC [412] postmaster LOG:  database system is ready to accept connections
 ```
 
 위 그림의 상태 변화가 로그 한 줄 한 줄에 대응합니다.
@@ -793,13 +797,13 @@ $ sed -n '/terminated by signal 9/,$p' /home/postgres/server.log
 | `was terminated by signal 9` | 종료 코드가 0, 1이 아니므로 크래시로 판단 |
 | `terminating any other active server processes` | PM_WAIT_BACKENDS. 모든 자식에게 SIGQUIT |
 | `all server processes terminated; reinitializing` | PM_NO_CHILDREN. 공유 메모리 재생성 |
-| `[407] startup ... automatic recovery in progress`, `redo starts` | PM_STARTUP. 새 startup 프로세스(407)가 WAL 재생 |
+| `[487] startup ... automatic recovery in progress`, `redo starts` | PM_STARTUP. 새 startup 프로세스(487)가 WAL 재생 |
 | `invalid record length ...` | WAL의 끝에 도달했다는 뜻으로, 복구 중에 흔히 보이는 정상 메시지 |
 | `database system is ready to accept connections` | PM_RUN 복귀 |
 
 크래시부터 복귀까지 약 50ms가 걸렸습니다. 재생할 WAL이 156kB뿐이라 빨랐던 것이고, 쓰기가 많은 운영 서버라면 마지막 체크포인트 이후 쌓인 WAL 양만큼 오래 걸립니다([8편](/posts/postgresql/08-checkpoint-and-recovery/)에서 다룹니다).
 
-아무 잘못이 없던 옆 세션(367번)의 psql에는 다음 메시지가 찍혔습니다.
+아무 잘못이 없던 옆 세션(447번)의 psql에는 다음 메시지가 찍혔습니다.
 
 ```text
 WARNING:  terminating connection because of crash of another server process

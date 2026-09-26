@@ -24,11 +24,11 @@ description: "LSN, full page writes, WAL 레코드 구조"
 - full page write는 왜 필요하고, 얼마나 큰가
 - 커밋할 때 정확히 무엇을 기다리는가
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## LSN: WAL 안의 위치
 
-WAL은 클러스터가 만들어진(initdb) 이래 끝없이 이어지는 하나의 바이트 흐름으로 볼 수 있습니다. 그 흐름 안의 위치(바이트 오프셋)가 **LSN**(Log Sequence Number)입니다. 64비트 정수이고([`XLogRecPtr`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlogdefs.h#L21)), `0/17E4990`처럼 상위 32비트와 하위 32비트를 16진수로 나눠 씁니다. LSN은 계속 커지기만 하므로, 두 LSN을 빼면 그 사이에 쓴 WAL의 바이트 수가 됩니다.
+WAL은 클러스터가 만들어진(initdb) 이래 끝없이 이어지는 하나의 바이트 흐름으로 볼 수 있습니다. 그 흐름 안의 위치(바이트 오프셋)가 **LSN**(Log Sequence Number)입니다. 64비트 정수이고([`XLogRecPtr`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlogdefs.h#L21)), `0/17E0A58`처럼 상위 32비트와 하위 32비트를 16진수로 나눠 씁니다. LSN은 계속 커지기만 하므로, 두 LSN을 빼면 그 사이에 쓴 WAL의 바이트 수가 됩니다.
 
 LSN은 여러 곳에 쓰입니다.
 
@@ -65,14 +65,14 @@ postgres=# CHECKPOINT;
 postgres=# SELECT pg_current_wal_insert_lsn() AS insert_lsn, pg_current_wal_lsn() AS write_lsn, pg_current_wal_flush_lsn() AS flush_lsn;
  insert_lsn | write_lsn | flush_lsn 
 ------------+-----------+-----------
- 0/17E4990  | 0/17E4990 | 0/17E4990
+ 0/17E0A58  | 0/17E0A58 | 0/17E0A58
 (1 row)
 
 postgres=# SELECT pg_walfile_name(pg_current_wal_insert_lsn()) AS segment_file,
 postgres-#        pg_walfile_name_offset(pg_current_wal_insert_lsn()) AS file_and_offset;
        segment_file       |          file_and_offset           
 --------------------------+------------------------------------
- 000000010000000000000001 | (000000010000000000000001,8276368)
+ 000000010000000000000001 | (000000010000000000000001,8260184)
 (1 row)
 
 postgres=# SHOW wal_segment_size;
@@ -85,12 +85,12 @@ postgres=# SHOW wal_segment_size;
 ```console
 $ ls -l $PGDATA/pg_wal | head -5
 total 16392
--rw------- 1 postgres postgres 16777216 Sep 24 04:03 000000010000000000000001
-drwx------ 2 postgres postgres     4096 Sep 24 04:03 archive_status
-drwx------ 2 postgres postgres     4096 Sep 24 04:03 summaries
+-rw------- 1 postgres postgres 16777216 Sep 26 10:09 000000010000000000000001
+drwx------ 2 postgres postgres     4096 Sep 26 10:09 archive_status
+drwx------ 2 postgres postgres     4096 Sep 26 10:09 summaries
 ```
 
-지금 LSN은 `0/17E4990`이고, 쉬고 있는 서버라 insert, write, flush 위치가 모두 같습니다. `0x17E4990` = 25053584는 16MB(16777216) 세그먼트 하나를 넘은 위치라 두 번째 파일, 이름으로는 `000000010000000000000001`의 8276368번째 바이트입니다(타임라인 1, 세그먼트 번호 1). LSN 0을 "무효"라는 뜻으로 쓰기 위해 initdb가 첫 세그먼트(`...0000`)를 건너뛰므로, WAL은 처음부터 `...0001`에서 시작합니다([`xlogdefs.h`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlogdefs.h#L24-L27)).
+지금 LSN은 `0/17E0A58`이고, 쉬고 있는 서버라 insert, write, flush 위치가 모두 같습니다. `0x17E0A58` = 25037400는 16MB(16777216) 세그먼트 하나를 넘은 위치라 두 번째 파일, 이름으로는 `000000010000000000000001`의 8260184번째 바이트입니다(타임라인 1, 세그먼트 번호 1). LSN 0을 "무효"라는 뜻으로 쓰기 위해 initdb가 첫 세그먼트(`...0000`)를 건너뛰므로, WAL은 처음부터 `...0001`에서 시작합니다([`xlogdefs.h`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/include/access/xlogdefs.h#L24-L27)).
 
 다 쓴 세그먼트는 체크포인트 뒤에 필요가 없어지면, 지우는 대신 **앞으로 쓸 번호의 이름으로 바꿔 재활용**합니다. 파일을 새로 만드는 비용을 아끼려는 것입니다.
 
@@ -191,12 +191,12 @@ postgres=# SELECT start_lsn, xid, resource_manager AS rmgr, record_type, record_
 postgres-# FROM pg_get_wal_records_info(:'s1', :'e2');
  start_lsn | xid |    rmgr     | record_type | len  | fpi  |          description          
 -----------+-----+-------------+-------------+------+------+-------------------------------
- 0/17E4990 | 755 | Heap        | INSERT      | 3422 | 3368 | off: 76, flags: 0x00
- 0/17E56F0 | 755 | Btree       | INSERT_LEAF | 5473 | 5420 | off: 269
- 0/17E6C70 | 755 | Transaction | COMMIT      |   34 |    0 | 2026-09-24 04:03:59.999411+00
- 0/17E6C98 | 756 | Heap        | INSERT      |   69 |    0 | off: 77, flags: 0x00
- 0/17E6CE0 | 756 | Btree       | INSERT_LEAF |   64 |    0 | off: 270
- 0/17E6D20 | 756 | Transaction | COMMIT      |   34 |    0 | 2026-09-24 04:03:59.999843+00
+ 0/17E0A58 | 755 | Heap        | INSERT      | 3422 | 3368 | off: 76, flags: 0x00
+ 0/17E17B8 | 755 | Btree       | INSERT_LEAF | 5473 | 5420 | off: 269
+ 0/17E2D38 | 755 | Transaction | COMMIT      |   34 |    0 | 2026-09-26 10:09:58.565017+00
+ 0/17E2D60 | 756 | Heap        | INSERT      |   69 |    0 | off: 77, flags: 0x00
+ 0/17E2DA8 | 756 | Btree       | INSERT_LEAF |   64 |    0 | off: 270
+ 0/17E2DE8 | 756 | Transaction | COMMIT      |   34 |    0 | 2026-09-26 10:09:58.565349+00
 (6 rows)
 ```
 
@@ -206,17 +206,17 @@ postgres-# FROM pg_get_wal_records_info(:'s1', :'e2');
 - 두 번째 INSERT는 같은 페이지를 다시 고친 것이라 이미지가 없고 레코드 크기가 69, 64, 34바이트뿐입니다.
 - 레코드 길이를 더한 값(3422 + 5473 + 34)보다 LSN 차이(8968)가 조금 큰 것은, 레코드가 8바이트 단위로 정렬되고 WAL 페이지(8kB)마다 페이지 헤더가 끼기 때문입니다.
 
-같은 레코드를 `pg_waldump`로도 볼 수 있습니다. 행 하나를 더 넣고, 그 INSERT 전후의 insert LSN인 `0/17EE8A8`부터 `0/17EE958`까지를 읽습니다.
+같은 레코드를 `pg_waldump`로도 볼 수 있습니다. 행 하나를 더 넣고, 그 INSERT 전후의 insert LSN인 `0/17EA970`부터 `0/17EAA20`까지를 읽습니다.
 
 ```psql
 postgres=# INSERT INTO acct VALUES (1003, 100, 'waldump');
 ```
 
 ```console
-$ pg_waldump -p $PGDATA/pg_wal -s 0/17EE8A8 -e 0/17EE958
-rmgr: Heap        len (rec/tot):     71/    71, tx:        757, lsn: 0/017EE8A8, prev 0/017EDDB8, desc: INSERT off: 78, flags: 0x00, blkref #0: rel 1663/5/16391 blk 5
-rmgr: Btree       len (rec/tot):     64/    64, tx:        757, lsn: 0/017EE8F0, prev 0/017EE8A8, desc: INSERT_LEAF off: 271, blkref #0: rel 1663/5/16397 blk 4
-rmgr: Transaction len (rec/tot):     34/    34, tx:        757, lsn: 0/017EE930, prev 0/017EE8F0, desc: COMMIT 2026-09-24 04:04:00.056391 UTC
+$ pg_waldump -p $PGDATA/pg_wal -s 0/17EA970 -e 0/17EAA20
+rmgr: Heap        len (rec/tot):     71/    71, tx:        757, lsn: 0/017EA970, prev 0/017E9E80, desc: INSERT off: 78, flags: 0x00, blkref #0: rel 1663/5/16391 blk 5
+rmgr: Btree       len (rec/tot):     64/    64, tx:        757, lsn: 0/017EA9B8, prev 0/017EA970, desc: INSERT_LEAF off: 271, blkref #0: rel 1663/5/16397 blk 4
+rmgr: Transaction len (rec/tot):     34/    34, tx:        757, lsn: 0/017EA9F8, prev 0/017EA9B8, desc: COMMIT 2026-09-26 10:09:58.617179 UTC
 ```
 
 각 줄은 레코드 하나입니다. `len (rec/tot)`은 레코드 길이, `tx`는 xid, `lsn`은 위치, `prev`는 바로 앞 레코드의 위치이고, `blkref #0: rel 1663/5/16391 blk 5`는 테이블스페이스 1663, DB 5, 파일 16391의 5번 블록을 건드렸다는 뜻입니다. `prev`를 따라가면 레코드가 한 줄로 이어집니다.
@@ -233,19 +233,19 @@ postgres-# FROM pg_get_wal_stats('0/1000000', pg_current_wal_lsn())
 postgres-# WHERE count > 0 ORDER BY combined_size DESC;
     rmgr     | count  | count_pct |   bytes    | bytes_pct | fpi_pct 
 -------------+--------+-----------+------------+-----------+---------
- Heap        | 374771 |      49.1 | 22 MB      |      46.5 |    14.7
- Btree       | 202472 |      26.5 | 15 MB      |      32.0 |    13.2
- Transaction | 182952 |      24.0 | 6261 kB    |      12.9 |     0.0
- Heap2       |   2814 |       0.4 | 2090 kB    |       4.3 |    31.9
- XLOG        |    393 |       0.1 | 2060 kB    |       4.2 |    40.3
- Standby     |    449 |       0.1 | 25 kB      |       0.1 |     0.0
+ Heap        | 400882 |      49.1 | 24 MB      |      46.7 |    14.6
+ Btree       | 215549 |      26.4 | 16 MB      |      32.2 |    13.2
+ Transaction | 196029 |      24.0 | 6694 kB    |      13.0 |     0.0
+ Heap2       |   2814 |       0.3 | 2090 kB    |       4.1 |    31.9
+ XLOG        |    393 |       0.0 | 2060 kB    |       4.0 |    40.3
+ Standby     |    449 |       0.1 | 25 kB      |       0.0 |     0.0
  Storage     |     28 |       0.0 | 1176 bytes |       0.0 |     0.0
  CLOG        |      6 |       0.0 | 204 bytes  |       0.0 |     0.0
  Database    |      2 |       0.0 | 84 bytes   |       0.0 |     0.0
 (9 rows)
 ```
 
-pgbench의 INSERT가 대부분이라 `Heap`(튜플), `Btree`(인덱스), `Transaction`(커밋) 순서입니다. `XLOG`는 레코드 수가 393개로 적지만 바이트의 4.2%를 차지합니다. `fpi_pct`는 그 rmgr 안의 비율이 아니라 **전체 페이지 이미지 바이트 중 그 rmgr 몫**인데([`pg_walinspect.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/contrib/pg_walinspect/pg_walinspect.c#L628-L630)), 전체 이미지의 40.3%가 `XLOG` 레코드(주로 [hint bit 때문에 생기는](#hint-bit만-바꿔도-이미지가-남는다) `FPI_FOR_HINT`)에서 나왔습니다. 쓰기를 하지 않았는데 생긴 이미지가 가장 큰 몫이라는 뜻입니다. 맨 아래 `Database` 2건은 initdb가 데이터베이스를 만들 때 남긴 기록입니다. WAL이 예상보다 많이 쌓인다면 이렇게 종류별로 나눠 보는 것이 원인을 찾는 첫걸음입니다.
+pgbench의 INSERT가 대부분이라 `Heap`(튜플), `Btree`(인덱스), `Transaction`(커밋) 순서입니다. `XLOG`는 레코드 수가 393개로 적지만 바이트의 4.0%를 차지합니다. `fpi_pct`는 그 rmgr 안의 비율이 아니라 **전체 페이지 이미지 바이트 중 그 rmgr 몫**인데([`pg_walinspect.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/contrib/pg_walinspect/pg_walinspect.c#L628-L630)), 전체 이미지의 40.3%가 `XLOG` 레코드(주로 [hint bit 때문에 생기는](#hint-bit만-바꿔도-이미지가-남는다) `FPI_FOR_HINT`)에서 나왔습니다. 쓰기를 하지 않았는데 생긴 이미지가 가장 큰 몫이라는 뜻입니다. 맨 아래 `Database` 2건은 initdb가 데이터베이스를 만들 때 남긴 기록입니다. WAL이 예상보다 많이 쌓인다면 이렇게 종류별로 나눠 보는 것이 원인을 찾는 첫걸음입니다.
 
 ## full page write: 페이지 전체를 남기는 이유
 
@@ -338,7 +338,7 @@ postgres=# SELECT pg_reload_conf();
 postgres=# \i /home/postgres/fpw.sql
  fpw | compression | records | with_fpi | fpi_bytes | other_bytes | wal_bytes 
 -----+-------------+---------+----------+-----------+-------------+-----------
- on  | pglz        |     285 |        9 |     23866 |       19503 |     43800
+ on  | pglz        |     285 |        9 |     23864 |       19503 |     43800
 (1 row)
 
 postgres=# ALTER SYSTEM SET wal_compression = 'off';
@@ -357,7 +357,7 @@ postgres=# SELECT pg_reload_conf();
 | 설정 | WAL 레코드 | 이미지가 붙은 레코드 | 이미지 바이트 | 나머지 바이트 | WAL 크기 |
 |---|---|---|---|---|---|
 | 기본값 (`full_page_writes = on`) | 285 | 9 | 72600 | 19485 | 92648 |
-| `wal_compression = pglz` | 285 | 9 | 23866 | 19503 | 43800 |
+| `wal_compression = pglz` | 285 | 9 | 23864 | 19503 | 43800 |
 | `full_page_writes = off` | 285 | 0 | 0 | 19502 | 19840 |
 
 세 번 모두 레코드 수와 이미지를 뺀 나머지 크기(약 19.5kB)는 같고, 달라진 것은 페이지 이미지뿐입니다. 이미지가 붙은 레코드는 9개뿐인데 WAL의 78%(72600 / 92648)를 차지합니다. pglz로 압축하면 이미지가 1/3로 줄어 WAL 전체가 절반 아래가 되고, 끄면 이미지가 사라져 약 1/5이 됩니다. 다만 `full_page_writes = off`는 torn page가 생겨도 복구할 수 없게 만드므로, 디스크가 원자적으로 8kB를 쓴다고 보장되는 환경(일부 파일 시스템이나 스토리지)이 아니면 쓰면 안 됩니다. 이 실습에서도 확인만 하고 바로 되돌렸습니다.
@@ -477,16 +477,16 @@ postgres=# SHOW synchronous_commit;
 
 ```console
 $ pgbench -n -c 1 -T 5 -f /home/postgres/one.sql postgres 2>&1 | grep -E "number of transactions actually processed|latency average|tps"
-number of transactions actually processed: 54490
-latency average = 0.092 ms
-tps = 10895.846981 (without initial connection time)
+number of transactions actually processed: 56673
+latency average = 0.088 ms
+tps = 11330.980885 (without initial connection time)
 $ PGOPTIONS='-c synchronous_commit=off' pgbench -n -c 1 -T 5 -f /home/postgres/one.sql postgres 2>&1 | grep -E "number of transactions actually processed|latency average|tps"
-number of transactions actually processed: 128609
-latency average = 0.039 ms
-tps = 25722.237278 (without initial connection time)
+number of transactions actually processed: 141476
+latency average = 0.035 ms
+tps = 28298.239231 (without initial connection time)
 ```
 
-`synchronous_commit = off`에서 처리량이 약 2.4배(10895 → 25722 tps)가 되었습니다. 커밋마다 WAL을 디스크에 fsync하고 기다리던 시간이 빠졌기 때문입니다. 이 실습 환경은 가상 디스크라 fsync가 비교적 빠른 편이고, 실제 서버의 차이는 디스크에 따라 훨씬 클 수도 작을 수도 있습니다.
+`synchronous_commit = off`에서 처리량이 약 2.5배(11330 → 28298 tps)가 되었습니다. 커밋마다 WAL을 디스크에 fsync하고 기다리던 시간이 빠졌기 때문입니다. 이 실습 환경은 가상 디스크라 fsync가 비교적 빠른 편이고, 실제 서버의 차이는 디스크에 따라 훨씬 클 수도 작을 수도 있습니다.
 
 #### 운영에서는: synchronous_commit은 트랜잭션 단위로 고를 수 있다
 

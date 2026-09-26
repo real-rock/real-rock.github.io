@@ -18,7 +18,7 @@
     ]
   },
   "components": [
-    { "id": "header", "type": "security", "label": "PageHeaderData (0-23)", "sublabel": "pd_lsn 0/17E5C60, pd_checksum, pd_lower 36, pd_upper 8072, pd_special 8192", "pos": [40, 70], "size": [1040, 64],
+    { "id": "header", "type": "security", "label": "PageHeaderData (0-23)", "sublabel": "pd_lsn 0/17E1D28, pd_checksum, pd_lower 36, pd_upper 8072, pd_special 8192", "pos": [40, 70], "size": [1040, 64],
       "sources": [{ "path": "src/include/storage/bufpage.h", "line": 159, "end_line": 172, "label": "PageHeaderData" }] },
     { "id": "lp1", "type": "frontend", "label": "lp 1 (24-27)", "sublabel": "lp_off 8152, lp_len 34", "pos": [40, 200], "size": [260, 60],
       "sources": [{ "path": "src/include/storage/itemid.h", "line": 25, "end_line": 30, "label": "ItemIdData" }] },

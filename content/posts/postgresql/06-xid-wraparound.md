@@ -24,7 +24,7 @@ description: "왜 생기고 어떻게 막는가"
 - `age()`는 무엇을 재고, 어떤 값에서 무슨 일이 일어나는가
 - 쓰기가 멈추면 어떻게 복구하는가
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## 원형으로 비교하는 트랜잭션 ID
 
@@ -232,8 +232,8 @@ postgres=# SELECT relname, age(relfrozenxid) FROM pg_class WHERE relname IN ('f'
 
 ```console
 $ grep -E 'to prevent wraparound of table "postgres.public.(f|noav)"' /home/postgres/server.log | cut -c1-160
-2026-09-24 03:37:36.768 UTC [89] autovacuum worker LOG:  automatic aggressive vacuum to prevent wraparound of table "postgres.public.f": index scans: 0
-2026-09-24 03:37:36.770 UTC [89] autovacuum worker LOG:  automatic aggressive vacuum to prevent wraparound of table "postgres.public.noav": index scans: 0
+2026-09-26 10:09:14.546 UTC [86] autovacuum worker LOG:  automatic aggressive vacuum to prevent wraparound of table "postgres.public.f": index scans: 0
+2026-09-26 10:09:14.547 UTC [86] autovacuum worker LOG:  automatic aggressive vacuum to prevent wraparound of table "postgres.public.noav": index scans: 0
 ```
 
 로그에 `automatic aggressive vacuum to prevent wraparound of table`이 찍혔습니다. **autovacuum을 끈 테이블인데도 VACUUM이 돌았습니다.** age가 2억을 넘으면 `autovacuum_enabled` 설정과 상관없이 강제로 돕니다. 그 뒤 age는 6000만으로 줄었습니다. 0이 아닌 이유는 이 VACUUM이 도는 동안 xid를 소모하던 트랜잭션이 열려 있어서 그보다 뒤로는 얼릴 수 없었기 때문입니다. 다음 xid 210000771에서 60000011을 빼면 150000760으로, 위에서 6000만 개 소모를 시작한 트랜잭션의 xid와 같습니다.
@@ -390,13 +390,13 @@ INSERT 0 1
 
 ```console
 $ grep -cE 'to prevent wraparound' /home/postgres/server.log
-2499
+3153
 $ grep -E 'bypassing nonessential maintenance' /home/postgres/server.log | head -2 | cut -c1-200
-2026-09-24 03:37:55.403 UTC [227] autovacuum worker WARNING:  bypassing nonessential maintenance of table "postgres.pg_catalog.pg_partitioned_table" as a failsafe after 0 index scans
-2026-09-24 03:37:55.403 UTC [227] autovacuum worker WARNING:  bypassing nonessential maintenance of table "postgres.pg_catalog.pg_range" as a failsafe after 0 index scans
+2026-09-26 10:09:33.958 UTC [226] autovacuum worker WARNING:  bypassing nonessential maintenance of table "postgres.public.f" as a failsafe after 0 index scans
+2026-09-26 10:09:33.958 UTC [226] autovacuum worker WARNING:  bypassing nonessential maintenance of table "postgres.pg_catalog.pg_statistic" as a failsafe after 0 index scans
 ```
 
-A를 롤백하고 15초 뒤, autovacuum이 모든 DB를 얼려 age가 2억 아래(약 3700만)로 내려왔고, INSERT가 다시 성공했습니다. 0이 아니라 3700만인 이유는 postgres DB에서는 [경고 단계](#경고-단계-한계까지-4000만-개-남았을-때)에서 넣은 행(xid 약 23.17억)이 `vacuum_freeze_min_age`(5000만)보다 젊어서 얼리지 않았고, 그 xid가 relfrozenxid로 남았기 때문입니다. 로그의 2499줄은 서버를 시작한 뒤 쌓인 wraparound 방지 VACUUM 기록 전체입니다. A가 freeze를 막는 동안 autovacuum이 1초마다 같은 테이블들을 계속 시도했기 때문에 이렇게 많습니다. `bypassing nonessential maintenance ... as a failsafe`는 age가 16억(`vacuum_failsafe_age`)을 넘은 뒤부터 VACUUM이 failsafe로 전환해 필수가 아닌 일을 건너뛰었다는 기록입니다(로그에서 가장 이른 두 줄).
+A를 롤백하고 15초 뒤, autovacuum이 모든 DB를 얼려 age가 2억 아래(약 3700만)로 내려왔고, INSERT가 다시 성공했습니다. 0이 아니라 3700만인 이유는 postgres DB에서는 [경고 단계](#경고-단계-한계까지-4000만-개-남았을-때)에서 넣은 행(xid 약 23.17억)이 `vacuum_freeze_min_age`(5000만)보다 젊어서 얼리지 않았고, 그 xid가 relfrozenxid로 남았기 때문입니다. 로그의 3153줄은 서버를 시작한 뒤 쌓인 wraparound 방지 VACUUM 기록 전체입니다. A가 freeze를 막는 동안 autovacuum이 1초마다 같은 테이블들을 계속 시도했기 때문에 이렇게 많습니다. `bypassing nonessential maintenance ... as a failsafe`는 age가 16억(`vacuum_failsafe_age`)을 넘은 뒤부터 VACUUM이 failsafe로 전환해 필수가 아닌 일을 건너뛰었다는 기록입니다(로그에서 가장 이른 두 줄).
 
 아래 그림은 세션 A가 xid를 붙잡은 때부터 복구까지의 과정을 순서대로 정리한 것입니다.
 

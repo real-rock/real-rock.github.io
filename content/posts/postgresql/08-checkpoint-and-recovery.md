@@ -27,7 +27,7 @@ description: "체크포인트가 하는 일과 장애 후 복구가 진행되는
 - 장애 뒤 재시작하면 복구는 어떤 순서로 진행되는가
 - PITR은 어떻게 원하는 시점에서 멈추는가
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## 체크포인트가 하는 일
 
@@ -66,10 +66,10 @@ postgres=# INSERT INTO acct SELECT g, 100, repeat('p', 200) FROM generate_series
 ```console
 $ pg_controldata $PGDATA | grep -E "cluster state|Latest checkpoint location|Latest checkpoint's REDO location|Latest checkpoint's REDO WAL file|Time of latest checkpoint"
 Database cluster state:               in production
-Latest checkpoint location:           0/1758C08
-Latest checkpoint's REDO location:    0/1758C08
+Latest checkpoint location:           0/1755398
+Latest checkpoint's REDO location:    0/1755398
 Latest checkpoint's REDO WAL file:    000000010000000000000001
-Time of latest checkpoint:            Thu Sep 24 04:11:56 2026
+Time of latest checkpoint:            Sat Sep 26 10:10:10 2026
 ```
 
 ```psql
@@ -98,7 +98,7 @@ postgres=# SHOW log_checkpoints;
 (1 row)
 ```
 
-`pg_controldata`는 pg_control 파일의 내용을 보여 줍니다. 지금 마지막 체크포인트는 initdb가 끝나며 한 **shutdown 체크포인트**라, 체크포인트 레코드 위치와 REDO 위치가 `0/1758C08`로 같습니다. 기본값은 `checkpoint_timeout` 5분, `max_wal_size` 1GB, `checkpoint_completion_target` 0.9입니다.
+`pg_controldata`는 pg_control 파일의 내용을 보여 줍니다. 지금 마지막 체크포인트는 initdb가 끝나며 한 **shutdown 체크포인트**라, 체크포인트 레코드 위치와 REDO 위치가 `0/1755398`로 같습니다. 기본값은 `checkpoint_timeout` 5분, `max_wal_size` 1GB, `checkpoint_completion_target` 0.9입니다.
 
 #### 수동 CHECKPOINT
 
@@ -115,7 +115,7 @@ postgres=# SELECT num_timed, num_requested, num_done, buffers_written FROM pg_st
 postgres=# SELECT pg_current_wal_insert_lsn() AS before_checkpoint;
  before_checkpoint 
 -------------------
- 0/6C91478
+ 0/6C8D540
 (1 row)
 
 postgres=# CHECKPOINT;
@@ -123,11 +123,11 @@ postgres=# CHECKPOINT;
 
 ```console
 $ grep -E "checkpoint (starting|complete)" /home/postgres/server.log | tail -2
-2026-09-24 04:11:57.320 UTC [42] checkpointer LOG:  checkpoint starting: immediate force wait
-2026-09-24 04:11:57.367 UTC [42] checkpointer LOG:  checkpoint complete: wrote 8337 buffers (50.9%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 5 recycled; write=0.012 s, sync=0.024 s, total=0.048 s; sync files=52, longest=0.013 s, average=0.001 s; distance=87266 kB, estimate=87266 kB; lsn=0/6C914D0, redo lsn=0/6C91478
+2026-09-26 10:10:11.273 UTC [39] checkpointer LOG:  checkpoint starting: immediate force wait
+2026-09-26 10:10:11.331 UTC [39] checkpointer LOG:  checkpoint complete: wrote 8337 buffers (50.9%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 5 recycled; write=0.013 s, sync=0.028 s, total=0.059 s; sync files=52, longest=0.014 s, average=0.001 s; distance=87264 kB, estimate=87264 kB; lsn=0/6C8D598, redo lsn=0/6C8D540
 $ pg_controldata $PGDATA | grep -E "Latest checkpoint location|Latest checkpoint's REDO location"
-Latest checkpoint location:           0/6C914D0
-Latest checkpoint's REDO location:    0/6C91478
+Latest checkpoint location:           0/6C8D598
+Latest checkpoint's REDO location:    0/6C8D540
 ```
 
 ```psql
@@ -142,27 +142,27 @@ postgres=# SELECT num_timed, num_requested, num_done, buffers_written FROM pg_st
 
 - `immediate force wait`: 쉬지 않고 쓰며(`immediate`), 지난 체크포인트 뒤 WAL 변화가 없어도 건너뛰지 않고(`force`), 요청한 쪽이 끝날 때까지 기다렸다(`wait`)는 뜻입니다. `CHECKPOINT` 명령이 이 세 플래그를 붙입니다.
 - `wrote 8337 buffers (50.9%)`: shared buffers 16384개(128MB) 가운데 dirty였던 8337개를 썼습니다. 대부분은 20만 행 INSERT로 생긴 페이지이고, 5만 행 UPDATE분이 더해졌습니다. `pg_stat_checkpointer`의 `buffers_written`도 0에서 8337이 되었습니다.
-- `write=0.012 s, sync=0.024 s`: 쓰기와 fsync에 걸린 시간입니다. write 단계는 운영체제 페이지 캐시에 넘기는 것이라 금방 끝나고, 실제로 디스크에 닿게 하는 것은 sync 단계입니다.
+- `write=0.013 s, sync=0.028 s`: 쓰기와 fsync에 걸린 시간입니다. write 단계는 운영체제 페이지 캐시에 넘기는 것이라 금방 끝나고, 실제로 디스크에 닿게 하는 것은 sync 단계입니다.
 - `5 recycled`: REDO 이전의 WAL 세그먼트 5개를 재활용했습니다.
-- `distance=87266 kB`: 이전 체크포인트의 REDO부터 이번 REDO까지의 WAL 양입니다. `estimate`는 이 값의 이동 평균으로, 다음 체크포인트까지 쓸 세그먼트를 얼마나 남겨 둘지 정하는 데 씁니다.
+- `distance=87264 kB`: 이전 체크포인트의 REDO부터 이번 REDO까지의 WAL 양입니다. `estimate`는 이 값의 이동 평균으로, 다음 체크포인트까지 쓸 세그먼트를 얼마나 남겨 둘지 정하는 데 씁니다.
 
-`CHECKPOINT` 직전의 insert 위치 `0/6C91478`이 그대로 새 REDO 위치가 되었고, 체크포인트 레코드는 그 뒤 `0/6C914D0`에 있습니다.
+`CHECKPOINT` 직전의 insert 위치 `0/6C8D540`이 그대로 새 REDO 위치가 되었고, 체크포인트 레코드는 그 뒤 `0/6C8D598`에 있습니다.
 
 #### WAL 안의 체크포인트 레코드
 
-pg_control이 가리키는 REDO 위치 `0/6C91478`부터 현재 insert 위치까지의 레코드를 WAL에서 직접 봅니다.
+pg_control이 가리키는 REDO 위치 `0/6C8D540`부터 현재 insert 위치까지의 레코드를 WAL에서 직접 봅니다.
 
 ```psql
-postgres=# SELECT start_lsn, resource_manager AS rmgr, record_type, record_length AS len, left(description, 90) AS description FROM pg_get_wal_records_info('0/6C91478', pg_current_wal_insert_lsn());
+postgres=# SELECT start_lsn, resource_manager AS rmgr, record_type, record_length AS len, left(description, 90) AS description FROM pg_get_wal_records_info('0/6C8D540', pg_current_wal_insert_lsn());
  start_lsn |  rmgr   |    record_type    | len |                                        description                                         
 -----------+---------+-------------------+-----+--------------------------------------------------------------------------------------------
- 0/6C91478 | XLOG    | CHECKPOINT_REDO   |  30 | wal_level replica
- 0/6C91498 | Standby | RUNNING_XACTS     |  50 | nextXid 756 latestCompletedXid 755 oldestRunningXid 756
- 0/6C914D0 | XLOG    | CHECKPOINT_ONLINE | 114 | redo 0/6C91478; tli 1; prev tli 1; fpw true; wal_level replica; xid 0:756; oid 24576; mult
+ 0/6C8D540 | XLOG    | CHECKPOINT_REDO   |  30 | wal_level replica
+ 0/6C8D560 | Standby | RUNNING_XACTS     |  50 | nextXid 756 latestCompletedXid 755 oldestRunningXid 756
+ 0/6C8D598 | XLOG    | CHECKPOINT_ONLINE | 114 | redo 0/6C8D540; tli 1; prev tli 1; fpw true; wal_level replica; xid 0:756; oid 24576; mult
 (3 rows)
 ```
 
-REDO 위치 `0/6C91478`에 `CHECKPOINT_REDO`가 있고, 완료 기록 `CHECKPOINT_ONLINE`은 `0/6C914D0`에 있습니다. 완료 기록의 설명에 있는 `redo 0/6C91478`이 REDO 위치를 다시 가리킵니다. 둘 사이의 `RUNNING_XACTS`는 체크포인트가 완료 기록 직전에 standby를 위해 남기는 "지금 실행 중인 트랜잭션 목록"입니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7239), [9편](/posts/postgresql/09-streaming-replication/)).
+REDO 위치 `0/6C8D540`에 `CHECKPOINT_REDO`가 있고, 완료 기록 `CHECKPOINT_ONLINE`은 `0/6C8D598`에 있습니다. 완료 기록의 설명에 있는 `redo 0/6C8D540`이 REDO 위치를 다시 가리킵니다. 둘 사이의 `RUNNING_XACTS`는 체크포인트가 완료 기록 직전에 standby를 위해 남기는 "지금 실행 중인 트랜잭션 목록"입니다([`xlog.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/access/transam/xlog.c#L7239), [9편](/posts/postgresql/09-streaming-replication/)).
 
 이번에는 다른 세션이 없어 레코드가 셋뿐이지만, 바쁜 서버라면 체크포인트가 페이지를 쓰는 동안 생긴 모든 변경 레코드가 REDO와 완료 기록 사이에 들어갑니다. 완료 기록에는 `xid 0:756`(다음에 줄 xid), `oid 24576`(다음에 줄 OID) 같은 값도 담겨 있어서 복구를 마친 서버가 번호를 이어서 쓸 수 있습니다.
 
@@ -199,10 +199,10 @@ postgres=# UPDATE acct SET balance = balance + 1;
 ```console
 $ sleep 2
 $ grep -E "checkpoint starting|checkpoints are occurring too frequently" /home/postgres/server.log | tail -4 | cut -c1-140
-2026-09-24 04:11:58.436 UTC [42] checkpointer LOG:  checkpoints are occurring too frequently (0 seconds apart)
-2026-09-24 04:11:58.436 UTC [42] checkpointer LOG:  checkpoint starting: wal
-2026-09-24 04:11:58.595 UTC [42] checkpointer LOG:  checkpoints are occurring too frequently (0 seconds apart)
-2026-09-24 04:11:58.595 UTC [42] checkpointer LOG:  checkpoint starting: wal
+2026-09-26 10:10:12.461 UTC [39] checkpointer LOG:  checkpoints are occurring too frequently (0 seconds apart)
+2026-09-26 10:10:12.461 UTC [39] checkpointer LOG:  checkpoint starting: wal
+2026-09-26 10:10:12.606 UTC [39] checkpointer LOG:  checkpoints are occurring too frequently (0 seconds apart)
+2026-09-26 10:10:12.606 UTC [39] checkpointer LOG:  checkpoint starting: wal
 ```
 
 ```psql
@@ -247,8 +247,8 @@ $ for i in $(seq 1 120); do
 >   sleep 1
 > done
 $ grep -A1 "checkpoint starting: time" /home/postgres/server.log | head -2 | cut -c1-230
-2026-09-24 04:12:30.769 UTC [42] checkpointer LOG:  checkpoint starting: time
-2026-09-24 04:12:57.043 UTC [42] checkpointer LOG:  checkpoint complete: wrote 6666 buffers (40.7%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 11 recycled; write=26.234 s, sync=0.024 s, total=26.274 s; sync files=5, lo
+2026-09-26 10:10:44.814 UTC [39] checkpointer LOG:  checkpoint starting: time
+2026-09-26 10:11:11.048 UTC [39] checkpointer LOG:  checkpoint complete: wrote 6484 buffers (39.6%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 11 recycled; write=26.198 s, sync=0.025 s, total=26.235 s; sync files=6, lo
 ```
 
 ```psql
@@ -256,7 +256,7 @@ postgres=# ALTER SYSTEM RESET checkpoint_timeout;
 postgres=# SELECT pg_reload_conf();
 ```
 
-`time` 체크포인트가 04:12:30.769에 시작해 04:12:57.043에 끝났고, `write=26.234 s`입니다. `checkpoint_timeout` 30초 × `checkpoint_completion_target` 0.9 = 27초에 맞춰 6666개 페이지를 나눠 쓴 것입니다. 진행 시간은 초 단위로 자른 시작 시각(04:12:30)부터 재므로 27초 뒤인 04:12:57 무렵에 끝났고, 그래서 write가 27초보다 조금 짧게 나왔습니다. [수동 CHECKPOINT](#수동-checkpoint)의 immediate 체크포인트가 8337개를 0.012초에 쓴 것과 비교하면, 비슷한 양을 일부러 천천히 썼다는 것을 알 수 있습니다. 기본값(5분)이라면 약 4분 30초에 걸쳐 씁니다.
+`time` 체크포인트가 10:10:44.814에 시작해 10:11:11.048에 끝났고, `write=26.198 s`입니다. `checkpoint_timeout` 30초 × `checkpoint_completion_target` 0.9 = 27초에 맞춰 6484개 페이지를 나눠 쓴 것입니다. 진행 시간은 초 단위로 자른 시작 시각(10:10:44)부터 재므로 27초 뒤인 10:11:11 무렵에 끝났고, 그래서 write가 27초보다 조금 짧게 나왔습니다. [수동 CHECKPOINT](#수동-checkpoint)의 immediate 체크포인트가 8337개를 0.013초에 쓴 것과 비교하면, 비슷한 양을 일부러 천천히 썼다는 것을 알 수 있습니다. 기본값(5분)이라면 약 4분 30초에 걸쳐 씁니다.
 
 #### 운영에서는: 체크포인트 동안 쿼리가 느려진다
 
@@ -292,13 +292,13 @@ postgres=# INSERT INTO acct VALUES (300001, 777, 'after checkpoint');
 postgres=# SELECT pg_current_wal_insert_lsn() AS insert_lsn, pg_current_wal_flush_lsn() AS flush_lsn;
  insert_lsn | flush_lsn  
 ------------+------------
- 0/30E51AC0 | 0/30E51AC0
+ 0/30DFA7C8 | 0/30DFA7C8
 (1 row)
 ```
 
 ```console
 $ pg_controldata $PGDATA | grep -E "Latest checkpoint's REDO location"
-Latest checkpoint's REDO location:    0/2CDA3468
+Latest checkpoint's REDO location:    0/2CD4C480
 $ pg_ctl -D $PGDATA stop -m immediate
 waiting for server to shut down.... done
 server stopped
@@ -306,7 +306,7 @@ $ pg_controldata $PGDATA | grep -E "cluster state"
 Database cluster state:               in production
 ```
 
-죽기 직전 insert 위치와 flush 위치가 모두 `0/30E51AC0`입니다. 마지막 INSERT가 커밋하면서 WAL을 이 위치까지 flush했기 때문입니다([7편](/posts/postgresql/07-wal/)). 마지막 체크포인트의 REDO 위치는 `0/2CDA3468`입니다. 죽인 뒤에도 pg_control의 상태는 `in production`으로 남았습니다. 정상 종료였다면 shutdown 체크포인트를 하고 상태를 `shut down`으로 바꿨을 것입니다.
+죽기 직전 insert 위치와 flush 위치가 모두 `0/30DFA7C8`입니다. 마지막 INSERT가 커밋하면서 WAL을 이 위치까지 flush했기 때문입니다([7편](/posts/postgresql/07-wal/)). 마지막 체크포인트의 REDO 위치는 `0/2CD4C480`입니다. 죽인 뒤에도 pg_control의 상태는 `in production`으로 남았습니다. 정상 종료였다면 shutdown 체크포인트를 하고 상태를 `shut down`으로 바꿨을 것입니다.
 
 다시 켭니다.
 
@@ -315,14 +315,14 @@ $ pg_ctl -D $PGDATA -l /home/postgres/server.log start
 waiting for server to start.... done
 server started
 $ sed -n '/database system was interrupted/,/database system is ready/p' /home/postgres/server.log | tail -12 | cut -c1-220
-2026-09-24 04:12:58.535 UTC [347] startup LOG:  database system was interrupted; last known up at 2026-09-24 04:12:58 UTC
-2026-09-24 04:12:58.561 UTC [347] startup LOG:  database system was not properly shut down; automatic recovery in progress
-2026-09-24 04:12:58.562 UTC [347] startup LOG:  redo starts at 0/2CDA3468
-2026-09-24 04:12:58.643 UTC [347] startup LOG:  invalid record length at 0/30E51AC0: expected at least 24, got 0
-2026-09-24 04:12:58.643 UTC [347] startup LOG:  redo done at 0/30E51A98 system usage: CPU: user: 0.06 s, system: 0.01 s, elapsed: 0.08 s
-2026-09-24 04:12:58.644 UTC [345] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
-2026-09-24 04:12:58.681 UTC [345] checkpointer LOG:  checkpoint complete: wrote 6615 buffers (40.4%), wrote 3 SLRU buffers; 0 WAL file(s) added, 4 removed, 0 recycled; write=0.011 s, sync=0.013 s, total=0.038 s; sync fil
-2026-09-24 04:12:58.683 UTC [341] postmaster LOG:  database system is ready to accept connections
+2026-09-26 10:11:12.349 UTC [343] startup LOG:  database system was interrupted; last known up at 2026-09-26 10:11:12 UTC
+2026-09-26 10:11:12.372 UTC [343] startup LOG:  database system was not properly shut down; automatic recovery in progress
+2026-09-26 10:11:12.372 UTC [343] startup LOG:  redo starts at 0/2CD4C480
+2026-09-26 10:11:12.455 UTC [343] startup LOG:  invalid record length at 0/30DFA7C8: expected at least 24, got 0
+2026-09-26 10:11:12.455 UTC [343] startup LOG:  redo done at 0/30DFA7A0 system usage: CPU: user: 0.05 s, system: 0.02 s, elapsed: 0.08 s
+2026-09-26 10:11:12.456 UTC [341] checkpointer LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-09-26 10:11:12.495 UTC [341] checkpointer LOG:  checkpoint complete: wrote 6615 buffers (40.4%), wrote 3 SLRU buffers; 0 WAL file(s) added, 4 removed, 0 recycled; write=0.011 s, sync=0.015 s, total=0.039 s; sync fil
+2026-09-26 10:11:12.497 UTC [337] postmaster LOG:  database system is ready to accept connections
 ```
 
 ```psql
@@ -347,8 +347,8 @@ Database cluster state:               in production
 startup 프로세스의 로그가 복구 과정을 그대로 보여 줍니다.
 
 - `was interrupted`, `not properly shut down`: pg_control의 상태를 보고 복구를 시작했습니다.
-- `redo starts at 0/2CDA3468`: pg_control이 가리키는 REDO 위치부터 재생합니다.
-- `invalid record length at 0/30E51AC0`: 죽기 전 flush 위치와 정확히 같은 곳에서 더 읽을 레코드가 없어 멈췄습니다. `redo done at 0/30E51A98`은 마지막으로 적용한 레코드(마지막 INSERT의 커밋 레코드)의 시작 위치입니다.
+- `redo starts at 0/2CD4C480`: pg_control이 가리키는 REDO 위치부터 재생합니다.
+- `invalid record length at 0/30DFA7C8`: 죽기 전 flush 위치와 정확히 같은 곳에서 더 읽을 레코드가 없어 멈췄습니다. `redo done at 0/30DFA7A0`은 마지막으로 적용한 레코드(마지막 INSERT의 커밋 레코드)의 시작 위치입니다.
 - REDO부터 약 65MB의 WAL을 0.08초에 재생했고, 이어서 `end-of-recovery` 체크포인트를 한 뒤 접속을 받기 시작했습니다.
 
 합계는 20650000에서 정확히 100000 + 777만큼 늘어난 20750777이고, 체크포인트 뒤에 넣은 행도 있습니다. 데이터 파일에는 아직 반영되지 않았던 변경이 WAL에서 모두 되살아났습니다.
@@ -392,14 +392,14 @@ $ pg_ctl -D $PGDATA stop -m immediate
 waiting for server to shut down.... done
 server stopped
 $ pg_ctl -D $PGDATA -l /home/postgres/server.log start
-waiting for server to start.... done
+waiting for server to start..... done
 server started
 $ grep -E "redo starts|redo done" /home/postgres/server.log | tail -2 | cut -c1-200
-2026-09-24 04:13:01.721 UTC [394] startup LOG:  redo starts at 0/33DCE5B8
-2026-09-24 04:13:02.570 UTC [394] startup LOG:  redo done at 0/50320F30 system usage: CPU: user: 0.75 s, system: 0.09 s, elapsed: 0.84 s
+2026-09-26 10:11:15.490 UTC [389] startup LOG:  redo starts at 0/33D772A8
+2026-09-26 10:11:16.327 UTC [389] startup LOG:  redo done at 0/502C9C20 system usage: CPU: user: 0.74 s, system: 0.08 s, elapsed: 0.83 s
 ```
 
-REDO 이후 WAL 453MB를 재생하는 데 0.84초 걸렸습니다. [앞의 장애 복구](#장애-복구-마지막-체크포인트부터-wal을-다시-적용한다)(약 65MB, 0.08초)보다 WAL이 약 7배이고 시간은 약 10배입니다. 재생은 startup 프로세스 하나가 순서대로 합니다. 여기서는 테이블이 작아 페이지가 모두 메모리에 있으므로 빠르지만, 실제 서버에서는 재생할 페이지를 디스크에서 읽어야 하므로 훨씬 오래 걸릴 수 있습니다. 어느 쪽이든 복구 시간은 REDO 이후 WAL 양에 따라 늘어납니다.
+REDO 이후 WAL 453MB를 재생하는 데 0.83초 걸렸습니다. [앞의 장애 복구](#장애-복구-마지막-체크포인트부터-wal을-다시-적용한다)(약 65MB, 0.08초)보다 WAL이 약 7배이고 시간은 약 10배입니다. 재생은 startup 프로세스 하나가 순서대로 합니다. 여기서는 테이블이 작아 페이지가 모두 메모리에 있으므로 빠르지만, 실제 서버에서는 재생할 페이지를 디스크에서 읽어야 하므로 훨씬 오래 걸릴 수 있습니다. 어느 쪽이든 복구 시간은 REDO 이후 WAL 양에 따라 늘어납니다.
 
 #### 운영에서는: 재시작이 오래 걸린다
 
@@ -440,7 +440,7 @@ START WAL LOCATION: 0/51000028 (file 000000010000000000000051)
 CHECKPOINT LOCATION: 0/51000080
 BACKUP METHOD: streamed
 BACKUP FROM: primary
-START TIME: 2026-09-24 04:13:03 UTC
+START TIME: 2026-09-26 10:11:16 UTC
 LABEL: pg_basebackup base backup
 START TIMELINE: 1
 ```
@@ -496,17 +496,17 @@ waiting for server to start.... done
 server started
 $ sleep 2
 $ grep -E "starting point-in-time|redo starts|restored log file|recovery stopping|redo done|selected new timeline|archive recovery complete|ready to accept" /home/postgres/pitr.log | cut -c1-200
-2026-09-24 04:13:06.105 UTC [466] startup LOG:  restored log file "000000010000000000000051" from archive
-2026-09-24 04:13:06.119 UTC [466] startup LOG:  starting point-in-time recovery to "before_drop"
-2026-09-24 04:13:06.122 UTC [466] startup LOG:  redo starts at 0/51000028
-2026-09-24 04:13:06.124 UTC [466] startup LOG:  restored log file "000000010000000000000052" from archive
-2026-09-24 04:13:06.137 UTC [460] postmaster LOG:  database system is ready to accept read-only connections
-2026-09-24 04:13:06.137 UTC [466] startup LOG:  recovery stopping at restore point "before_drop", time 2026-09-24 04:13:03.921572+00
-2026-09-24 04:13:06.137 UTC [466] startup LOG:  redo done at 0/52001C68 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.01 s
-2026-09-24 04:13:06.139 UTC [466] startup LOG:  restored log file "000000010000000000000052" from archive
-2026-09-24 04:13:06.155 UTC [466] startup LOG:  selected new timeline ID: 2
-2026-09-24 04:13:06.176 UTC [466] startup LOG:  archive recovery complete
-2026-09-24 04:13:06.180 UTC [460] postmaster LOG:  database system is ready to accept connections
+2026-09-26 10:11:19.871 UTC [456] startup LOG:  restored log file "000000010000000000000051" from archive
+2026-09-26 10:11:19.877 UTC [456] startup LOG:  starting point-in-time recovery to "before_drop"
+2026-09-26 10:11:19.881 UTC [456] startup LOG:  redo starts at 0/51000028
+2026-09-26 10:11:19.884 UTC [456] startup LOG:  restored log file "000000010000000000000052" from archive
+2026-09-26 10:11:19.893 UTC [450] postmaster LOG:  database system is ready to accept read-only connections
+2026-09-26 10:11:19.893 UTC [456] startup LOG:  recovery stopping at restore point "before_drop", time 2026-09-26 10:11:17.702584+00
+2026-09-26 10:11:19.893 UTC [456] startup LOG:  redo done at 0/52001C68 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.01 s
+2026-09-26 10:11:19.897 UTC [456] startup LOG:  restored log file "000000010000000000000052" from archive
+2026-09-26 10:11:19.908 UTC [456] startup LOG:  selected new timeline ID: 2
+2026-09-26 10:11:19.925 UTC [456] startup LOG:  archive recovery complete
+2026-09-26 10:11:19.932 UTC [450] postmaster LOG:  database system is ready to accept connections
 ```
 
 ```psql

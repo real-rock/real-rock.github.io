@@ -24,7 +24,7 @@ SQL은 "무엇을 원하는지"만 말하고 "어떻게 가져올지"는 말하�
 - 통계 정보에는 무엇이 들어 있고, 행 수는 어떻게 추정되는가
 - 추정이 틀리는 대표적인 경우와 고치는 방법은 무엇인가
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## 다섯 단계
 
@@ -72,15 +72,15 @@ postgres=# ANALYZE;
 $ PGOPTIONS="-c client_min_messages=log -c log_parser_stats=on -c log_planner_stats=on -c log_executor_stats=on" \
 >   psql -X -c "SELECT status, count(*) FROM orders WHERE amount < 100 GROUP BY status" 2>&1 | grep -E "^LOG:|elapsed|^ +status +\||^-+\+|^ [a-z]+ +\|"
 LOG:  PARSER STATISTICS
-!	0.000028 s user, 0.000000 s system, 0.000028 s elapsed
+!	0.000017 s user, 0.000017 s system, 0.000033 s elapsed
 LOG:  PARSE ANALYSIS STATISTICS
-!	0.000239 s user, 0.000000 s system, 0.000239 s elapsed
+!	0.000115 s user, 0.000115 s system, 0.000230 s elapsed
 LOG:  REWRITER STATISTICS
-!	0.000005 s user, 0.000000 s system, 0.000005 s elapsed
+!	0.000003 s user, 0.000003 s system, 0.000005 s elapsed
 LOG:  PLANNER STATISTICS
-!	0.000200 s user, 0.000000 s system, 0.000200 s elapsed
+!	0.000099 s user, 0.000099 s system, 0.000198 s elapsed
 LOG:  EXECUTOR STATISTICS
-!	0.001856 s user, 0.000000 s system, 0.001856 s elapsed
+!	0.000000 s user, 0.001685 s system, 0.001686 s elapsed
   status   | count 
 -----------+-------
  returned  |   100
@@ -89,7 +89,7 @@ LOG:  EXECUTOR STATISTICS
  delivered |  8100
 ```
 
-`PARSER` → `PARSE ANALYSIS` → `REWRITER` → `PLANNER` → `EXECUTOR` 순서로, 위에서 본 다섯 단계가 그대로 나옵니다. 이 쿼리에서는 파싱이 0.000028초, 분석이 0.000239초, 계획이 0.000200초였고, 실제로 행을 읽고 집계한 실행이 0.001856초로 가장 깁니다. 분석이 계획만큼 걸린 것은 새 연결의 첫 쿼리라 카탈로그 캐시를 채우는 시간이 들어갔기 때문입니다. 쿼리가 복잡해지면(조인이 많으면) 계획 시간도 크게 늘어납니다.
+`PARSER` → `PARSE ANALYSIS` → `REWRITER` → `PLANNER` → `EXECUTOR` 순서로, 위에서 본 다섯 단계가 그대로 나옵니다. 이 쿼리에서는(`elapsed` 기준) 파싱이 0.000033초, 분석이 0.000230초, 계획이 0.000198초였고, 실제로 행을 읽고 집계한 실행이 0.001686초로 가장 깁니다. 분석이 계획만큼 걸린 것은 새 연결의 첫 쿼리라 카탈로그 캐시를 채우는 시간이 들어갔기 때문입니다. 쿼리가 복잡해지면(조인이 많으면) 계획 시간도 크게 늘어납니다.
 
 #### 오류가 나는 단계로 보는 파서와 분석기의 차이
 
@@ -154,8 +154,8 @@ postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF, COSTS OFF) SELECT * FROM o
 -----------------------------------------------------
  Limit (actual rows=5.00 loops=1)
    ->  Seq Scan on orders (actual rows=5.00 loops=1)
- Planning Time: 0.131 ms
- Execution Time: 0.012 ms
+ Planning Time: 0.128 ms
+ Execution Time: 0.014 ms
 (4 rows)
 ```
 
@@ -223,7 +223,7 @@ postgres=# EXPLAIN SELECT * FROM orders;
 postgres=# EXPLAIN SELECT * FROM orders WHERE status = 'returned';
                          QUERY PLAN                         
 ------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2055.00 rows=100 width=30)
+ Seq Scan on orders  (cost=0.00..2055.00 rows=123 width=30)
    Filter: (status = 'returned'::text)
 (2 rows)
 
@@ -239,7 +239,7 @@ postgres=# SELECT relpages * 1.0 + reltuples * 0.01 AS seqscan_cost, relpages * 
 - 조건 없음: 805페이지 × 1(`seq_page_cost`) + 100000행 × 0.01(`cpu_tuple_cost`) = **1805**
 - 조건 하나: 여기에 100000행 × 0.0025(`cpu_operator_cost`, `status = 'returned'` 비교 한 번) = **2055**
 
-마지막 쿼리로 계산한 값이 `EXPLAIN`과 정확히 같습니다. `ANALYZE` 직후라 `pg_class`의 값과 지금 테이블 크기가 같기 때문입니다(달라지는 경우는 [뒤에서](#분포가-바뀐-뒤의-추정) 봅니다). 비용은 이렇게 "몇 페이지를 읽고, 몇 행을 처리하는가"를 설정값으로 곱해 더한 것입니다. 조건이 붙어도 Seq Scan은 전체 행을 읽고 비교해야 하므로 총비용이 오히려 늘어납니다. 반면 `rows=`는 100000에서 100으로 줄었는데, 이것이 [행 수 추정](#통계-정보-행-수-추정의-근거)입니다.
+마지막 쿼리로 계산한 값이 `EXPLAIN`과 정확히 같습니다. `ANALYZE` 직후라 `pg_class`의 값과 지금 테이블 크기가 같기 때문입니다(달라지는 경우는 [뒤에서](#분포가-바뀐-뒤의-추정) 봅니다). 비용은 이렇게 "몇 페이지를 읽고, 몇 행을 처리하는가"를 설정값으로 곱해 더한 것입니다. 조건이 붙어도 Seq Scan은 전체 행을 읽고 비교해야 하므로 총비용이 오히려 늘어납니다. 반면 `rows=`는 100000에서 123으로 줄었는데, 이것이 [행 수 추정](#통계-정보-행-수-추정의-근거)입니다.
 
 ### 조인 순서와 방식
 
@@ -269,8 +269,8 @@ postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF, COSTS OFF) SELECT c.name, 
          ->  Bitmap Index Scan on orders_customer_idx (actual rows=100.00 loops=1)
                Index Cond: (customer_id = 42)
                Index Searches: 1
- Planning Time: 0.198 ms
- Execution Time: 0.326 ms
+ Planning Time: 0.210 ms
+ Execution Time: 0.351 ms
 (12 rows)
 
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF, COSTS OFF) SELECT c.name, sum(o.amount) FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.name;
@@ -285,8 +285,8 @@ postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF, COSTS OFF) SELECT c.name, 
          ->  Hash (actual rows=1000.00 loops=1)
                Buckets: 1024  Batches: 1  Memory Usage: 59kB
                ->  Seq Scan on customers c (actual rows=1000.00 loops=1)
- Planning Time: 0.278 ms
- Execution Time: 13.215 ms
+ Planning Time: 0.252 ms
+ Execution Time: 12.893 ms
 (11 rows)
 
 postgres=# SET enable_hashjoin = off;
@@ -326,23 +326,23 @@ postgres=# EXPLAIN (COSTS OFF) SELECT c.name, sum(o.amount) FROM customers c JOI
 
 ```psql
 postgres=# SELECT attname, null_frac, n_distinct, most_common_vals, most_common_freqs, correlation FROM pg_stats WHERE tablename = 'orders' AND attname = 'status' \gx
--[ RECORD 1 ]-----+---------------------------------------
+-[ RECORD 1 ]-----+-------------------------------------------------
 attname           | status
 null_frac         | 0
 n_distinct        | 4
 most_common_vals  | {delivered,shipped,cancelled,returned}
-most_common_freqs | {0.7984667,0.1502,0.050333332,0.001}
-correlation       | 0.66393787
+most_common_freqs | {0.79906666,0.15003334,0.049666665,0.0012333334}
+correlation       | 0.66688544
 
 postgres=# SELECT attname, n_distinct, array_length(most_common_vals::text::int[], 1) AS mcv_count, (SELECT sum(f) FROM unnest(most_common_freqs) f) AS mcv_total_freq, array_length(histogram_bounds, 1) AS histogram_len, (histogram_bounds::text::int[])[1:6] AS histogram_head, correlation FROM pg_stats WHERE tablename = 'orders' AND attname = 'amount' \gx
--[ RECORD 1 ]--+-------------------
+-[ RECORD 1 ]--+------------------
 attname        | amount
 n_distinct     | 1000
-mcv_count      | 3
-mcv_total_freq | 0.0043
+mcv_count      | 19
+mcv_total_freq | 0.02666667
 histogram_len  | 101
-histogram_head | {0,10,20,31,41,50}
-correlation    | 0.0046508736
+histogram_head | {0,9,19,29,39,48}
+correlation    | -0.0008968399
 
 postgres=# SELECT relname, relpages, reltuples FROM pg_class WHERE relname IN ('orders', 'customers') ORDER BY relname;
   relname  | relpages | reltuples 
@@ -352,8 +352,8 @@ postgres=# SELECT relname, relpages, reltuples FROM pg_class WHERE relname IN ('
 (2 rows)
 ```
 
-- `status`: 서로 다른 값이 4개(`n_distinct`)라 네 값이 모두 MCV에 들어 있고, 비율이 `0.7984667, 0.1502, 0.050333332, 0.001`입니다. 실제 비율(0.8, 0.15, 0.049, 0.001)과 조금씩 다른 것은 3만 행 표본으로 셌기 때문입니다. 비율은 표본에서 센 개수를 표본 크기로 나눈 값이라, `returned`의 0.001은 표본 30000행 중 30행이었다는 뜻입니다. 표본은 매번 무작위로 뽑으므로 `ANALYZE`를 다시 하면 이 값들도 조금씩 달라집니다.
-- `amount`: 서로 다른 값이 1000개이고 실제로는 모두 같은 비율(0.1%)이지만, 표본에서 우연히 조금 더 많이 나온 값 3개가 MCV로 남았습니다(`mcv_count`, 합계 비율 0.0043). ANALYZE는 표본 빈도가 평균보다 뚜렷하게 높은 값만 MCV로 남깁니다. 나머지 값의 분포는 히스토그램 경계값 101개(`histogram_len`)로 나타내고, 경계값 사이 100개 구간에는 MCV를 뺀 나머지 행이 같은 비율(1%)씩 들어갑니다. `correlation`이 0에 가까운 것은 `amount` 값의 순서와 행이 저장된 물리적 순서가 무관하다는 뜻입니다.
+- `status`: 서로 다른 값이 4개(`n_distinct`)라 네 값이 모두 MCV에 들어 있고, 비율이 `0.79906666, 0.15003334, 0.049666665, 0.0012333334`입니다. 실제 비율(0.8, 0.15, 0.049, 0.001)과 조금씩 다른 것은 3만 행 표본으로 셌기 때문입니다. 비율은 표본에서 센 개수를 표본 크기로 나눈 값이라, `returned`의 0.0012333334는 표본 30000행 중 37행이었다는 뜻입니다. 표본은 매번 무작위로 뽑으므로 `ANALYZE`를 다시 하면 이 값들도 조금씩 달라집니다.
+- `amount`: 서로 다른 값이 1000개이고 실제로는 모두 같은 비율(0.1%)이지만, 표본에서 우연히 조금 더 많이 나온 값 19개가 MCV로 남았습니다(`mcv_count`, 합계 비율 0.02666667, 값 하나에 평균 약 0.0014). ANALYZE는 표본 빈도가 평균보다 뚜렷하게 높은 값만 MCV로 남깁니다. 나머지 값의 분포는 히스토그램 경계값 101개(`histogram_len`)로 나타내고, 경계값 사이 100개 구간에는 MCV를 뺀 나머지 행이 같은 비율(1%)씩 들어갑니다. `correlation`이 0에 가까운 것은 `amount` 값의 순서와 행이 저장된 물리적 순서가 무관하다는 뜻입니다.
 - 테이블 통계는 `orders`가 805페이지, 100000행입니다.
 
 ### 선택도와 행 수 추정
@@ -366,46 +366,46 @@ postgres=# SELECT relname, relpages, reltuples FROM pg_class WHERE relname IN ('
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE status = 'shipped';
                                          QUERY PLAN                                          
 ---------------------------------------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2055.00 rows=15020 width=30) (actual rows=15000.00 loops=1)
+ Seq Scan on orders  (cost=0.00..2055.00 rows=15003 width=30) (actual rows=15000.00 loops=1)
    Filter: (status = 'shipped'::text)
    Rows Removed by Filter: 85000
- Planning Time: 0.142 ms
- Execution Time: 3.255 ms
+ Planning Time: 0.149 ms
+ Execution Time: 2.904 ms
 (5 rows)
 
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE status = 'returned';
                                        QUERY PLAN                                        
 -----------------------------------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2055.00 rows=100 width=30) (actual rows=100.00 loops=1)
+ Seq Scan on orders  (cost=0.00..2055.00 rows=123 width=30) (actual rows=100.00 loops=1)
    Filter: (status = 'returned'::text)
    Rows Removed by Filter: 99900
- Planning Time: 0.126 ms
- Execution Time: 2.829 ms
+ Planning Time: 0.125 ms
+ Execution Time: 2.643 ms
 (5 rows)
 
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE amount < 30;
                                                     QUERY PLAN                                                    
 ------------------------------------------------------------------------------------------------------------------
- Bitmap Heap Scan on orders  (cost=35.08..876.83 rows=2940 width=30) (actual rows=3000.00 loops=1)
+ Bitmap Heap Scan on orders  (cost=34.91..876.38 rows=2918 width=30) (actual rows=3000.00 loops=1)
    Recheck Cond: (amount < 30)
    Heap Blocks: exact=805
-   ->  Bitmap Index Scan on orders_amount_idx  (cost=0.00..34.34 rows=2940 width=0) (actual rows=3000.00 loops=1)
+   ->  Bitmap Index Scan on orders_amount_idx  (cost=0.00..34.18 rows=2918 width=0) (actual rows=3000.00 loops=1)
          Index Cond: (amount < 30)
          Index Searches: 1
- Planning Time: 0.131 ms
- Execution Time: 0.718 ms
+ Planning Time: 0.140 ms
+ Execution Time: 0.709 ms
 (8 rows)
 ```
 
 | 조건 | 추정 근거 | 추정 | 실제 |
 |---|---|---|---|
-| `status = 'shipped'` | MCV 비율 0.1502 × 100000 | 15020 | 15000 |
-| `status = 'returned'` | MCV 비율 0.001 × 100000 | 100 | 100 |
-| `amount < 30` | 히스토그램에서 30이 들어가는 위치(약 3%, MCV 몫만큼 조금 줄어듦) | 2940 | 3000 |
+| `status = 'shipped'` | MCV 비율 0.15003334 × 100000 | 15003 | 15000 |
+| `status = 'returned'` | MCV 비율 0.0012333334 × 100000 | 123 | 100 |
+| `amount < 30` | 히스토그램에서 30이 들어가는 위치(약 3.1%)에 MCV를 뺀 나머지 비율(1 − 0.02666667)을 곱함 | 2918 | 3000 |
 
-추정은 통계 값을 그대로 곱한 것입니다. 표본 오차 때문에 조금씩 어긋나지만, 이 정도 차이는 계획을 바꾸지 않습니다. 문제가 되는 것은 [통계가 오래되었거나](#통계가-오래되면) [컬럼끼리 관련이 있어서](#조건이-여러-개일-때) 몇 배, 몇십 배씩 틀릴 때입니다.
+추정은 통계 값을 그대로 곱한 것입니다. `amount < 30`을 풀어 보면, 30은 히스토그램의 넷째 구간(29~39)의 10% 지점이라 (3 + 0.1) / 100 = 0.031이고, `<`라서 30과 같은 값의 몫(MCV가 아닌 값 하나의 비율, 1 / (1000 − 19))을 빼면 0.02998, 여기에 히스토그램이 대표하는 비율(1 − 0.02666667)을 곱하면 0.02918, 즉 2918행입니다. 30 미만인 MCV 값이 있었다면 그 비율이 더해졌을 텐데, 계산이 `EXPLAIN`과 맞으므로 이번 표본에서는 없었던 셈입니다([`scalarineqsel()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/utils/adt/selfuncs.c#L588)). 표본 오차 때문에 조금씩 어긋나지만(`returned`는 100행을 123행으로 봤습니다), 이 정도 차이는 계획을 바꾸지 않습니다. 문제가 되는 것은 [통계가 오래되었거나](#통계가-오래되면) [컬럼끼리 관련이 있어서](#조건이-여러-개일-때) 몇 배, 몇십 배씩 틀릴 때입니다.
 
-`amount < 30`은 Bitmap Heap Scan인데, `Heap Blocks: exact=805`로 테이블의 모든 페이지를 읽었습니다. `amount`가 물리적 순서와 무관하게 흩어져 있어(`correlation` 약 0) 3000행이 모든 페이지에 퍼져 있기 때문입니다. 모든 페이지를 읽을 것으로 보면 페이지 비용은 Seq Scan과 같은 `seq_page_cost`로 계산되고, 조건을 검사할 행이 3000개뿐이라 CPU 비용이 적습니다. 그래서 Seq Scan(2055)보다 싸다(876.83)고 계산했습니다.
+`amount < 30`은 Bitmap Heap Scan인데, `Heap Blocks: exact=805`로 테이블의 모든 페이지를 읽었습니다. `amount`가 물리적 순서와 무관하게 흩어져 있어(`correlation` 약 0) 3000행이 모든 페이지에 퍼져 있기 때문입니다. 모든 페이지를 읽을 것으로 보면 페이지 비용은 Seq Scan과 같은 `seq_page_cost`로 계산되고, 조건을 검사할 행이 3000개뿐이라 CPU 비용이 적습니다. 그래서 Seq Scan(2055)보다 싸다(876.38)고 계산했습니다.
 
 #### 선택도에 따라 스캔 방식이 바뀐다
 
@@ -420,16 +420,16 @@ postgres=# EXPLAIN SELECT * FROM orders WHERE id = 42;
 postgres=# EXPLAIN SELECT * FROM orders WHERE amount < 30;
                                      QUERY PLAN                                     
 ------------------------------------------------------------------------------------
- Bitmap Heap Scan on orders  (cost=35.08..876.83 rows=2940 width=30)
+ Bitmap Heap Scan on orders  (cost=34.91..876.38 rows=2918 width=30)
    Recheck Cond: (amount < 30)
-   ->  Bitmap Index Scan on orders_amount_idx  (cost=0.00..34.34 rows=2940 width=0)
+   ->  Bitmap Index Scan on orders_amount_idx  (cost=0.00..34.18 rows=2918 width=0)
          Index Cond: (amount < 30)
 (4 rows)
 
 postgres=# EXPLAIN SELECT * FROM orders WHERE amount < 800;
                           QUERY PLAN                          
 --------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2055.00 rows=79887 width=30)
+ Seq Scan on orders  (cost=0.00..2055.00 rows=80297 width=30)
    Filter: (amount < 800)
 (2 rows)
 ```
@@ -458,29 +458,29 @@ postgres=# UPDATE orders SET status = 'returned' WHERE id % 10 = 0;
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE status = 'returned';
                                         QUERY PLAN                                         
 -------------------------------------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2266.89 rows=110 width=30) (actual rows=10100.00 loops=1)
+ Seq Scan on orders  (cost=0.00..2266.89 rows=136 width=30) (actual rows=10100.00 loops=1)
    Filter: (status = 'returned'::text)
    Rows Removed by Filter: 89900
- Planning Time: 0.126 ms
- Execution Time: 3.744 ms
+ Planning Time: 0.145 ms
+ Execution Time: 3.653 ms
 (5 rows)
 
 postgres=# ANALYZE orders;
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE status = 'returned';
                                          QUERY PLAN                                          
 ---------------------------------------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2138.00 rows=10143 width=30) (actual rows=10100.00 loops=1)
+ Seq Scan on orders  (cost=0.00..2138.00 rows=10140 width=29) (actual rows=10100.00 loops=1)
    Filter: (status = 'returned'::text)
    Rows Removed by Filter: 89900
- Planning Time: 0.120 ms
- Execution Time: 2.631 ms
+ Planning Time: 0.127 ms
+ Execution Time: 2.658 ms
 (5 rows)
 ```
 
-- `ANALYZE` 전: 추정 **110행**, 실제 **10100행**으로 약 92배 차이입니다. 통계의 MCV는 여전히 "`returned`는 0.1%"라고 말하고 있기 때문입니다. 플래너는 UPDATE로 늘어난 페이지 수에 예전 밀도(페이지당 행 수)를 곱해 행 수를 약 11만으로 봤습니다(비용도 2055에서 2266.89로 늘었습니다). 실제로 살아 있는 행은 10만 그대로이고, 늘어난 페이지는 UPDATE가 남긴 옛 버전([4편](/posts/postgresql/04-mvcc/)) 때문입니다. 어느 쪽이든 값의 분포는 `ANALYZE` 때 그대로입니다.
-- `ANALYZE` 뒤: 추정 **10143행**으로 실제와 거의 같아졌습니다.
+- `ANALYZE` 전: 추정 **136행**, 실제 **10100행**으로 약 74배 차이입니다. 통계의 MCV는 여전히 "`returned`는 약 0.12%(0.0012333334)"라고 말하고 있기 때문입니다. 플래너는 UPDATE로 늘어난 페이지 수에 예전 밀도(페이지당 행 수)를 곱해 행 수를 약 11만으로 봤습니다(0.0012333334 × 약 110300 ≈ 136, 비용도 2055에서 2266.89로 늘었습니다). 실제로 살아 있는 행은 10만 그대로이고, 늘어난 페이지는 UPDATE가 남긴 옛 버전([4편](/posts/postgresql/04-mvcc/)) 때문입니다. 어느 쪽이든 값의 분포는 `ANALYZE` 때 그대로입니다.
+- `ANALYZE` 뒤: 추정 **10140행**으로 실제와 거의 같아졌습니다.
 
-이 쿼리는 어차피 Seq Scan이라 계획이 바뀌지 않았지만, 조인 안에서 이런 오차가 생기면 "110행이니 Nested Loop로 110번만 돌면 된다"는 계획이 실제로는 1만 번을 돌게 됩니다.
+이 쿼리는 어차피 Seq Scan이라 계획이 바뀌지 않았지만, 조인 안에서 이런 오차가 생기면 "136행이니 Nested Loop로 136번만 돌면 된다"는 계획이 실제로는 1만 번을 돌게 됩니다.
 
 ### 조건이 여러 개일 때
 
@@ -492,11 +492,11 @@ postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE city = 'Seoul' AND country = 'KR';
                                          QUERY PLAN                                         
 --------------------------------------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2388.00 rows=2014 width=30) (actual rows=10000.00 loops=1)
+ Seq Scan on orders  (cost=0.00..2388.00 rows=2032 width=29) (actual rows=10000.00 loops=1)
    Filter: ((city = 'Seoul'::text) AND (country = 'KR'::text))
    Rows Removed by Filter: 90000
- Planning Time: 0.144 ms
- Execution Time: 3.971 ms
+ Planning Time: 0.141 ms
+ Execution Time: 3.725 ms
 (5 rows)
 
 postgres=# CREATE STATISTICS orders_city_country (dependencies) ON city, country FROM orders;
@@ -508,25 +508,25 @@ postgres=# SELECT statistics_name, dependencies FROM pg_stats_ext WHERE statisti
 (1 row)
 
 postgres=# EXPLAIN (ANALYZE, BUFFERS OFF, TIMING OFF) SELECT * FROM orders WHERE city = 'Seoul' AND country = 'KR';
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
- Seq Scan on orders  (cost=0.00..2388.00 rows=9950 width=29) (actual rows=10000.00 loops=1)
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..2388.00 rows=10090 width=29) (actual rows=10000.00 loops=1)
    Filter: ((city = 'Seoul'::text) AND (country = 'KR'::text))
    Rows Removed by Filter: 90000
- Planning Time: 0.140 ms
- Execution Time: 4.298 ms
+ Planning Time: 0.105 ms
+ Execution Time: 3.537 ms
 (5 rows)
 ```
 
-- 확장 통계 전: 추정 **2014행**, 실제 **10000행**입니다. 플래너는 `city = 'Seoul'`(10%)과 `country = 'KR'`(20%)이 독립이라고 보고 10% × 20% = 2%를 곱했습니다. 하지만 Seoul이면 반드시 KR이므로 실제는 10%입니다.
+- 확장 통계 전: 추정 **2032행**, 실제 **10000행**입니다. 플래너는 `city = 'Seoul'`(10%)과 `country = 'KR'`(20%)이 독립이라고 보고 10% × 20% = 2%를 곱했습니다. 하지만 Seoul이면 반드시 KR이므로 실제는 10%입니다.
 - `CREATE STATISTICS ... (dependencies)`와 `ANALYZE` 뒤, `pg_stats_ext`에 `"5 => 6": 1.000000`이 생겼습니다. 5번 컬럼(`city`)이 정해지면 6번 컬럼(`country`)이 100% 정해진다는 뜻입니다([`dependencies_clauselist_selectivity()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/statistics/dependencies.c#L1370)).
-- 추정이 **9950행**으로 실제와 거의 같아졌습니다.
+- 추정이 **10090행**으로 실제와 거의 같아졌습니다.
 
 확장 통계는 자동으로 만들어지지 않습니다. 주소(시, 구), 상품(카테고리, 하위 카테고리)처럼 함께 조건에 쓰이면서 서로 관련된 컬럼이 있다면 직접 만들어 줘야 합니다. `dependencies` 말고도 컬럼 조합의 서로 다른 값 수(`ndistinct`), 조합별 MCV(`mcv`)를 만들 수 있습니다.
 
 #### 운영에서는: 추정 행 수와 실제 행 수가 크게 다를 때
 
-느린 쿼리를 볼 때는 먼저 `EXPLAIN (ANALYZE)`에서 노드마다 `rows=`(추정)와 `actual rows=`(실제)를 비교합니다. 몇 배 이상 차이 나는 노드가 있다면, 그 위의 계획은 잘못된 전제 위에 세워졌을 가능성이 큽니다. 예를 들어 [앞의 예](#분포가-바뀐-뒤의-추정)처럼 110행으로 추정한 곳이 실제로 1만 행이면, 플래너는 1만 번 반복될 Nested Loop를 싸다고 판단할 수 있습니다. 원인은 대개 셋 중 하나입니다.
+느린 쿼리를 볼 때는 먼저 `EXPLAIN (ANALYZE)`에서 노드마다 `rows=`(추정)와 `actual rows=`(실제)를 비교합니다. 몇 배 이상 차이 나는 노드가 있다면, 그 위의 계획은 잘못된 전제 위에 세워졌을 가능성이 큽니다. 예를 들어 [앞의 예](#분포가-바뀐-뒤의-추정)처럼 136행으로 추정한 곳이 실제로 1만 행이면, 플래너는 1만 번 반복될 Nested Loop를 싸다고 판단할 수 있습니다. 원인은 대개 셋 중 하나입니다.
 
 - **통계가 오래됨**: 대량 적재나 일괄 UPDATE 직후. `ANALYZE`로 해결됩니다. 배치 작업 끝에 `ANALYZE`를 넣어 두는 것이 좋습니다.
 - **표본이 작음**: 값이 아주 많거나 분포가 복잡한 컬럼. `ALTER TABLE ... ALTER COLUMN ... SET STATISTICS 1000`으로 그 컬럼의 MCV와 히스토그램 크기를 늘릴 수 있습니다. 표본 크기는 테이블 단위로 가장 큰 값을 따르므로, 그 테이블의 `ANALYZE` 표본도 300 × 1000 = 30만 행으로 커집니다.

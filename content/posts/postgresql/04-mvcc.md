@@ -24,7 +24,7 @@ PostgreSQL은 이 문제를 **MVCC**(Multi-Version Concurrency Control, 다중 �
 - READ COMMITTED와 REPEATABLE READ는 무엇이 다른가
 - 두 트랜잭션이 같은 행을 동시에 고치면 어떻게 되는가
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## 트랜잭션 ID와 행의 xmin, xmax
 
@@ -194,7 +194,7 @@ postgres=# SELECT :'rollback_xid' AS xid, pg_xact_status(:'rollback_xid'::xid8) 
 ```console
 $ ls -l $PGDATA/pg_xact
 total 8
--rw------- 1 postgres postgres 8192 Sep 24 03:29 0000
+-rw------- 1 postgres postgres 8192 Sep 26 10:07 0000
 ```
 
 ```psql
@@ -430,21 +430,21 @@ postgres=# SELECT pid, state, wait_event_type, wait_event, left(query, 60) AS qu
 postgres-# FROM pg_stat_activity WHERE backend_type = 'client backend' AND pid <> pg_backend_pid() ORDER BY pid;
  pid |        state        | wait_event_type |  wait_event   |                            query                             
 -----+---------------------+-----------------+---------------+--------------------------------------------------------------
- 100 | idle in transaction | Client          | ClientRead    | UPDATE acct SET balance = balance + 10 WHERE id = 1 RETURNIN
- 115 | active              | Lock            | transactionid | UPDATE acct SET balance = balance + 1 WHERE id = 1 RETURNING
+  97 | idle in transaction | Client          | ClientRead    | UPDATE acct SET balance = balance + 10 WHERE id = 1 RETURNIN
+ 112 | active              | Lock            | transactionid | UPDATE acct SET balance = balance + 1 WHERE id = 1 RETURNING
 (2 rows)
 
 postgres=# SELECT locktype, transactionid, mode, granted, pid FROM pg_locks WHERE locktype = 'transactionid' ORDER BY granted DESC, pid;
    locktype    | transactionid |     mode      | granted | pid 
 ---------------+---------------+---------------+---------+-----
- transactionid |           762 | ExclusiveLock | t       | 100
- transactionid |           763 | ExclusiveLock | t       | 115
- transactionid |           762 | ShareLock     | f       | 115
+ transactionid |           762 | ExclusiveLock | t       |  97
+ transactionid |           763 | ExclusiveLock | t       | 112
+ transactionid |           762 | ShareLock     | f       | 112
 (3 rows)
 ```
 
-- B(pid 115)는 `wait_event = transactionid`, 즉 다른 트랜잭션이 끝나기를 기다리고 있습니다.
-- `pg_locks`를 보면 A(pid 100)는 자기 xid 762에 대한 `ExclusiveLock`을 갖고 있고, B는 **762에 대한 `ShareLock`을 요청했지만 받지 못한(`granted = f`)** 상태입니다. 모든 트랜잭션이 자기 xid를 잠가 두기 때문에, 그 잠금을 요청하는 것이 곧 "그 트랜잭션이 끝날 때까지 기다리겠다"는 뜻이 됩니다.
+- B(pid 112)는 `wait_event = transactionid`, 즉 다른 트랜잭션이 끝나기를 기다리고 있습니다.
+- `pg_locks`를 보면 A(pid 97)는 자기 xid 762에 대한 `ExclusiveLock`을 갖고 있고, B는 **762에 대한 `ShareLock`을 요청했지만 받지 못한(`granted = f`)** 상태입니다. 모든 트랜잭션이 자기 xid를 잠가 두기 때문에, 그 잠금을 요청하는 것이 곧 "그 트랜잭션이 끝날 때까지 기다리겠다"는 뜻이 됩니다.
 
 ```psql
 A=# COMMIT;

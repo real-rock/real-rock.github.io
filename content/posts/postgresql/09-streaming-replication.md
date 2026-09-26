@@ -25,7 +25,7 @@ standby는 primary와 똑같은 WAL을 똑같이 재생하므로 데이터가 �
 - standby의 읽기 쿼리는 왜 취소되기도 하는가
 - replication slot은 왜 필요하고, 왜 디스크를 가득 채우기도 하는가
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 ## 복제를 담당하는 세 프로세스
 
@@ -77,11 +77,11 @@ waiting for server to start.... done
 server started
 $ sleep 1
 $ grep -E "entering standby mode|redo starts|consistent recovery state|ready to accept read-only|started streaming" /home/postgres/standby.log | cut -c1-160
-2026-09-24 04:29:34.369 UTC [74] startup LOG:  entering standby mode
-2026-09-24 04:29:34.372 UTC [74] startup LOG:  redo starts at 0/6000028
-2026-09-24 04:29:34.372 UTC [74] startup LOG:  consistent recovery state reached at 0/6000120
-2026-09-24 04:29:34.372 UTC [68] postmaster LOG:  database system is ready to accept read-only connections
-2026-09-24 04:29:34.374 UTC [75] walreceiver LOG:  started streaming WAL from primary at 0/7000000 on timeline 1
+2026-09-26 10:11:24.580 UTC [70] startup LOG:  entering standby mode
+2026-09-26 10:11:24.581 UTC [70] startup LOG:  redo starts at 0/6000028
+2026-09-26 10:11:24.582 UTC [70] startup LOG:  consistent recovery state reached at 0/6000120
+2026-09-26 10:11:24.582 UTC [64] postmaster LOG:  database system is ready to accept read-only connections
+2026-09-26 10:11:24.583 UTC [71] walreceiver LOG:  started streaming WAL from primary at 0/7000000 on timeline 1
 ```
 
 - `pg_basebackup -R -C -S standby1`은 베이스 백업을 뜨면서([8편](/posts/postgresql/08-checkpoint-and-recovery/)) primary에 `standby1`이라는 slot을 만들고(`-C -S`), standby로 시작하는 데 필요한 설정을 적어 줍니다(`-R`).
@@ -92,9 +92,9 @@ $ grep -E "entering standby mode|redo starts|consistent recovery state|ready to 
 
 ```console
 $ ps -eo pid,args | grep -E "postgres: (primary|standby1): (walsender|walreceiver|startup)" | grep -v grep
-     74 postgres: standby1: startup waiting for 000000010000000000000007
-     75 postgres: standby1: walreceiver 
-     76 postgres: primary: walsender postgres [local] START_REPLICATION
+     70 postgres: standby1: startup waiting for 000000010000000000000007
+     71 postgres: standby1: walreceiver 
+     72 postgres: primary: walsender postgres [local] START_REPLICATION
 ```
 
 primary에는 `walsender`가, standby에는 `walreceiver`와 `startup`이 있습니다. walsender는 복제 명령 `START_REPLICATION`을 처리하는 중이고, startup은 다음 WAL 파일(`...07`)이 오기를 기다리고 있습니다.
@@ -118,21 +118,21 @@ primary의 walsender는 standby의 보고를 받아 `pg_stat_replication`에 보
 ```psql
 primary=# SELECT pid, application_name, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, write_lag, flush_lag, replay_lag, sync_state FROM pg_stat_replication \gx
 -[ RECORD 1 ]----+----------------
-pid              | 76
+pid              | 72
 application_name | standby1
 state            | streaming
 sent_lsn         | 0/7000000
 write_lsn        | 0/7000000
 flush_lsn        | 0/7000000
 replay_lsn       | 0/7000000
-write_lag        | 00:00:00.000024
-flush_lag        | 00:00:00.000024
-replay_lag       | 00:00:00.000024
+write_lag        | 00:00:00.000019
+flush_lag        | 00:00:00.000019
+replay_lag       | 00:00:00.000019
 sync_state       | async
 
 standby=# SELECT pid, status, receive_start_lsn, written_lsn, flushed_lsn, slot_name FROM pg_stat_wal_receiver \gx
 -[ RECORD 1 ]-----+----------
-pid               | 75
+pid               | 71
 status            | streaming
 receive_start_lsn | 0/7000000
 written_lsn       | 
@@ -192,9 +192,9 @@ sent_lsn    | 0/70021F8
 write_lsn   | 0/70021F8
 flush_lsn   | 0/70021F8
 replay_lsn  | 0/7002148
-write_lag   | 00:00:00.000221
-flush_lag   | 00:00:00.000687
-replay_lag  | 00:00:00.000687
+write_lag   | 00:00:00.000275
+flush_lag   | 00:00:00.000586
+replay_lag  | 00:00:00.000586
 
 standby=# SELECT count(*) AS delayed_row_visible FROM acct WHERE id = 200003;
  delayed_row_visible 
@@ -213,9 +213,9 @@ standby=# SELECT count(*) AS delayed_row_visible FROM acct WHERE id = 200003;
 (1 row)
 
 primary=# SELECT replay_lsn, replay_lag FROM pg_stat_replication \gx
--[ RECORD 1 ]--------------
+-[ RECORD 1 ]---------------
 replay_lsn | 0/70021F8
-replay_lag | 00:00:05.00795
+replay_lag | 00:00:05.007244
 
 standby=# ALTER SYSTEM RESET recovery_min_apply_delay;
 standby=# SELECT pg_reload_conf();
@@ -223,7 +223,7 @@ standby=# SELECT pg_reload_conf();
 
 INSERT 1초 뒤 primary에서 보면, `sent_lsn`, `write_lsn`, `flush_lsn`은 primary 위치 `0/70021F8`까지 왔는데 `replay_lsn`만 바로 앞에서 본 위치 `0/7002148`에 머물러 있습니다. WAL은 standby 디스크에 도착했지만 재생만 기다리는 중이라, standby에서는 새 행이 아직 보이지 않습니다(0).
 
-lag 값은 standby의 보고를 **받은 순간**에, 그 위치를 primary가 flush한 시각과 비교해 계산합니다([`walsender.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L2488-L2490)). 이때의 `replay_lag`(0.000687초)가 `flush_lag`와 같은 것은, flush 보고를 받은 순간에 "아직 재생하지 않은 새 WAL을 지금 재생했다면"이라는 가정으로 계산한 값이기 때문입니다([`LagTrackerRead()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L4235)). 그 뒤 새 보고가 없어 값이 그대로 멈춰 있었습니다. 재생이 끝나자 startup이 곧바로 보고를 보내게 했고, `replay_lag`가 5.00795초로 바뀌었습니다. 늦춘 5초가 그대로 재생 지연으로 측정되었습니다. 참고로 `replay_lsn`은 primary가 마지막으로 받은 보고 기준이고, standby의 실제 재생 위치는 standby에서 `pg_last_wal_replay_lsn()`으로 봅니다.
+lag 값은 standby의 보고를 **받은 순간**에, 그 위치를 primary가 flush한 시각과 비교해 계산합니다([`walsender.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L2488-L2490)). 이때의 `replay_lag`(0.000586초)가 `flush_lag`와 같은 것은, flush 보고를 받은 순간에 "아직 재생하지 않은 새 WAL을 지금 재생했다면"이라는 가정으로 계산한 값이기 때문입니다([`LagTrackerRead()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/replication/walsender.c#L4235)). 그 뒤 새 보고가 없어 값이 그대로 멈춰 있었습니다. 재생이 끝나자 startup이 곧바로 보고를 보내게 했고, `replay_lag`가 5.007244초로 바뀌었습니다. 늦춘 5초가 그대로 재생 지연으로 측정되었습니다. 참고로 `replay_lsn`은 primary가 마지막으로 받은 보고 기준이고, standby의 실제 재생 위치는 standby에서 `pg_last_wal_replay_lsn()`으로 봅니다.
 
 #### 운영에서는: 복제 지연은 나눠서 본다
 
@@ -269,7 +269,7 @@ primary=# \timing on
 Timing is on.
 primary=# INSERT INTO acct VALUES (200004, 1, 'sync ok');
 INSERT 0 1
-Time: 1.655 ms
+Time: 1.558 ms
 ```
 
 ```console
@@ -278,7 +278,7 @@ waiting for server to shut down.... done
 server stopped
 ```
 
-standby가 살아 있을 때 INSERT는 1.655ms에 끝났습니다. 이제 standby를 멈춘 상태에서, primary에 접속한 세션 A가 INSERT를 합니다.
+standby가 살아 있을 때 INSERT는 1.558ms에 끝났습니다. 이제 standby를 멈춘 상태에서, primary에 접속한 세션 A가 INSERT를 합니다.
 
 ```psql
 A=# INSERT INTO acct VALUES (200005, 1, 'sync wait');
@@ -290,7 +290,7 @@ A=# INSERT INTO acct VALUES (200005, 1, 'sync wait');
 primary=# SELECT pid, state, wait_event_type, wait_event, query FROM pg_stat_activity WHERE wait_event = 'SyncRep';
  pid | state  | wait_event_type | wait_event |                       query                       
 -----+--------+-----------------+------------+---------------------------------------------------
- 171 | active | IPC             | SyncRep    | INSERT INTO acct VALUES (200005, 1, 'sync wait');
+ 167 | active | IPC             | SyncRep    | INSERT INTO acct VALUES (200005, 1, 'sync wait');
 (1 row)
 
 primary=# SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE wait_event = 'SyncRep';
@@ -386,7 +386,7 @@ DETAIL:  User query might have needed to see row versions that must be removed.
 
 ```console
 $ grep -E "conflict with recovery|recovery conflict" /home/postgres/standby.log | tail -3 | cut -c1-200
-2026-09-24 04:29:59.251 UTC [276] client backend ERROR:  canceling statement due to conflict with recovery
+2026-09-26 10:11:49.202 UTC [271] client backend ERROR:  canceling statement due to conflict with recovery
 ```
 
 ```psql
@@ -456,7 +456,7 @@ primary=# CHECKPOINT;
 primary=# SELECT slot_name, active, restart_lsn, wal_status, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained FROM pg_replication_slots;
  slot_name | active | restart_lsn | wal_status | retained 
 -----------+--------+-------------+------------+----------
- standby1  | f      | 0/A0543F0   | extended   | 479 MB
+ standby1  | f      | 0/A0543F0   | extended   | 480 MB
 (1 row)
 ```
 
@@ -466,7 +466,7 @@ $ du -sh $PGDATA/pg_wal
 ```
 
 - standby를 멈춘 직후 slot은 `active = f`이고 `wal_status`는 `reserved`입니다. `safe_wal_size`가 비어 있는 것은 `max_slot_wal_keep_size`가 무제한(-1)이라 "지워지기까지 남은 양"이라는 것이 없기 때문입니다.
-- UPDATE 세 번과 `CHECKPOINT` 뒤에도 `restart_lsn`은 standby가 멈춘 위치 `0/A0543F0`에 그대로이고, 그 뒤로 479MB의 WAL을 붙잡고 있습니다. `max_wal_size`(64MB)를 한참 넘었으므로 `wal_status`가 `extended`가 되었고, `pg_wal` 디렉터리는 497MB입니다. 체크포인트를 했는데도 WAL을 지우지 못한 것입니다.
+- UPDATE 세 번과 `CHECKPOINT` 뒤에도 `restart_lsn`은 standby가 멈춘 위치 `0/A0543F0`에 그대로이고, 그 뒤로 480MB의 WAL을 붙잡고 있습니다. `max_wal_size`(64MB)를 한참 넘었으므로 `wal_status`가 `extended`가 되었고, `pg_wal` 디렉터리는 497MB입니다. 체크포인트를 했는데도 WAL을 지우지 못한 것입니다.
 
 ### slot을 무효화하는 안전장치
 
@@ -491,8 +491,8 @@ primary=# SELECT slot_name, active, restart_lsn, wal_status, invalidation_reason
 
 ```console
 $ grep -E "invalidating obsolete replication slot|exceeds the limit" /home/postgres/primary.log | cut -c1-200
-2026-09-24 04:30:04.892 UTC [42] checkpointer LOG:  invalidating obsolete replication slot "standby1"
-2026-09-24 04:30:04.892 UTC [42] checkpointer DETAIL:  The slot's restart_lsn 0/A0543F0 exceeds the limit by 419085328 bytes.
+2026-09-26 10:11:54.892 UTC [39] checkpointer LOG:  invalidating obsolete replication slot "standby1"
+2026-09-26 10:11:54.892 UTC [39] checkpointer DETAIL:  The slot's restart_lsn 0/A0543F0 exceeds the limit by 419085328 bytes.
 $ du -sh $PGDATA/pg_wal
 65M	/var/lib/postgresql/data/pg_wal
 $ pg_ctl -D /home/postgres/standby -l /home/postgres/standby.log start
@@ -500,7 +500,7 @@ waiting for server to start.... done
 server started
 $ sleep 2
 $ grep -E "could not start WAL streaming" /home/postgres/standby.log | tail -1 | cut -c1-200
-2026-09-24 04:30:05.567 UTC [398] walreceiver FATAL:  could not start WAL streaming: ERROR:  can no longer access replication slot "standby1"
+2026-09-26 10:11:55.591 UTC [392] walreceiver FATAL:  could not start WAL streaming: ERROR:  can no longer access replication slot "standby1"
 ```
 
 - `max_slot_wal_keep_size`를 128MB로 정하고 체크포인트하자, checkpointer가 `invalidating obsolete replication slot "standby1"`을 남기고 slot을 무효화했습니다. DETAIL은 `restart_lsn`이 상한을 419085328바이트(약 400MB) 넘었다는 뜻입니다.
@@ -515,7 +515,7 @@ $ grep -E "could not start WAL streaming" /home/postgres/standby.log | tail -1 |
 primary=# SELECT * FROM pg_create_physical_replication_slot('forgotten', true);
  slot_name |    lsn     
 -----------+------------
- forgotten | 0/3355E610
+ forgotten | 0/33639AA8
 (1 row)
 
 primary=# ALTER SYSTEM SET idle_replication_slot_timeout = '1s';
@@ -531,8 +531,8 @@ primary=# SELECT slot_name, active, inactive_since IS NOT NULL AS has_inactive_s
 
 ```console
 $ grep -E "invalidating obsolete replication slot \"forgotten\"" -A1 /home/postgres/primary.log | cut -c1-200
-2026-09-24 04:30:09.773 UTC [42] checkpointer LOG:  invalidating obsolete replication slot "forgotten"
-2026-09-24 04:30:09.773 UTC [42] checkpointer DETAIL:  The slot's idle time of 2s exceeds the configured "idle_replication_slot_timeout" duration of 1s.
+2026-09-26 10:11:59.786 UTC [39] checkpointer LOG:  invalidating obsolete replication slot "forgotten"
+2026-09-26 10:11:59.786 UTC [39] checkpointer DETAIL:  The slot's idle time of 2s exceeds the configured "idle_replication_slot_timeout" duration of 1s.
 ```
 
 - 1초 넘게 쉰 `forgotten` slot을 체크포인트가 무효화했습니다. 원인은 `idle_timeout`이고, 로그에 쉰 시간(2s)과 설정값(1s)이 나옵니다.

@@ -22,7 +22,7 @@ description: "페이지 레이아웃, 튜플 구조, TOAST"
 - 열 순서만 바꿔도 테이블 크기가 달라지는 이유는 무엇인가
 - 100kB짜리 텍스트는 8kB 페이지에 어떻게 들어가는가 (TOAST)
 
-> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 빌드해 실행한 결과입니다.
+> **기준 버전**: PostgreSQL 18, `REL_18_STABLE` 커밋 [`39a0db1`](https://github.com/postgres/postgres/commit/39a0db101105eab3f4044d11c609c58b9459ea16). 소스 링크는 모두 이 커밋에 고정했고, 실습 출력은 이 소스를 Rocky Linux 9.8에서 빌드해 실행한 결과입니다.
 
 > **용어 정리**
 > - **힙(heap)**: PostgreSQL에서 테이블 데이터를 담는 파일 형식을 부르는 이름입니다. 행을 정렬하지 않고 빈 곳에 쌓아 두기 때문에 이렇게 부릅니다.
@@ -77,7 +77,7 @@ postgres-#        pg_relation_filepath('fruit') AS path;
 
 ```console
 $ ls -l $PGDATA/base/5/16430*
--rw------- 1 postgres postgres 8192 Sep 24 03:06 /var/lib/postgresql/data/base/5/16430
+-rw------- 1 postgres postgres 8192 Sep 26 10:07 /var/lib/postgresql/data/base/5/16430
 ```
 
 ```psql
@@ -86,9 +86,9 @@ postgres=# VACUUM fruit;
 
 ```console
 $ ls -l $PGDATA/base/5/16430*
--rw------- 1 postgres postgres  8192 Sep 24 03:06 /var/lib/postgresql/data/base/5/16430
--rw------- 1 postgres postgres 24576 Sep 24 03:06 /var/lib/postgresql/data/base/5/16430_fsm
--rw------- 1 postgres postgres  8192 Sep 24 03:06 /var/lib/postgresql/data/base/5/16430_vm
+-rw------- 1 postgres postgres  8192 Sep 26 10:07 /var/lib/postgresql/data/base/5/16430
+-rw------- 1 postgres postgres 24576 Sep 26 10:07 /var/lib/postgresql/data/base/5/16430_fsm
+-rw------- 1 postgres postgres  8192 Sep 26 10:07 /var/lib/postgresql/data/base/5/16430_vm
 $ pg_controldata $PGDATA | grep -E 'Database block size|Blocks per segment|Data page checksum'
 Database block size:                  8192
 Blocks per segment of large relation: 131072
@@ -144,7 +144,7 @@ line pointer를 한 단계 거치는 이유가 있습니다. 행의 주소(ctid)
 postgres=# SELECT * FROM page_header(get_raw_page('fruit', 0));
     lsn    | checksum | flags | lower | upper | special | pagesize | version | prune_xid 
 -----------+----------+-------+-------+-------+---------+----------+---------+-----------
- 0/17E5C60 |        0 |     4 |    36 |  8072 |    8192 |     8192 |       4 |         0
+ 0/17E1D28 |        0 |     4 |    36 |  8072 |    8192 |     8192 |       4 |         0
 (1 row)
 ```
 
@@ -166,7 +166,7 @@ postgres=# CHECKPOINT;
 
 ```console
 $ xxd -l 40 $PGDATA/base/5/16430
-00000000: 0000 0000 605c 7e01 17d0 0400 2400 881f  ....`\~.....$...
+00000000: 0000 0000 281d 7e01 6a8e 0400 2400 881f  ....(.~.j...$...
 00000010: 0020 0420 0000 0000 d89f 4400 b09f 4600  . . ......D...F.
 00000020: 889f 4600 0000 0000                      ..F.....
 $ xxd -s 8096 -l 96 $PGDATA/base/5/16430
@@ -182,7 +182,7 @@ $ xxd -s 8096 -l 96 $PGDATA/base/5/16430
 postgres=# SELECT checksum AS checksum_in_buffer, page_checksum(get_raw_page('fruit', 0), 0) AS computed, to_hex(page_checksum(get_raw_page('fruit', 0), 0) & 65535) AS computed_hex FROM page_header(get_raw_page('fruit', 0));
  checksum_in_buffer | computed | computed_hex 
 --------------------+----------+--------------
-                  0 |   -12265 | d017
+                  0 |   -29078 | 8e6a
 (1 row)
 ```
 
@@ -190,8 +190,8 @@ postgres=# SELECT checksum AS checksum_in_buffer, page_checksum(get_raw_page('fr
 
 | 바이트 | 필드 | 값 |
 |---|---|---|
-| `0000 0000 605c 7e01` | `pd_lsn` | 상위 0, 하위 0x017e5c60 → `0/17E5C60` |
-| `17d0` | `pd_checksum` | 0xd017 |
+| `0000 0000 281d 7e01` | `pd_lsn` | 상위 0, 하위 0x017e1d28 → `0/17E1D28` |
+| `6a8e` | `pd_checksum` | 0x8e6a |
 | `0400` | `pd_flags` | 4 (`PD_ALL_VISIBLE`) |
 | `2400` | `pd_lower` | 0x24 = 36 |
 | `881f` | `pd_upper` | 0x1f88 = 8072 |
@@ -200,7 +200,7 @@ postgres=# SELECT checksum AS checksum_in_buffer, page_checksum(get_raw_page('fr
 | `0000 0000` | `pd_prune_xid` | 0 |
 | `d89f 4400` | line pointer 1 | 0x00449fd8 → 하위 15비트 `lp_off` 8152, 다음 2비트 `lp_flags` 1(`LP_NORMAL`), 상위 15비트 `lp_len` 34 |
 
-**체크섬의 비밀.** 디스크의 `pd_checksum`은 0xd017인데, shared buffers에 있는 페이지(`checksum_in_buffer`)는 0입니다. 이 페이지는 메모리에서 처음 만들어진 뒤 디스크에서 다시 읽은 적이 없기 때문입니다(디스크에서 읽어 온 페이지라면 그때의 체크섬 값이 남아 있습니다). PostgreSQL은 체크섬을 **디스크에 쓰는 순간 페이지 복사본에 계산해 넣고**, 메모리의 페이지에는 적지 않습니다([`bufmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L4386), [`PageSetChecksumCopy()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/page/bufpage.c#L1509)). 메모리에 있는 동안에는 여러 번 바뀌어도 체크섬을 다시 계산하지 않아도 되고, 디스크의 페이지가 깨졌는지는 읽어 올 때 확인합니다. pageinspect로 계산한 값(`computed_hex = d017`)이 디스크의 값과 같습니다.
+**체크섬의 비밀.** 디스크의 `pd_checksum`은 0x8e6a인데, shared buffers에 있는 페이지(`checksum_in_buffer`)는 0입니다. 이 페이지는 메모리에서 처음 만들어진 뒤 디스크에서 다시 읽은 적이 없기 때문입니다(디스크에서 읽어 온 페이지라면 그때의 체크섬 값이 남아 있습니다). PostgreSQL은 체크섬을 **디스크에 쓰는 순간 페이지 복사본에 계산해 넣고**, 메모리의 페이지에는 적지 않습니다([`bufmgr.c`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/buffer/bufmgr.c#L4386), [`PageSetChecksumCopy()`](https://github.com/postgres/postgres/blob/39a0db101105eab3f4044d11c609c58b9459ea16/src/backend/storage/page/bufpage.c#L1509)). 메모리에 있는 동안에는 여러 번 바뀌어도 체크섬을 다시 계산하지 않아도 되고, 디스크의 페이지가 깨졌는지는 읽어 올 때 확인합니다. pageinspect로 계산한 값(`computed_hex = 8e6a`)이 디스크의 값과 같습니다.
 
 파일 끝부분은 `apple` 튜플(8152 = 0x1fd8부터)입니다. `f202 0000`은 `t_xmin` 0x2f2 = 754, 이어서 `t_xmax` 0과 `t_cid` 0, `t_ctid`(0,1), `0200`은 열 2개, `0209`는 `t_infomask` 0x0902, `18`은 `t_hoff` 24입니다. 한 바이트를 건너뛴 뒤 `0100 0000`이 `id = 1`, `0d`가 varlena 1바이트 헤더(0x0d = 6 << 1 | 1, 헤더 자신 1바이트를 포함한 길이 6), `61 70 70 6c 65`가 `apple`입니다.
 
