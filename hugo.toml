@@ -35,6 +35,9 @@ enableEmoji = true
     theme_color = "#101113"
     msapplication_TileColor = "#101113"
 
+  [params.footer]
+    text = "[개인정보처리방침](/privacy/)"
+
   [params.homeInfoParams]
     Title = "Jin's 블로그"
     Content = "MongoDB와 PostgreSQL을 다루는 DBA입니다. DB를 운영하며 배우고 궁금했던 것들을 이곳에 정리합니다."
