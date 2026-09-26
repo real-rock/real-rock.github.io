@@ -1,0 +1,335 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name pglab --hostname pglab pg-internals:rocky9-rel18 sleep infinity
+9e7b83724a86f0937b31d8a4ebe8594fd3fd128215774269aab3c80eb1b55c08
+[exit=0]
+
+$ cat /etc/rocky-release
+$ postgres --version
+$ initdb -D $PGDATA  > /home/postgres/initdb.log 2>&1 && echo "initdb ok"
+Rocky Linux release 9.8 (Blue Onyx)
+postgres (PostgreSQL) 18.6
+initdb ok
+[exit=0]
+
+$ pg_ctl -D $PGDATA -l /home/postgres/server.log start
+$ psql -X -q -c "CREATE EXTENSION pg_walinspect"
+$ psql -X -q -c "CREATE TABLE acct (id int PRIMARY KEY, balance int, memo text)"
+$ psql -X -q -c "INSERT INTO acct SELECT g, 100, 'init' FROM generate_series(1, 1000) g"
+$ psql -X -q -c "CHECKPOINT"
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 1. LSN과 WAL 세그먼트 파일
+
+$ psql -X <<'SQL'
+$ SELECT pg_current_wal_insert_lsn() AS insert_lsn, pg_current_wal_lsn() AS write_lsn, pg_current_wal_flush_lsn() AS flush_lsn;
+$ SELECT pg_walfile_name(pg_current_wal_insert_lsn()) AS segment_file,
+$        pg_walfile_name_offset(pg_current_wal_insert_lsn()) AS file_and_offset;
+$ SHOW wal_segment_size;
+$ SQL
+$ ls -l $PGDATA/pg_wal | head -5
+ insert_lsn | write_lsn | flush_lsn 
+------------+-----------+-----------
+ 0/17E0A58  | 0/17E0A58 | 0/17E0A58
+(1 row)
+
+       segment_file       |          file_and_offset           
+--------------------------+------------------------------------
+ 000000010000000000000001 | (000000010000000000000001,8260184)
+(1 row)
+
+ wal_segment_size 
+------------------
+ 16MB
+(1 row)
+
+total 16392
+-rw------- 1 postgres postgres 16777216 Sep 26 10:09 000000010000000000000001
+drwx------ 2 postgres postgres     4096 Sep 26 10:09 archive_status
+drwx------ 2 postgres postgres     4096 Sep 26 10:09 summaries
+[exit=0]
+
+
+######## 2. INSERT 하나가 남기는 WAL 레코드
+
+$ psql -X <<'SQL'
+$ SELECT pg_current_wal_insert_lsn() AS s1 \gset
+$ INSERT INTO acct VALUES (1001, 100, 'hello');
+$ SELECT pg_current_wal_insert_lsn() AS e1 \gset
+$ INSERT INTO acct VALUES (1002, 100, 'world');
+$ SELECT pg_current_wal_insert_lsn() AS e2 \gset
+$ SELECT 'first' AS insert, pg_wal_lsn_diff(:'e1', :'s1') AS wal_bytes
+$ UNION ALL SELECT 'second', pg_wal_lsn_diff(:'e2', :'e1');
+$ SELECT start_lsn, xid, resource_manager AS rmgr, record_type, record_length AS len, fpi_length AS fpi, description
+$ FROM pg_get_wal_records_info(:'s1', :'e2');
+$ SQL
+INSERT 0 1
+INSERT 0 1
+ insert | wal_bytes 
+--------+-----------
+ first  |      8968
+ second |       176
+(2 rows)
+
+ start_lsn | xid |    rmgr     | record_type | len  | fpi  |          description          
+-----------+-----+-------------+-------------+------+------+-------------------------------
+ 0/17E0A58 | 755 | Heap        | INSERT      | 3422 | 3368 | off: 76, flags: 0x00
+ 0/17E17B8 | 755 | Btree       | INSERT_LEAF | 5473 | 5420 | off: 269
+ 0/17E2D38 | 755 | Transaction | COMMIT      |   34 |    0 | 2026-09-26 10:09:58.565017+00
+ 0/17E2D60 | 756 | Heap        | INSERT      |   69 |    0 | off: 77, flags: 0x00
+ 0/17E2DA8 | 756 | Btree       | INSERT_LEAF |   64 |    0 | off: 270
+ 0/17E2DE8 | 756 | Transaction | COMMIT      |   34 |    0 | 2026-09-26 10:09:58.565349+00
+(6 rows)
+
+[exit=0]
+
+$ S=$(psql -X -At -c "SELECT pg_current_wal_insert_lsn()")
+$ psql -X -q -c "INSERT INTO acct VALUES (1003, 100, 'waldump')"
+$ E=$(psql -X -At -c "SELECT pg_current_wal_insert_lsn()")
+$ echo "S=$S E=$E"
+$ pg_waldump -p $PGDATA/pg_wal -s $S -e $E 2>&1
+S=0/17EA970 E=0/17EAA20
+rmgr: Heap        len (rec/tot):     71/    71, tx:        757, lsn: 0/017EA970, prev 0/017E9E80, desc: INSERT off: 78, flags: 0x00, blkref #0: rel 1663/5/16391 blk 5
+rmgr: Btree       len (rec/tot):     64/    64, tx:        757, lsn: 0/017EA9B8, prev 0/017EA970, desc: INSERT_LEAF off: 271, blkref #0: rel 1663/5/16397 blk 4
+rmgr: Transaction len (rec/tot):     34/    34, tx:        757, lsn: 0/017EA9F8, prev 0/017EA9B8, desc: COMMIT 2026-09-26 10:09:58.617179 UTC
+[exit=0]
+
+
+######## 3. full page write: 체크포인트 뒤 첫 수정은 페이지 전체를 남긴다
+
+$ psql -X <<'SQL'
+$ CHECKPOINT;
+$ SELECT pg_current_wal_insert_lsn() AS s1 \gset
+$ UPDATE acct SET balance = balance + 1 WHERE id = 1;
+$ SELECT pg_current_wal_insert_lsn() AS e1 \gset
+$ UPDATE acct SET balance = balance + 1 WHERE id = 2;
+$ SELECT pg_current_wal_insert_lsn() AS e2 \gset
+$ SELECT 'first update after checkpoint' AS which, resource_manager AS rmgr, record_type, record_length AS len, fpi_length AS fpi, block_ref
+$ FROM pg_get_wal_records_info(:'s1', :'e1')
+$ UNION ALL
+$ SELECT 'second update (same page)', resource_manager, record_type, record_length, fpi_length, block_ref
+$ FROM pg_get_wal_records_info(:'e1', :'e2');
+$ SQL
+CHECKPOINT
+UPDATE 1
+UPDATE 1
+             which             |    rmgr     |   record_type   | len  | fpi  |                                                           block_ref                                                            
+-------------------------------+-------------+-----------------+------+------+--------------------------------------------------------------------------------------------------------------------------------
+ first update after checkpoint | XLOG        | FPI_FOR_HINT    | 8213 | 8164 | blkref #0: rel 1663/5/16391 fork main blk 0 (FPW); hole: offset: 764, length: 28
+ first update after checkpoint | Heap        | LOCK            |   54 |    0 | blkref #0: rel 1663/5/16391 fork main blk 0
+ first update after checkpoint | Heap        | UPDATE          | 3573 | 3500 | blkref #0: rel 1663/5/16391 fork main blk 5 (FPW); hole: offset: 340, length: 4692 blkref #1: rel 1663/5/16391 fork main blk 0
+ first update after checkpoint | Btree       | INSERT_LEAF     | 7453 | 7400 | blkref #0: rel 1663/5/16397 fork main blk 1 (FPW); hole: offset: 1496, length: 792
+ first update after checkpoint | Transaction | COMMIT          |   34 |    0 | 
+ second update (same page)     | Heap2       | PRUNE_ON_ACCESS |   56 |    0 | blkref #0: rel 1663/5/16391 fork main blk 0
+ second update (same page)     | Heap        | HOT_UPDATE      |   71 |    0 | blkref #0: rel 1663/5/16391 fork main blk 0
+ second update (same page)     | Transaction | COMMIT          |   34 |    0 | 
+(8 rows)
+
+[exit=0]
+
+
+######## 4. full_page_writes와 wal_compression이 WAL 양에 주는 영향
+
+$ cat > /home/postgres/fpw.sql <<'SQL'
+$ DROP TABLE IF EXISTS fpw_t;
+$ CREATE TABLE fpw_t (id int PRIMARY KEY, balance int, memo text);
+$ INSERT INTO fpw_t SELECT g, 100, 'init' FROM generate_series(1, 1000) g;
+$ VACUUM fpw_t;
+$ CHECKPOINT;
+$ SELECT pg_current_wal_insert_lsn() AS s \gset
+$ UPDATE fpw_t SET balance = balance + 1 WHERE id % 10 = 0;
+$ SELECT pg_current_wal_insert_lsn() AS e \gset
+$ SELECT current_setting('full_page_writes') AS fpw, current_setting('wal_compression') AS compression,
+$        count(*) AS records, count(*) FILTER (WHERE fpi_length > 0) AS with_fpi,
+$        sum(fpi_length) AS fpi_bytes, sum(record_length - fpi_length) AS other_bytes,
+$        pg_wal_lsn_diff(:'e', :'s') AS wal_bytes
+$ FROM pg_get_wal_records_info(:'s', :'e');
+$ SQL
+$ psql -X -q -f /home/postgres/fpw.sql
+$ psql -X -q -c "ALTER SYSTEM SET wal_compression = 'pglz'" -c "SELECT pg_reload_conf()" > /dev/null
+$ psql -X -q -f /home/postgres/fpw.sql
+$ psql -X -q -c "ALTER SYSTEM SET wal_compression = 'off'" -c "ALTER SYSTEM SET full_page_writes = 'off'" -c "SELECT pg_reload_conf()" > /dev/null
+$ psql -X -q -f /home/postgres/fpw.sql
+$ psql -X -q -c "ALTER SYSTEM RESET full_page_writes" -c "ALTER SYSTEM RESET wal_compression" -c "SELECT pg_reload_conf()" > /dev/null
+psql:/home/postgres/fpw.sql:1: NOTICE:  table "fpw_t" does not exist, skipping
+ fpw | compression | records | with_fpi | fpi_bytes | other_bytes | wal_bytes 
+-----+-------------+---------+----------+-----------+-------------+-----------
+ on  | off         |     285 |        9 |     72600 |       19485 |     92648
+(1 row)
+
+ fpw | compression | records | with_fpi | fpi_bytes | other_bytes | wal_bytes 
+-----+-------------+---------+----------+-----------+-------------+-----------
+ on  | pglz        |     285 |        9 |     23864 |       19503 |     43800
+(1 row)
+
+ fpw | compression | records | with_fpi | fpi_bytes | other_bytes | wal_bytes 
+-----+-------------+---------+----------+-----------+-------------+-----------
+ off | off         |     285 |        0 |         0 |       19502 |     19840
+(1 row)
+
+[exit=0]
+
+
+######## 5. 체크섬이 켜져 있으면 SELECT도 WAL을 남길 수 있다
+
+$ psql -X <<'SQL'
+$ SHOW data_checksums;
+$ INSERT INTO acct SELECT g, 100, 'new' FROM generate_series(2001, 2200) g;
+$ CHECKPOINT;
+$ SELECT pg_current_wal_insert_lsn() AS s \gset
+$ SELECT count(*) FROM acct WHERE id > 2000;
+$ SELECT pg_current_wal_insert_lsn() AS e \gset
+$ SELECT pg_wal_lsn_diff(:'e', :'s') AS wal_bytes_by_select,
+$        pg_wal_lsn_diff(:'e', pg_current_wal_lsn()) AS not_yet_written;
+$ CHECKPOINT;
+$ SELECT resource_manager AS rmgr, record_type, count(*), sum(fpi_length) AS fpi_bytes
+$ FROM pg_get_wal_records_info(:'s', :'e') GROUP BY 1, 2;
+$ SELECT record_type, fpi_length AS fpi, block_ref FROM pg_get_wal_records_info(:'s', :'e') WHERE fpi_length > 0;
+$ SELECT (ctid::text::point)[0]::int AS blk, count(*) AS new_rows FROM acct WHERE id > 2000 GROUP BY 1 ORDER BY 1;
+$ EXPLAIN (COSTS OFF) SELECT count(*) FROM acct WHERE id > 2000;
+$ SQL
+ data_checksums 
+----------------
+ on
+(1 row)
+
+INSERT 0 200
+CHECKPOINT
+ count 
+-------
+   200
+(1 row)
+
+ wal_bytes_by_select | not_yet_written 
+---------------------+-----------------
+               53728 |           53728
+(1 row)
+
+CHECKPOINT
+ rmgr  |   record_type   | count | fpi_bytes 
+-------+-----------------+-------+-----------
+ Heap2 | PRUNE_ON_ACCESS |     1 |         0
+ XLOG  | FPI_FOR_HINT    |     7 |     53148
+(2 rows)
+
+ record_type  | fpi  |                                     block_ref                                      
+--------------+------+------------------------------------------------------------------------------------
+ FPI_FOR_HINT | 8168 | blkref #0: rel 1663/5/16391 fork main blk 0 (FPW); hole: offset: 768, length: 24
+ FPI_FOR_HINT | 8164 | blkref #0: rel 1663/5/16391 fork main blk 1 (FPW); hole: offset: 764, length: 28
+ FPI_FOR_HINT | 8164 | blkref #0: rel 1663/5/16391 fork main blk 2 (FPW); hole: offset: 764, length: 28
+ FPI_FOR_HINT | 8164 | blkref #0: rel 1663/5/16391 fork main blk 3 (FPW); hole: offset: 764, length: 28
+ FPI_FOR_HINT | 8164 | blkref #0: rel 1663/5/16391 fork main blk 4 (FPW); hole: offset: 764, length: 28
+ FPI_FOR_HINT | 8164 | blkref #0: rel 1663/5/16391 fork main blk 5 (FPW); hole: offset: 764, length: 28
+ FPI_FOR_HINT | 4160 | blkref #0: rel 1663/5/16391 fork main blk 6 (FPW); hole: offset: 400, length: 4032
+(7 rows)
+
+ blk | new_rows 
+-----+----------
+   5 |      106
+   6 |       94
+(2 rows)
+
+         QUERY PLAN          
+-----------------------------
+ Aggregate
+   ->  Seq Scan on acct
+         Filter: (id > 2000)
+(3 rows)
+
+[exit=0]
+
+
+######## 6. 커밋은 WAL이 디스크에 닿을 때까지 기다린다
+
+$ cat > /home/postgres/one.sql <<'SQL'
+$ INSERT INTO acct VALUES (100000 + random() * 1000000000, 1, 'x') ON CONFLICT DO NOTHING;
+$ SQL
+$ psql -X -c "SHOW synchronous_commit"
+$ pgbench -n -c 1 -T 5 -f /home/postgres/one.sql postgres 2>&1 | grep -E "number of transactions actually processed|latency average|tps"
+$ PGOPTIONS='-c synchronous_commit=off' pgbench -n -c 1 -T 5 -f /home/postgres/one.sql postgres 2>&1 | grep -E "number of transactions actually processed|latency average|tps"
+ synchronous_commit 
+--------------------
+ on
+(1 row)
+
+number of transactions actually processed: 56673
+latency average = 0.088 ms
+tps = 11330.980885 (without initial connection time)
+number of transactions actually processed: 141476
+latency average = 0.035 ms
+tps = 28298.239231 (without initial connection time)
+[exit=0]
+
+
+######## 7. 어떤 종류의 WAL이 쌓였나: resource manager별 통계
+
+$ psql -X <<'SQL'
+$ SELECT "resource_manager/record_type" AS rmgr, count, round(count_percentage::numeric, 1) AS count_pct,
+$        pg_size_pretty(combined_size) AS bytes, round(combined_size_percentage::numeric, 1) AS bytes_pct,
+$        round(fpi_size_percentage::numeric, 1) AS fpi_pct
+$ FROM pg_get_wal_stats('0/1000000', pg_current_wal_lsn())
+$ WHERE count > 0 ORDER BY combined_size DESC;
+$ SQL
+    rmgr     | count  | count_pct |   bytes    | bytes_pct | fpi_pct 
+-------------+--------+-----------+------------+-----------+---------
+ Heap        | 400882 |      49.1 | 24 MB      |      46.7 |    14.6
+ Btree       | 215549 |      26.4 | 16 MB      |      32.2 |    13.2
+ Transaction | 196029 |      24.0 | 6694 kB    |      13.0 |     0.0
+ Heap2       |   2814 |       0.3 | 2090 kB    |       4.1 |    31.9
+ XLOG        |    393 |       0.0 | 2060 kB    |       4.0 |    40.3
+ Standby     |    449 |       0.1 | 25 kB      |       0.0 |     0.0
+ Storage     |     28 |       0.0 | 1176 bytes |       0.0 |     0.0
+ CLOG        |      6 |       0.0 | 204 bytes  |       0.0 |     0.0
+ Database    |      2 |       0.0 | 84 bytes   |       0.0 |     0.0
+(9 rows)
+
+[exit=0]
+
+
+######## 8. WAL 세그먼트는 재활용된다
+
+$ psql -X -c "SHOW min_wal_size" -c "SHOW max_wal_size"
+$ psql -X -c "SELECT count(*) AS segments, pg_size_pretty(sum(size)) AS total FROM pg_ls_waldir()"
+$ psql -X -q -c "CREATE TABLE bulk AS SELECT g AS id, repeat('w', 200) AS pad FROM generate_series(1, 400000) g"
+$ psql -X -c "SELECT count(*) AS segments, pg_size_pretty(sum(size)) AS total FROM pg_ls_waldir()"
+$ psql -X -At -c "SELECT pg_walfile_name(pg_current_wal_insert_lsn()) AS current_segment"
+$ ls $PGDATA/pg_wal | grep -v -e archive_status -e summaries | tr '\n' ' '; echo
+$ psql -X -q -c "CHECKPOINT"
+$ psql -X -q -c "CHECKPOINT"
+$ psql -X -c "SELECT count(*) AS segments, pg_size_pretty(sum(size)) AS total FROM pg_ls_waldir()"
+$ ls $PGDATA/pg_wal | grep -v -e archive_status -e summaries | tr '\n' ' '; echo
+ min_wal_size 
+--------------
+ 80MB
+(1 row)
+
+ max_wal_size 
+--------------
+ 1GB
+(1 row)
+
+ segments | total 
+----------+-------
+        4 | 64 MB
+(1 row)
+
+ segments | total  
+----------+--------
+       10 | 160 MB
+(1 row)
+
+00000001000000000000000A
+000000010000000000000001 000000010000000000000002 000000010000000000000003 000000010000000000000004 000000010000000000000005 000000010000000000000006 000000010000000000000007 000000010000000000000008 000000010000000000000009 00000001000000000000000A 
+ segments | total  
+----------+--------
+       10 | 160 MB
+(1 row)
+
+00000001000000000000000A 00000001000000000000000B 00000001000000000000000C 00000001000000000000000D 00000001000000000000000E 00000001000000000000000F 000000010000000000000010 000000010000000000000011 000000010000000000000012 000000010000000000000013 
+[exit=0]
+
+done
