@@ -41,10 +41,11 @@ pgroot() {
 }
 
 # SQL 한 문장을 psql 프롬프트와 함께 기록하고 실행한다. 인자: SQL [psql 옵션...]
+# 프롬프트 이름은 PROMPT(기본 postgres)로 바꿀 수 있다. 서버가 여럿일 때 "primary=# ", "standby=# "처럼 구분한다.
 q() {
   local sql=$1; shift
   {
-    printf '%s\n' "$sql" | awk 'NR==1 { print "postgres=# " $0; next } { print "postgres-# " $0 }'
+    printf '%s\n' "$sql" | awk -v p="${PROMPT:-postgres}" 'NR==1 { print p "=# " $0; next } { print p "-# " $0 }'
     docker exec "$CT" psql -X "$@" -c "$sql" 2>&1
     echo
   } | log

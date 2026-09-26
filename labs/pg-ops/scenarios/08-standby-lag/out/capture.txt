@@ -1,0 +1,291 @@
+
+######## 0. 실습 환경
+
+$ docker network create pgops-net
+287caa33381ac77d7ed67c22d6f54f41f0289de23fc2de08279757b19786f630
+[exit=0]
+
+$ docker run -d --init --name pgprimary --hostname pgprimary --network pgops-net pg-ops:rocky9-pg18 sleep infinity
+d634ce6799e278e2e593f8e45fcc6c0e5a3bc92dea665857667ad2698ffe68f2
+[exit=0]
+
+$ initdb -D $PGDATA > /var/lib/pgsql/initdb.log 2>&1 && echo "initdb ok"
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+initdb ok
+waiting for server to start.... done
+server started
+[exit=0]
+
+$ cat /etc/rocky-release
+$ rpm -q postgresql18-server postgresql18-contrib
+$ postgres --version
+$ uname -r
+Rocky Linux release 9.8 (Blue Onyx)
+postgresql18-server-18.6-1PGDG.rhel9.8.aarch64
+postgresql18-contrib-18.6-1PGDG.rhel9.8.aarch64
+postgres (PostgreSQL) 18.6
+7.0.12-linuxkit
+[exit=0]
+
+# 실습용 접속 허용 (운영에서는 대상과 인증 방식을 좁힌다)
+
+$ printf 'host all all samenet trust\nhost replication all samenet trust\n' >> $PGDATA/pg_hba.conf
+[exit=0]
+
+primary=# ALTER SYSTEM SET listen_addresses = '*';
+ALTER SYSTEM
+
+primary=# ALTER SYSTEM SET log_line_prefix = '%m [%p] %q%u@%d/%a ';
+ALTER SYSTEM
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w restart -m fast
+waiting for server to shut down.... done
+server stopped
+waiting for server to start.... done
+server started
+[exit=0]
+
+primary=# CREATE TABLE acc (id int PRIMARY KEY, v int);
+CREATE TABLE
+
+primary=# INSERT INTO acc SELECT g, 0 FROM generate_series(1, 100000) g;
+INSERT 0 100000
+
+$ docker run -d --init --name pgstandby --hostname pgstandby --network pgops-net pg-ops:rocky9-pg18 sleep infinity
+34224c9c63eb84f939ee7206f990e2cf312067c7f08a01e141ff67292b8d6b7d
+[exit=0]
+
+$ pg_basebackup -h pgprimary -D $PGDATA -R -X stream -C -S standby1 -c fast
+$ ls $PGDATA/standby.signal && grep primary_conninfo $PGDATA/postgresql.auto.conf
+/var/lib/pgsql/18/data/standby.signal
+primary_conninfo = 'user=postgres passfile=''/var/lib/pgsql/.pgpass'' channel_binding=prefer host=pgprimary port=5432 sslmode=prefer sslnegotiation=postgres sslcompression=0 sslcertmode=allow sslsni=1 ssl_min_protocol_version=TLSv1.2 gssencmode=prefer krbsrvname=postgres gssdelegation=0 target_session_attrs=any load_balance_hosts=disable'
+[exit=0]
+
+$ cat >> $PGDATA/postgresql.auto.conf <<'CONF'
+$ log_line_prefix = '%m [%p] %q%u@%d/%a '
+$ log_recovery_conflict_waits = on
+$ max_standby_streaming_delay = '10s'
+$ CONF
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+waiting for server to start.... done
+server started
+[exit=0]
+
+
+######## 1. 정상 상태
+
+primary=# SELECT application_name AS app, state, sent_lsn, replay_lsn,
+primary-#        write_lag, flush_lag, replay_lag,
+primary-#        pg_size_pretty(pg_wal_lsn_diff(sent_lsn, replay_lsn)) AS replay_gap
+primary-# FROM pg_stat_replication;
+     app     |   state   | sent_lsn  | replay_lsn |    write_lag    |    flush_lag    |   replay_lag    | replay_gap 
+-------------+-----------+-----------+------------+-----------------+-----------------+-----------------+------------
+ walreceiver | streaming | 0/4000000 | 0/4000000  | 00:00:00.000029 | 00:00:00.000029 | 00:00:00.000029 | 0 bytes
+(1 row)
+
+
+standby=# SELECT pg_last_wal_receive_lsn() AS received, pg_last_wal_replay_lsn() AS replayed,
+standby-#        pg_size_pretty(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn())) AS gap,
+standby-#        now() - pg_last_xact_replay_timestamp() AS since_last_replay;
+ received  | replayed  |   gap   | since_last_replay 
+-----------+-----------+---------+-------------------
+ 0/4000000 | 0/4000000 | 0 bytes | 
+(1 row)
+
+
+standby=# SELECT status, sender_host, written_lsn, flushed_lsn FROM pg_stat_wal_receiver;
+  status   | sender_host | written_lsn | flushed_lsn 
+-----------+-------------+-------------+-------------
+ streaming | pgprimary   |             | 0/4000000
+(1 row)
+
+
+standby=# SELECT name, setting FROM pg_settings WHERE name IN ('hot_standby_feedback', 'max_standby_streaming_delay', 'log_recovery_conflict_waits') ORDER BY name;
+            name             | setting 
+-----------------------------+---------
+ hot_standby_feedback        | off
+ log_recovery_conflict_waits | on
+ max_standby_streaming_delay | 10000
+(3 rows)
+
+
+
+######## 2. standby의 긴 쿼리가 재생을 멈춘다
+
+# 세션 R 시작: psql -X 
+
+R=# SET application_name = 'report';
+SET
+
+R=# \timing on
+Timing is on.
+
+R=# SELECT count(*), pg_sleep(40) FROM acc;
+
+primary=# UPDATE acc SET v = v + 1;
+UPDATE 100000
+
+primary=# VACUUM acc;
+VACUUM
+
+primary=# SELECT application_name AS app, state, sent_lsn, replay_lsn,
+primary-#        write_lag, flush_lag, replay_lag,
+primary-#        pg_size_pretty(pg_wal_lsn_diff(sent_lsn, replay_lsn)) AS replay_gap
+primary-# FROM pg_stat_replication;
+     app     |   state   | sent_lsn  | replay_lsn |   write_lag    |    flush_lag    |   replay_lag    | replay_gap 
+-------------+-----------+-----------+------------+----------------+-----------------+-----------------+------------
+ walreceiver | streaming | 0/5B82970 | 0/5A829A0  | 00:00:00.00016 | 00:00:00.000472 | 00:00:00.206355 | 1024 kB
+(1 row)
+
+
+standby=# SELECT pg_last_wal_receive_lsn() AS received, pg_last_wal_replay_lsn() AS replayed,
+standby-#        pg_size_pretty(pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn())) AS gap,
+standby-#        now() - pg_last_xact_replay_timestamp() AS since_last_replay;
+ received  | replayed  |   gap   | since_last_replay 
+-----------+-----------+---------+-------------------
+ 0/5B82970 | 0/5A829A0 | 1024 kB | 00:00:04.236133
+(1 row)
+
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'recovery still waiting|conflict' | tail -n 3
+2026-09-26 10:34:48.936 UTC [34] LOG:  recovery still waiting after 1034.610 ms: recovery conflict on snapshot
+[exit=0]
+
+# 세션 R: 앞 명령의 결과를 기다림
+ERROR:  canceling statement due to conflict with recovery
+DETAIL:  User query might have needed to see row versions that must be removed.
+Time: 11643.173 ms (00:11.643)
+
+$ tail -n 400 "$(ls -t $PGDATA/log/*.log | head -1)" | grep -E 'recovery conflict|canceling statement|finished waiting' | tail -n 4
+2026-09-26 10:34:48.936 UTC [34] LOG:  recovery still waiting after 1034.610 ms: recovery conflict on snapshot
+2026-09-26 10:34:58.712 UTC [72] postgres@postgres/report ERROR:  canceling statement due to conflict with recovery
+2026-09-26 10:34:58.718 UTC [34] LOG:  recovery finished waiting after 10816.743 ms: recovery conflict on snapshot
+[exit=0]
+
+primary=# SELECT application_name AS app, state, sent_lsn, replay_lsn,
+primary-#        write_lag, flush_lag, replay_lag,
+primary-#        pg_size_pretty(pg_wal_lsn_diff(sent_lsn, replay_lsn)) AS replay_gap
+primary-# FROM pg_stat_replication;
+     app     |   state   | sent_lsn  | replay_lsn |    write_lag    |    flush_lag    |   replay_lag    | replay_gap 
+-------------+-----------+-----------+------------+-----------------+-----------------+-----------------+------------
+ walreceiver | streaming | 0/5B829A8 | 0/5B829A8  | 00:00:00.000452 | 00:00:00.001044 | 00:00:01.961063 | 0 bytes
+(1 row)
+
+
+standby=# SELECT datname, confl_snapshot, confl_lock, confl_bufferpin, confl_deadlock FROM pg_stat_database_conflicts WHERE datname = 'postgres';
+ datname  | confl_snapshot | confl_lock | confl_bufferpin | confl_deadlock 
+----------+----------------+------------+-----------------+----------------
+ postgres |              1 |          0 |               0 |              0
+(1 row)
+
+
+
+######## 3. hot_standby_feedback: 취소 대신 primary의 VACUUM을 막는다
+
+standby=# ALTER SYSTEM SET hot_standby_feedback = on;
+ALTER SYSTEM
+
+standby=# SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+
+R=# SELECT count(*), pg_sleep(20) FROM acc;
+
+primary=# SELECT application_name AS app, backend_xmin FROM pg_stat_replication;
+     app     | backend_xmin 
+-------------+--------------
+ walreceiver |             
+(1 row)
+
+
+primary=# SELECT slot_name, active, xmin, age(xmin) AS xmin_age FROM pg_replication_slots;
+ slot_name | active | xmin | xmin_age 
+-----------+--------+------+----------
+ standby1  | t      |  755 |        0
+(1 row)
+
+
+primary=# UPDATE acc SET v = v + 1;
+UPDATE 100000
+
+primary=# VACUUM (VERBOSE) acc;
+INFO:  vacuuming "postgres.public.acc"
+INFO:  finished vacuuming "postgres.public.acc": index scans: 0
+pages: 0 removed, 885 remain, 885 scanned (100.00% of total), 0 eagerly scanned
+tuples: 0 removed, 200000 remain, 100000 are dead but not yet removable
+removable cutoff: 755, which was 1 XIDs old when operation ended
+frozen: 0 pages from table (0.00% of total) had 0 tuples frozen
+visibility map: 0 pages set all-visible, 0 pages set all-frozen (0 were all-visible)
+index scan not needed: 0 pages from table (0.00% of total) had 0 dead item identifiers removed
+avg read rate: 0.000 MB/s, avg write rate: 0.000 MB/s
+buffer usage: 1825 hits, 0 reads, 0 dirtied
+WAL usage: 1 records, 0 full page images, 258 bytes, 0 buffers full
+system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+VACUUM
+
+primary=# SELECT application_name AS app, state, sent_lsn, replay_lsn,
+primary-#        write_lag, flush_lag, replay_lag,
+primary-#        pg_size_pretty(pg_wal_lsn_diff(sent_lsn, replay_lsn)) AS replay_gap
+primary-# FROM pg_stat_replication;
+     app     |   state   | sent_lsn  | replay_lsn |    write_lag    |    flush_lag    |   replay_lag    | replay_gap 
+-------------+-----------+-----------+------------+-----------------+-----------------+-----------------+------------
+ walreceiver | streaming | 0/6F9E910 | 0/6F9E910  | 00:00:00.000104 | 00:00:00.000306 | 00:00:00.002368 | 0 bytes
+(1 row)
+
+
+# 세션 R: 앞 명령의 결과를 기다림
+ count  | pg_sleep 
+--------+----------
+ 100000 | 
+(1 row)
+
+Time: 20028.378 ms (00:20.028)
+
+
+######## 4. standby가 멈추면
+
+$ pg_ctl -D $PGDATA -w stop -m fast
+waiting for server to shut down.... done
+server stopped
+[exit=0]
+
+primary=# SELECT application_name AS app, state, sent_lsn, replay_lsn,
+primary-#        write_lag, flush_lag, replay_lag,
+primary-#        pg_size_pretty(pg_wal_lsn_diff(sent_lsn, replay_lsn)) AS replay_gap
+primary-# FROM pg_stat_replication;
+ app | state | sent_lsn | replay_lsn | write_lag | flush_lag | replay_lag | replay_gap 
+-----+-------+----------+------------+-----------+-----------+------------+------------
+(0 rows)
+
+
+$ pgbench -i -s 10 -q postgres 2>&1 | tail -n 1
+done in 0.50 s (drop tables 0.00 s, create tables 0.01 s, client-side generate 0.36 s, vacuum 0.03 s, primary keys 0.10 s).
+[exit=0]
+
+primary=# SELECT slot_name, active, restart_lsn,
+primary-#        pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained
+primary-# FROM pg_replication_slots;
+ slot_name | active | restart_lsn | retained 
+-----------+--------+-------------+----------
+ standby1  | f      | 0/6FEEFC8   | 123 MB
+(1 row)
+
+
+$ pg_ctl -D $PGDATA -l /var/lib/pgsql/startup.log -w start
+waiting for server to start.... done
+server started
+[exit=0]
+
+primary=# SELECT application_name AS app, state, sent_lsn, replay_lsn,
+primary-#        write_lag, flush_lag, replay_lag,
+primary-#        pg_size_pretty(pg_wal_lsn_diff(sent_lsn, replay_lsn)) AS replay_gap
+primary-# FROM pg_stat_replication;
+     app     |   state   | sent_lsn  | replay_lsn |    write_lag    |    flush_lag    |   replay_lag    | replay_gap 
+-------------+-----------+-----------+------------+-----------------+-----------------+-----------------+------------
+ walreceiver | streaming | 0/EB0ED18 | 0/EB0ED18  | 00:00:00.136627 | 00:00:00.138404 | 00:00:00.213931 | 0 bytes
+(1 row)
+
+
