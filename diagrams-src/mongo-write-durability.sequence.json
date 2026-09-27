@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "쓰기 한 건이 디스크에 닿기까지",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1060,
+      700
+    ],
+    "column_fit": "spread",
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "emphasis": {
+          "label": "내구성이 생기는 지점"
+        },
+        "default": {
+          "label": "요청, 쓰기"
+        },
+        "return": {
+          "label": "응답"
+        },
+        "dashed": {
+          "label": "백그라운드 작업"
+        }
+      }
+    },
+    "views": [
+      {
+        "id": "commit",
+        "label": "커밋",
+        "focus": [
+          "client",
+          "mongod",
+          "cache",
+          "logbuf"
+        ],
+        "note": "커밋은 캐시의 페이지에 새 버전을 붙이고, 같은 변경을 로그 레코드로 로그 버퍼에 복사합니다."
+      },
+      {
+        "id": "journal",
+        "label": "저널 flush",
+        "focus": [
+          "mongod",
+          "logbuf",
+          "flusher",
+          "journal"
+        ],
+        "note": "JournalFlusher가 100ms마다 로그를 fsync합니다. j:true면 그 flush를 바로 요청하고 끝나기를 기다립니다."
+      },
+      {
+        "id": "checkpoint",
+        "label": "체크포인트",
+        "focus": [
+          "ckpt",
+          "cache",
+          "files",
+          "journal"
+        ],
+        "note": "60초마다 dirty 페이지를 새 블록에 쓰고 turtle을 바꿔 새 체크포인트를 확정한 뒤, 필요 없어진 로그 파일을 지웁니다."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "클라이언트",
+      "sublabel": "insertOne"
+    },
+    {
+      "id": "mongod",
+      "type": "backend",
+      "label": "mongod",
+      "sublabel": "요청 스레드"
+    },
+    {
+      "id": "cache",
+      "type": "database",
+      "label": "WT 캐시",
+      "sublabel": "B-tree 페이지"
+    },
+    {
+      "id": "logbuf",
+      "type": "database",
+      "label": "로그 버퍼",
+      "sublabel": "log slot"
+    },
+    {
+      "id": "flusher",
+      "type": "backend",
+      "label": "flusher",
+      "sublabel": "JournalFlusher"
+    },
+    {
+      "id": "journal",
+      "type": "external",
+      "label": "journal/",
+      "sublabel": "WiredTigerLog.*"
+    },
+    {
+      "id": "ckpt",
+      "type": "backend",
+      "label": "checkpoint",
+      "sublabel": "Checkpointer"
+    },
+    {
+      "id": "files",
+      "type": "external",
+      "label": "*.wt, turtle",
+      "sublabel": "데이터 파일"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 300,
+      "label": "쓰기와 커밋"
+    },
+    {
+      "from": 310,
+      "to": 460,
+      "label": "저널 flush"
+    },
+    {
+      "from": 470,
+      "to": 640,
+      "label": "체크포인트"
+    }
+  ],
+  "messages": [
+    {
+      "id": "insert",
+      "from": "client",
+      "to": "mongod",
+      "y": 170,
+      "label": "insert, w:1"
+    },
+    {
+      "id": "update-page",
+      "from": "mongod",
+      "to": "cache",
+      "y": 200,
+      "label": "페이지에 새 버전"
+    },
+    {
+      "id": "log-commit",
+      "from": "mongod",
+      "to": "logbuf",
+      "y": 230,
+      "label": "커밋 로그 레코드"
+    },
+    {
+      "id": "log-write",
+      "from": "logbuf",
+      "to": "journal",
+      "y": 260,
+      "label": "write()",
+      "variant": "dashed"
+    },
+    {
+      "id": "ack-nojournal",
+      "from": "mongod",
+      "to": "client",
+      "y": 288,
+      "label": "j:false면 여기서 응답",
+      "variant": "return"
+    },
+    {
+      "id": "periodic-sync",
+      "from": "flusher",
+      "to": "journal",
+      "y": 330,
+      "label": "100ms마다 fsync",
+      "variant": "emphasis"
+    },
+    {
+      "id": "request-flush",
+      "from": "mongod",
+      "to": "flusher",
+      "y": 370,
+      "label": "j:true: 지금 flush"
+    },
+    {
+      "id": "sync-now",
+      "from": "flusher",
+      "to": "journal",
+      "y": 400,
+      "label": "fsync",
+      "variant": "emphasis"
+    },
+    {
+      "id": "flush-done",
+      "from": "flusher",
+      "to": "mongod",
+      "y": 425,
+      "label": "완료",
+      "variant": "return"
+    },
+    {
+      "id": "ack-journal",
+      "from": "mongod",
+      "to": "client",
+      "y": 450,
+      "label": "j:true 응답",
+      "variant": "return"
+    },
+    {
+      "id": "reconcile",
+      "from": "ckpt",
+      "to": "cache",
+      "y": 490,
+      "label": "dirty 페이지 reconciliation"
+    },
+    {
+      "id": "write-blocks",
+      "from": "ckpt",
+      "to": "files",
+      "y": 525,
+      "label": "빈 자리에 새 블록, fsync"
+    },
+    {
+      "id": "turtle",
+      "from": "ckpt",
+      "to": "files",
+      "y": 560,
+      "label": "turtle 교체로 확정",
+      "variant": "emphasis"
+    },
+    {
+      "id": "remove-log",
+      "from": "ckpt",
+      "to": "journal",
+      "y": 600,
+      "label": "지난 로그 파일 제거",
+      "variant": "dashed"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "mongod",
+      "from": 170,
+      "to": 450,
+      "type": "backend"
+    },
+    {
+      "participant": "flusher",
+      "from": 325,
+      "to": 430,
+      "type": "backend"
+    },
+    {
+      "participant": "ckpt",
+      "from": 485,
+      "to": 606,
+      "type": "backend"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "find 한 번이 실행 계획을 얻는 과정 (classic 엔진)",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {"label": "쿼리 처리 단계"},
+    "database": {"label": "plan cache"},
+    "security": {"label": "판단"}
+   }
+  },
+  "views": [
+   {"id": "cache", "label": "캐시 적중", "focus": ["cq", "lookup", "cached", "run"], "note": "같은 shape의 active 엔트리가 있으면 그 계획을 바로 쓰되, 기록된 works의 10배 안에 끝나는지 지켜봅니다."},
+   {"id": "multi", "label": "후보 경쟁", "focus": ["lookup", "plan", "trial", "rank", "write"], "note": "엔트리가 없거나 inactive이면 후보를 모두 열거하고 조금씩 번갈아 실행해 점수가 가장 높은 계획을 고릅니다."},
+   {"id": "replan", "label": "replan", "focus": ["cached", "plan"], "note": "캐시된 계획이 예상보다 10배 넘게 일하면 엔트리를 inactive로 돌리고 처음부터 다시 계획합니다."}
+  ]
+ },
+ "lanes": [
+  {"id": "parse", "label": "파싱"},
+  {"id": "cache", "label": "plan cache"},
+  {"id": "planner", "label": "플래너"},
+  {"id": "trial", "label": "trial 실행"}
+ ],
+ "mainPath": ["cq", "lookup", "plan", "trial", "rank", "run"],
+ "nodes": [
+  {"id": "cq", "lane": "parse", "col": 0, "type": "backend", "label": "CanonicalQuery", "sublabel": "정규화, shape 계산", "width": 170},
+  {"id": "lookup", "lane": "cache", "col": 1, "type": "security", "label": "active 엔트리?", "sublabel": "planCacheKey로 조회", "width": 170},
+  {"id": "cached", "lane": "cache", "col": 2, "type": "database", "label": "CachedPlanStage", "sublabel": "works ≤ 10 × 기록값?", "width": 180},
+  {"id": "plan", "lane": "planner", "col": 2, "type": "backend", "label": "QueryPlanner::plan", "sublabel": "후보 QuerySolution 열거", "width": 190},
+  {"id": "trial", "lane": "trial", "col": 3, "type": "backend", "label": "MultiPlanStage", "sublabel": "번갈아 work(), 101건 또는 EOF", "width": 200},
+  {"id": "rank", "lane": "trial", "col": 4, "type": "security", "label": "pickBestPlan", "sublabel": "productivity + 보너스", "width": 170},
+  {"id": "write", "lane": "cache", "col": 4, "type": "database", "label": "plan cache 기록", "sublabel": "처음엔 inactive", "width": 170},
+  {"id": "run", "lane": "planner", "col": 5, "type": "backend", "label": "승자 계획 실행", "sublabel": "trial 결과부터 반환", "width": 170}
+ ],
+ "edges": [
+  {"id": "e1", "from": "cq", "to": "lookup", "variant": "emphasis"},
+  {"id": "e2", "from": "lookup", "to": "plan", "label": "없음, inactive", "variant": "emphasis"},
+  {"id": "e3", "from": "lookup", "to": "cached", "label": "있음"},
+  {"id": "e4", "from": "plan", "to": "trial", "label": "후보 여럿", "variant": "emphasis"},
+  {"id": "e5", "from": "trial", "to": "rank", "variant": "emphasis"},
+  {"id": "e6", "from": "rank", "to": "run", "label": "승자", "variant": "emphasis"},
+  {"id": "e7", "from": "rank", "to": "write", "label": "works 기록", "variant": "dashed"},
+  {"id": "e8", "from": "cached", "to": "plan", "label": "초과: replan", "role": "branch"},
+  {"id": "e9", "from": "cached", "to": "run", "label": "기준 안", "role": "branch"}
+ ]
+}

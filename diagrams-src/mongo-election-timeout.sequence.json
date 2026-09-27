@@ -1,0 +1,220 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "primary가 죽은 뒤 새 primary가 뽑히기까지",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1085,
+   660
+  ],
+  "column_fit": "spread",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "emphasis": {
+     "label": "선출 경로"
+    },
+    "default": {
+     "label": "요청, 기록"
+    },
+    "return": {
+     "label": "응답"
+    },
+    "dashed": {
+     "label": "타이머 재설정"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "detect",
+    "label": "장애 감지",
+    "focus": [
+     "oldp",
+     "cand",
+     "timer"
+    ],
+    "note": "secondary는 primary의 소식을 들을 때마다 election timeout 타이머를 다시 맞춥니다. primary가 죽으면 소식이 끊기고, 10초에 무작위 오프셋을 더한 시간이 지나면 타이머가 만료됩니다."
+   },
+   {
+    "id": "vote",
+    "label": "투표",
+    "focus": [
+     "cand",
+     "voter",
+     "store"
+    ],
+    "note": "먼저 term을 올리지 않고 dry run으로 이길 수 있는지 묻고, 이길 수 있으면 term을 올려 자기에게 투표한 것을 기록한 뒤 진짜 투표를 요청합니다."
+   },
+   {
+    "id": "stepup",
+    "label": "primary 전환",
+    "focus": [
+     "cand",
+     "store",
+     "client"
+    ],
+    "note": "과반의 표를 얻으면 catch-up과 drain을 거쳐 새 term의 첫 oplog 엔트리를 쓰고 쓰기를 받기 시작합니다. 기다리던 드라이버의 쓰기가 새 primary로 갑니다."
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "client",
+   "type": "external",
+   "label": "드라이버",
+   "sublabel": "쓰기 대기"
+  },
+  {
+   "id": "oldp",
+   "type": "backend",
+   "label": "옛 primary",
+   "sublabel": "term 2"
+  },
+  {
+   "id": "voter",
+   "type": "backend",
+   "label": "투표자",
+   "sublabel": "secondary"
+  },
+  {
+   "id": "cand",
+   "type": "backend",
+   "label": "후보",
+   "sublabel": "secondary"
+  },
+  {
+   "id": "timer",
+   "type": "security",
+   "label": "election timeout",
+   "sublabel": "10초 + 무작위"
+  },
+  {
+   "id": "store",
+   "type": "database",
+   "label": "local 저장소",
+   "sublabel": "lastVote, oplog"
+  }
+ ],
+ "segments": [
+  {
+   "from": 160,
+   "to": 250,
+   "label": "평소"
+  },
+  {
+   "from": 258,
+   "to": 322,
+   "label": "장애"
+  },
+  {
+   "from": 330,
+   "to": 482,
+   "label": "투표"
+  },
+  {
+   "from": 490,
+   "to": 566,
+   "label": "전환"
+  }
+ ],
+ "messages": [
+  {
+   "id": "m1",
+   "from": "cand",
+   "to": "oldp",
+   "y": 176,
+   "label": "heartbeat (2초마다)",
+   "variant": "default"
+  },
+  {
+   "id": "m2",
+   "from": "oldp",
+   "to": "cand",
+   "y": 206,
+   "label": "나는 PRIMARY, term 2",
+   "variant": "return"
+  },
+  {
+   "id": "m3",
+   "from": "cand",
+   "to": "timer",
+   "y": 236,
+   "label": "타이머 재설정",
+   "variant": "dashed"
+  },
+  {
+   "id": "m4",
+   "from": "cand",
+   "to": "oldp",
+   "y": 272,
+   "label": "heartbeat 실패, 재시도",
+   "variant": "default"
+  },
+  {
+   "id": "m5",
+   "from": "timer",
+   "to": "cand",
+   "y": 306,
+   "label": "만료: 선출 시작",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m6",
+   "from": "cand",
+   "to": "voter",
+   "y": 346,
+   "label": "requestVotes dryRun, term 2",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m7",
+   "from": "voter",
+   "to": "cand",
+   "y": 376,
+   "label": "voteGranted",
+   "variant": "return"
+  },
+  {
+   "id": "m8",
+   "from": "cand",
+   "to": "store",
+   "y": 406,
+   "label": "term 3, 자신에게 투표 기록",
+   "variant": "default"
+  },
+  {
+   "id": "m9",
+   "from": "cand",
+   "to": "voter",
+   "y": 436,
+   "label": "requestVotes term 3",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m10",
+   "from": "voter",
+   "to": "cand",
+   "y": 466,
+   "label": "voteGranted, lastVote 기록",
+   "variant": "return"
+  },
+  {
+   "id": "m11",
+   "from": "cand",
+   "to": "store",
+   "y": 508,
+   "label": "catch-up, drain, 새 term 엔트리",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m12",
+   "from": "client",
+   "to": "cand",
+   "y": 544,
+   "label": "기다리던 쓰기",
+   "variant": "default"
+  }
+ ]
+}

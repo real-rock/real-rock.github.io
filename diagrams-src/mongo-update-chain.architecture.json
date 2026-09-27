@@ -1,0 +1,253 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "update chain과 history store: 한 도큐먼트의 세 버전",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1120,
+   620
+  ],
+  "repository": {
+   "url": "https://github.com/mongodb/mongo",
+   "provider": "github",
+   "link_mode": "web",
+   "revision": "8f1f561d203201f9f19e832374813f46cfe0dc29"
+  },
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "frontend": {
+     "label": "leaf page의 key"
+    },
+    "backend": {
+     "label": "메모리의 WT_UPDATE"
+    },
+    "database": {
+     "label": "디스크의 버전"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "memory",
+    "label": "메모리",
+    "focus": [
+     "key",
+     "upd3",
+     "upd2",
+     "upd1"
+    ],
+    "note": "수정할 때마다 WT_UPDATE가 체인 맨 앞에 붙습니다. 읽는 쪽은 앞에서부터 따라가며 자기에게 보이는 첫 버전을 고릅니다."
+   },
+   {
+    "id": "disk",
+    "label": "reconciliation 뒤",
+    "focus": [
+     "upd3",
+     "upd2",
+     "upd1",
+     "ondisk",
+     "hs2",
+     "hs1"
+    ],
+    "note": "eviction이나 checkpoint가 페이지를 쓸 때 최신 버전은 데이터 파일로, 아직 누군가 볼 수 있는 옛 버전은 WiredTigerHS.wt로 갑니다."
+   }
+  ]
+ },
+ "components": [
+  {
+   "id": "key",
+   "type": "frontend",
+   "label": "RecordId 1",
+   "sublabel": "leaf page의 행",
+   "pos": [
+    40,
+    120
+   ],
+   "size": [
+    170,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/third_party/wiredtiger/src/include/btmem.h",
+     "line": 1386,
+     "label": "WT_UPDATE"
+    }
+   ]
+  },
+  {
+   "id": "upd3",
+   "type": "backend",
+   "label": "v: \"v3-third\"",
+   "sublabel": "start_ts (…, 4)",
+   "pos": [
+    300,
+    120
+   ],
+   "size": [
+    220,
+    72
+   ]
+  },
+  {
+   "id": "upd2",
+   "type": "backend",
+   "label": "v: \"v2-second\"",
+   "sublabel": "start_ts (…, 3)",
+   "pos": [
+    580,
+    120
+   ],
+   "size": [
+    220,
+    72
+   ]
+  },
+  {
+   "id": "upd1",
+   "type": "backend",
+   "label": "v: \"v1-first\"",
+   "sublabel": "start_ts (…, 2)",
+   "pos": [
+    860,
+    120
+   ],
+   "size": [
+    220,
+    72
+   ]
+  },
+  {
+   "id": "ondisk",
+   "type": "database",
+   "label": "RecordId 1 → v3-third",
+   "sublabel": "최신 버전만",
+   "pos": [
+    290,
+    420
+   ],
+   "size": [
+    240,
+    80
+   ]
+  },
+  {
+   "id": "hs2",
+   "type": "database",
+   "label": "(46, 1, ts …3) → v2-second",
+   "sublabel": "stop ts …4",
+   "pos": [
+    570,
+    420
+   ],
+   "size": [
+    240,
+    80
+   ],
+   "sources": [
+    {
+     "path": "src/third_party/wiredtiger/src/history/hs_rec.c",
+     "line": 342,
+     "label": "__wt_hs_insert_updates"
+    }
+   ]
+  },
+  {
+   "id": "hs1",
+   "type": "database",
+   "label": "(46, 1, ts …2) → v1-first",
+   "sublabel": "stop ts …3",
+   "pos": [
+    850,
+    420
+   ],
+   "size": [
+    240,
+    80
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "WiredTiger 캐시 (메모리)",
+   "wraps": [
+    "key",
+    "upd3",
+    "upd2",
+    "upd1"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "collection-*.wt",
+   "wraps": [
+    "ondisk"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "WiredTigerHS.wt",
+   "wraps": [
+    "hs2",
+    "hs1"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "c-head",
+   "from": "key",
+   "to": "upd3",
+   "label": "체인 머리",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c-next1",
+   "from": "upd3",
+   "to": "upd2",
+   "label": "next"
+  },
+  {
+   "id": "c-next2",
+   "from": "upd2",
+   "to": "upd1",
+   "label": "next"
+  },
+  {
+   "id": "c-ds",
+   "from": "upd3",
+   "to": "ondisk",
+   "label": "디스크 이미지",
+   "variant": "emphasis",
+   "labelAt": [
+    410,
+    300
+   ]
+  },
+  {
+   "id": "c-hs2",
+   "from": "upd2",
+   "to": "hs2",
+   "label": "옛 버전",
+   "variant": "dashed",
+   "labelAt": [
+    690,
+    300
+   ]
+  },
+  {
+   "id": "c-hs1",
+   "from": "upd1",
+   "to": "hs1",
+   "label": "옛 버전",
+   "variant": "dashed",
+   "labelAt": [
+    970,
+    300
+   ]
+  }
+ ]
+}

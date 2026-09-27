@@ -1,0 +1,379 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "secondary 복제 파이프라인: oplog 엔트리가 가는 길",
+  "quality_profile": "standard",
+  "viewBox": [
+   1240,
+   660
+  ],
+  "repository": {
+   "url": "https://github.com/mongodb/mongo",
+   "provider": "github",
+   "link_mode": "web",
+   "revision": "8f1f561d203201f9f19e832374813f46cfe0dc29"
+  },
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "스레드, 모듈"
+    },
+    "database": {
+     "label": "WiredTiger 테이블"
+    },
+    "security": {
+     "label": "commit point 계산"
+    },
+    "frontend": {
+     "label": "클라이언트"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "primary",
+    "label": "primary의 기록",
+    "focus": [
+     "client",
+     "coll",
+     "opobs",
+     "oplogp"
+    ],
+    "note": "도큐먼트 변경과 oplog 엔트리는 같은 WiredTiger 트랜잭션에 들어가 같은 timestamp로 함께 커밋됩니다."
+   },
+   {
+    "id": "pipeline",
+    "label": "secondary의 파이프라인",
+    "focus": [
+     "oplogp",
+     "fetcher",
+     "writer",
+     "oplogs",
+     "applier",
+     "colls"
+    ],
+    "note": "OplogFetcher가 가져온 엔트리를 OplogWriter가 먼저 자기 oplog에 쓰고, OplogApplier가 배치로 나눠 병렬로 컬렉션에 적용합니다."
+   },
+   {
+    "id": "report",
+    "label": "위치 보고",
+    "focus": [
+     "writer",
+     "applier",
+     "reporter",
+     "commit"
+    ],
+    "note": "lastWritten, lastDurable, lastApplied를 replSetUpdatePosition으로 sync source에 보고하고, primary는 과반의 위치로 commit point를 올립니다."
+   }
+  ]
+ },
+ "components": [
+  {
+   "id": "client",
+   "type": "frontend",
+   "label": "클라이언트 쓰기",
+   "sublabel": "insert, update, delete",
+   "pos": [
+    50,
+    100
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "coll",
+   "type": "database",
+   "label": "컬렉션, 인덱스",
+   "sublabel": "도큐먼트 변경",
+   "pos": [
+    50,
+    290
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "opobs",
+   "type": "backend",
+   "label": "OpObserver",
+   "sublabel": "logOp, 같은 WUOW",
+   "pos": [
+    340,
+    100
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/repl/oplog.cpp",
+     "line": 525,
+     "label": "logOp"
+    }
+   ]
+  },
+  {
+   "id": "oplogp",
+   "type": "database",
+   "label": "local.oplog.rs",
+   "sublabel": "capped, key = ts",
+   "pos": [
+    340,
+    290
+   ],
+   "size": [
+    210,
+    72
+   ]
+  },
+  {
+   "id": "commit",
+   "type": "security",
+   "label": "commit point",
+   "sublabel": "과반의 written/durable",
+   "pos": [
+    340,
+    480
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/repl/topology_coordinator.cpp",
+     "line": 3040,
+     "label": "updateLastCommittedOpTimeAndWallTime"
+    }
+   ]
+  },
+  {
+   "id": "fetcher",
+   "type": "backend",
+   "label": "OplogFetcher",
+   "sublabel": "tailable, exhaust",
+   "pos": [
+    690,
+    290
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/repl/oplog_fetcher.cpp",
+     "line": 641,
+     "label": "_makeFindCmdRequest"
+    }
+   ]
+  },
+  {
+   "id": "reporter",
+   "type": "backend",
+   "label": "Reporter",
+   "sublabel": "replSetUpdatePosition",
+   "pos": [
+    690,
+    480
+   ],
+   "size": [
+    210,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/repl/topology_coordinator.cpp",
+     "line": 2272,
+     "label": "prepareReplSetUpdatePositionCommand"
+    }
+   ]
+  },
+  {
+   "id": "colls",
+   "type": "database",
+   "label": "컬렉션, 인덱스",
+   "sublabel": "secondary",
+   "pos": [
+    690,
+    100
+   ],
+   "size": [
+    210,
+    72
+   ]
+  },
+  {
+   "id": "writer",
+   "type": "backend",
+   "label": "OplogWriter",
+   "sublabel": "lastWritten, 저널 flush",
+   "pos": [
+    990,
+    290
+   ],
+   "size": [
+    200,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/repl/oplog_writer_impl.cpp",
+     "line": 174,
+     "label": "OplogWriterImpl::_run"
+    }
+   ]
+  },
+  {
+   "id": "oplogs",
+   "type": "database",
+   "label": "local.oplog.rs",
+   "sublabel": "secondary",
+   "pos": [
+    990,
+    480
+   ],
+   "size": [
+    200,
+    72
+   ]
+  },
+  {
+   "id": "applier",
+   "type": "backend",
+   "label": "OplogApplier",
+   "sublabel": "배치, writer thread",
+   "pos": [
+    990,
+    100
+   ],
+   "size": [
+    200,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/repl/oplog_applier_impl.cpp",
+     "line": 627,
+     "label": "_applyOplogBatch"
+    }
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "primary",
+   "wraps": [
+    "client",
+    "coll",
+    "opobs",
+    "oplogp",
+    "commit"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "secondary",
+   "wraps": [
+    "fetcher",
+    "reporter",
+    "colls",
+    "writer",
+    "oplogs",
+    "applier"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "c1",
+   "from": "client",
+   "to": "coll",
+   "label": "쓰기",
+   "labelAt": [
+    150,
+    231
+   ]
+  },
+  {
+   "id": "c2",
+   "from": "coll",
+   "to": "opobs",
+   "label": "onInserts, onUpdate"
+  },
+  {
+   "id": "c3",
+   "from": "opobs",
+   "to": "oplogp",
+   "label": "같은 ts로 기록",
+   "labelAt": [
+    445,
+    231
+   ]
+  },
+  {
+   "id": "c4",
+   "from": "oplogp",
+   "to": "fetcher",
+   "label": "ts ≥ lastFetched",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c5",
+   "from": "fetcher",
+   "to": "writer",
+   "label": "write buffer",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c6",
+   "from": "writer",
+   "to": "oplogs",
+   "label": "oplog 기록",
+   "labelAt": [
+    1090,
+    421
+   ]
+  },
+  {
+   "id": "c7",
+   "from": "writer",
+   "to": "applier",
+   "label": "apply buffer",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c8",
+   "from": "applier",
+   "to": "colls",
+   "label": "ns, _id로 분배해 적용",
+   "variant": "emphasis",
+   "labelAt": [
+    945,
+    192
+   ]
+  },
+  {
+   "id": "c9",
+   "from": "writer",
+   "to": "reporter",
+   "label": "lastWritten, lastDurable",
+   "variant": "dashed"
+  },
+  {
+   "id": "c10",
+   "from": "reporter",
+   "to": "commit",
+   "label": "위치 보고",
+   "variant": "dashed"
+  }
+ ]
+}

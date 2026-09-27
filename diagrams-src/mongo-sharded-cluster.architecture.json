@@ -1,0 +1,214 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "샤드 클러스터의 구성 요소",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1240,
+   640
+  ],
+  "repository": {
+   "url": "https://github.com/mongodb/mongo",
+   "provider": "github",
+   "link_mode": "web",
+   "revision": "8f1f561d203201f9f19e832374813f46cfe0dc29"
+  },
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "라우터"
+    },
+    "database": {
+     "label": "데이터, 메타데이터"
+    },
+    "security": {
+     "label": "balancer"
+    },
+    "external": {
+     "label": "클라이언트"
+    }
+   }
+  }
+ },
+ "components": [
+  {
+   "id": "app",
+   "type": "external",
+   "label": "애플리케이션",
+   "sublabel": "드라이버",
+   "pos": [
+    50,
+    300
+   ],
+   "size": [
+    190,
+    72
+   ]
+  },
+  {
+   "id": "mongos",
+   "type": "backend",
+   "label": "mongos",
+   "sublabel": "CatalogCache (routing table)",
+   "pos": [
+    330,
+    300
+   ],
+   "size": [
+    230,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/s/catalog_cache.cpp",
+     "line": 479,
+     "label": "CatalogCache::getCollectionRoutingInfo"
+    }
+   ]
+  },
+  {
+   "id": "cfg",
+   "type": "database",
+   "label": "config server",
+   "sublabel": "config.collections, config.chunks",
+   "pos": [
+    680,
+    110
+   ],
+   "size": [
+    220,
+    72
+   ]
+  },
+  {
+   "id": "balancer",
+   "type": "security",
+   "label": "balancer",
+   "sublabel": "config server primary",
+   "pos": [
+    1020,
+    110
+   ],
+   "size": [
+    190,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/s/balancer/balancer.cpp",
+     "line": 1000,
+     "label": "Balancer::_mainThread"
+    }
+   ]
+  },
+  {
+   "id": "sh1",
+   "type": "database",
+   "label": "샤드 sh1",
+   "sublabel": "레플리카셋, 자기 chunk의 도큐먼트",
+   "pos": [
+    680,
+    480
+   ],
+   "size": [
+    220,
+    72
+   ]
+  },
+  {
+   "id": "sh2",
+   "type": "database",
+   "label": "샤드 sh2",
+   "sublabel": "레플리카셋, 자기 chunk의 도큐먼트",
+   "pos": [
+    1020,
+    480
+   ],
+   "size": [
+    190,
+    72
+   ],
+   "sources": [
+    {
+     "path": "src/mongo/db/s/migration_source_manager.cpp",
+     "line": 402,
+     "label": "MigrationSourceManager::startClone"
+    }
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "config server 레플리카셋 (CSRS)",
+   "wraps": [
+    "cfg",
+    "balancer"
+   ]
+  },
+  {
+   "kind": "region",
+   "label": "샤드",
+   "wraps": [
+    "sh1",
+    "sh2"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "c1",
+   "from": "app",
+   "to": "mongos",
+   "label": "쿼리",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c2",
+   "from": "mongos",
+   "to": "cfg",
+   "label": "routing table 읽기",
+   "variant": "dashed"
+  },
+  {
+   "id": "c3",
+   "from": "mongos",
+   "to": "sh1",
+   "label": "shard version 붙여 전달",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c4",
+   "from": "balancer",
+   "to": "cfg",
+   "label": "분포 확인",
+   "variant": "dashed"
+  },
+  {
+   "id": "c5",
+   "from": "balancer",
+   "to": "sh2",
+   "label": "moveRange 지시",
+   "labelAt": [
+    1115,
+    330
+   ]
+  },
+  {
+   "id": "c6",
+   "from": "sh2",
+   "to": "sh1",
+   "label": "chunk migration",
+   "variant": "emphasis"
+  },
+  {
+   "id": "c7",
+   "from": "sh1",
+   "to": "cfg",
+   "label": "commit",
+   "variant": "dashed"
+  }
+ ]
+}

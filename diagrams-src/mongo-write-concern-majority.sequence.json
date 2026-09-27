@@ -1,0 +1,189 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "w:\"majority\" 쓰기 한 번이 기다리는 것",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1085,
+   640
+  ],
+  "column_fit": "spread",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "emphasis": {
+     "label": "쓰기 경로"
+    },
+    "default": {
+     "label": "복제"
+    },
+    "return": {
+     "label": "보고, 응답"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "local",
+    "label": "로컬 쓰기",
+    "focus": [
+     "client",
+     "cmd",
+     "wt"
+    ],
+    "note": "도큐먼트와 oplog 엔트리를 한 WiredTiger 트랜잭션으로 커밋합니다. 이 순간 primary에서는 이미 쓰기가 끝났고, readConcern local로 읽으면 보입니다."
+   },
+   {
+    "id": "wait",
+    "label": "majority 대기",
+    "focus": [
+     "cmd",
+     "replcoord",
+     "sec1",
+     "sec2"
+    ],
+    "note": "명령은 끝났지만 응답을 보내기 전에 ReplicationCoordinator에 waiter를 걸고, secondary의 위치 보고로 commit point가 그 optime을 넘을 때까지 기다립니다."
+   },
+   {
+    "id": "reply",
+    "label": "응답",
+    "focus": [
+     "replcoord",
+     "cmd",
+     "client"
+    ],
+    "note": "committed snapshot이 optime 이상이 되면 waiter를 깨워 ok를 돌려줍니다. wtimeout이 먼저 지나면 쓰기는 그대로 둔 채 writeConcernError만 붙여 돌려줍니다."
+   }
+  ]
+ },
+ "participants": [
+  {
+   "id": "client",
+   "type": "external",
+   "label": "클라이언트",
+   "sublabel": "드라이버"
+  },
+  {
+   "id": "cmd",
+   "type": "backend",
+   "label": "insert 명령",
+   "sublabel": "primary"
+  },
+  {
+   "id": "wt",
+   "type": "database",
+   "label": "컬렉션 + oplog",
+   "sublabel": "WiredTiger"
+  },
+  {
+   "id": "replcoord",
+   "type": "security",
+   "label": "ReplCoordinator",
+   "sublabel": "commit point"
+  },
+  {
+   "id": "sec1",
+   "type": "backend",
+   "label": "secondary 1",
+   "sublabel": "fetcher, applier"
+  },
+  {
+   "id": "sec2",
+   "type": "backend",
+   "label": "secondary 2",
+   "sublabel": "fetcher, applier"
+  }
+ ],
+ "segments": [
+  {
+   "from": 160,
+   "to": 240,
+   "label": "로컬"
+  },
+  {
+   "from": 246,
+   "to": 440,
+   "label": "복제 대기"
+  },
+  {
+   "from": 446,
+   "to": 520,
+   "label": "응답"
+  }
+ ],
+ "messages": [
+  {
+   "id": "m1",
+   "from": "client",
+   "to": "cmd",
+   "y": 172,
+   "label": "insert, w: majority",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m2",
+   "from": "cmd",
+   "to": "wt",
+   "y": 204,
+   "label": "도큐먼트 + oplog 엔트리 (optime T)",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m3",
+   "from": "cmd",
+   "to": "replcoord",
+   "y": 260,
+   "label": "awaitReplication(T)",
+   "variant": "emphasis"
+  },
+  {
+   "id": "m4",
+   "from": "wt",
+   "to": "sec1",
+   "y": 296,
+   "label": "oplog getMore",
+   "variant": "default"
+  },
+  {
+   "id": "m5",
+   "from": "wt",
+   "to": "sec2",
+   "y": 324,
+   "label": "oplog getMore",
+   "variant": "default"
+  },
+  {
+   "id": "m6",
+   "from": "sec1",
+   "to": "replcoord",
+   "y": 368,
+   "label": "위치 보고 (written, durable)",
+   "variant": "return"
+  },
+  {
+   "id": "m7",
+   "from": "sec2",
+   "to": "replcoord",
+   "y": 404,
+   "label": "위치 보고",
+   "variant": "return"
+  },
+  {
+   "id": "m8",
+   "from": "replcoord",
+   "to": "cmd",
+   "y": 460,
+   "label": "과반이 T 도달, waiter 깨움",
+   "variant": "return"
+  },
+  {
+   "id": "m9",
+   "from": "cmd",
+   "to": "client",
+   "y": 496,
+   "label": "ok (또는 writeConcernError)",
+   "variant": "return"
+  }
+ ]
+}

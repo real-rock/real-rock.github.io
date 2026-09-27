@@ -1,0 +1,196 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "옛 primary가 되돌리는 순서 (Recover To Timestamp)",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "security": {
+     "label": "감지, 상태 전환"
+    },
+    "backend": {
+     "label": "RollbackImpl 단계"
+    },
+    "database": {
+     "label": "디스크에 반영"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "detect",
+    "label": "감지",
+    "focus": [
+     "diverge",
+     "rbstate",
+     "common"
+    ],
+    "note": "oplog fetcher가 sync source의 oplog와 갈라진 것을 알아채면 ROLLBACK 상태로 바꾸고, 두 oplog가 마지막으로 같았던 공통 지점을 찾습니다."
+   },
+   {
+    "id": "undo",
+    "label": "되돌리기",
+    "focus": [
+     "files",
+     "rts"
+    ],
+    "note": "지워질 도큐먼트를 rollback 파일에 남긴 뒤, WiredTiger를 stable timestamp 시점으로 되돌립니다. stable timestamp는 majority commit point를 넘지 않습니다."
+   },
+   {
+    "id": "redo",
+    "label": "맞추기",
+    "focus": [
+     "truncate",
+     "replay",
+     "secondary"
+    ],
+    "note": "공통 지점 뒤의 oplog를 잘라 내고, stable timestamp부터 공통 지점까지의 oplog를 다시 적용한 뒤 SECONDARY로 돌아가 새 primary를 따라갑니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "repl",
+   "label": "복제",
+   "variant": "exception"
+  },
+  {
+   "id": "rb",
+   "label": "RollbackImpl"
+  },
+  {
+   "id": "disk",
+   "label": "스토리지"
+  }
+ ],
+ "mainPath": [
+  "diverge",
+  "rbstate",
+  "common",
+  "files",
+  "rts",
+  "truncate",
+  "replay",
+  "secondary"
+ ],
+ "nodes": [
+  {
+   "id": "diverge",
+   "lane": "repl",
+   "col": 0,
+   "type": "security",
+   "label": "oplog 갈라짐",
+   "sublabel": "OplogStartMissing",
+   "width": 150
+  },
+  {
+   "id": "rbstate",
+   "lane": "rb",
+   "col": 1,
+   "type": "security",
+   "label": "ROLLBACK 상태",
+   "sublabel": "읽기, 쓰기 중단",
+   "width": 150
+  },
+  {
+   "id": "common",
+   "lane": "rb",
+   "col": 2,
+   "type": "backend",
+   "label": "공통 지점 찾기",
+   "sublabel": "_findCommonPoint",
+   "width": 160
+  },
+  {
+   "id": "files",
+   "lane": "disk",
+   "col": 2,
+   "type": "database",
+   "label": "rollback 파일",
+   "sublabel": "removed.*.bson",
+   "width": 150
+  },
+  {
+   "id": "rts",
+   "lane": "disk",
+   "col": 3,
+   "type": "database",
+   "label": "stable timestamp로",
+   "sublabel": "rollback_to_stable",
+   "width": 160
+  },
+  {
+   "id": "truncate",
+   "lane": "rb",
+   "col": 4,
+   "type": "backend",
+   "label": "oplog 잘라 냄",
+   "sublabel": "공통 지점 뒤",
+   "width": 150
+  },
+  {
+   "id": "replay",
+   "lane": "rb",
+   "col": 5,
+   "type": "backend",
+   "label": "oplog 재적용",
+   "sublabel": "recoverFromOplog",
+   "width": 160
+  },
+  {
+   "id": "secondary",
+   "lane": "repl",
+   "col": 5,
+   "type": "security",
+   "label": "SECONDARY",
+   "sublabel": "새 primary 따라감",
+   "width": 150
+  }
+ ],
+ "edges": [
+  {
+   "id": "e0",
+   "from": "diverge",
+   "to": "rbstate",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e1",
+   "from": "rbstate",
+   "to": "common",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "common",
+   "to": "files",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "files",
+   "to": "rts",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "rts",
+   "to": "truncate",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "truncate",
+   "to": "replay",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e6",
+   "from": "replay",
+   "to": "secondary",
+   "variant": "emphasis"
+  }
+ ]
+}

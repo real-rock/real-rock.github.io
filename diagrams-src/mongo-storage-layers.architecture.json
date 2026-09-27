@@ -1,0 +1,354 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "mongod 안의 WiredTiger",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1120,
+      640
+    ],
+    "repository": {
+      "url": "https://github.com/mongodb/mongo",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "8f1f561d203201f9f19e832374813f46cfe0dc29"
+    },
+    "views": [
+      {
+        "id": "api",
+        "label": "스토리지 엔진 API",
+        "focus": [
+          "query",
+          "api",
+          "wtkv",
+          "cursor"
+        ],
+        "note": "쿼리 계층은 RecordStore와 SortedDataInterface만 알고, WiredTiger 구현이 이를 WT_CURSOR 호출로 바꿉니다."
+      },
+      {
+        "id": "cache",
+        "label": "캐시와 파일",
+        "focus": [
+          "cursor",
+          "cache",
+          "evict",
+          "block",
+          "files"
+        ],
+        "note": "커서는 캐시의 B-tree 페이지를 읽고 고칩니다. 파일에는 reconciliation과 압축을 거친 블록만 갑니다."
+      },
+      {
+        "id": "journal",
+        "label": "커밋과 저널",
+        "focus": [
+          "cursor",
+          "journal"
+        ],
+        "note": "트랜잭션 커밋은 변경을 로그 레코드로 journal 디렉터리에 씁니다. 2편에서 다룹니다."
+      }
+    ],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "external": {
+          "label": "밖의 것(클라이언트, 파일)"
+        },
+        "backend": {
+          "label": "코드 계층, 스레드"
+        },
+        "database": {
+          "label": "메모리"
+        }
+      }
+    }
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "클라이언트",
+      "sublabel": "mongosh, 드라이버",
+      "pos": [
+        40,
+        110
+      ],
+      "size": [
+        170,
+        70
+      ]
+    },
+    {
+      "id": "query",
+      "type": "backend",
+      "label": "쿼리 계층",
+      "sublabel": "CRUD, 쿼리 실행, 카탈로그",
+      "pos": [
+        300,
+        110
+      ],
+      "size": [
+        190,
+        70
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "스토리지 엔진 API",
+      "sublabel": "RecordStore, SortedDataInterface",
+      "pos": [
+        580,
+        110
+      ],
+      "size": [
+        220,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/mongo/db/storage/kv/kv_engine.h",
+          "line": 56,
+          "label": "KVEngine"
+        },
+        {
+          "path": "src/mongo/db/storage/record_store.h",
+          "line": 315,
+          "label": "RecordStore"
+        },
+        {
+          "path": "src/mongo/db/storage/sorted_data_interface.h",
+          "line": 56,
+          "label": "SortedDataInterface"
+        }
+      ]
+    },
+    {
+      "id": "wtkv",
+      "type": "backend",
+      "label": "WiredTigerKVEngine",
+      "sublabel": "WiredTigerRecordStore, WiredTigerIndex",
+      "pos": [
+        870,
+        110
+      ],
+      "size": [
+        220,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/mongo/db/storage/wiredtiger/wiredtiger_kv_engine.h",
+          "line": 204,
+          "label": "WiredTigerKVEngine"
+        },
+        {
+          "path": "src/mongo/db/storage/wiredtiger/wiredtiger_record_store.cpp",
+          "line": 1251,
+          "label": "insert: setKey, set_value"
+        }
+      ]
+    },
+    {
+      "id": "cursor",
+      "type": "backend",
+      "label": "WT_SESSION, WT_CURSOR",
+      "sublabel": "WiredTiger C API",
+      "pos": [
+        870,
+        300
+      ],
+      "size": [
+        220,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.cpp",
+          "line": 498,
+          "label": "_txnOpen"
+        }
+      ]
+    },
+    {
+      "id": "cache",
+      "type": "database",
+      "label": "WiredTiger 캐시",
+      "sublabel": "B-tree 페이지, 압축 풀린 상태",
+      "tag": "cache_size",
+      "pos": [
+        580,
+        300
+      ],
+      "size": [
+        220,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/third_party/wiredtiger/src/btree/bt_read.c",
+          "line": 92,
+          "label": "__page_read"
+        }
+      ]
+    },
+    {
+      "id": "evict",
+      "type": "backend",
+      "label": "eviction 스레드",
+      "sublabel": "threads_min=4, threads_max=4",
+      "pos": [
+        580,
+        490
+      ],
+      "size": [
+        220,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/third_party/wiredtiger/src/evict/evict_lru.c",
+          "line": 403,
+          "label": "__evict_server"
+        },
+        {
+          "path": "src/third_party/wiredtiger/src/include/cache_inline.h",
+          "line": 597,
+          "label": "__wt_cache_eviction_check"
+        }
+      ]
+    },
+    {
+      "id": "block",
+      "type": "backend",
+      "label": "block manager",
+      "sublabel": "압축, 체크섬, 블록 할당",
+      "pos": [
+        300,
+        300
+      ],
+      "size": [
+        190,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/third_party/wiredtiger/src/reconcile/rec_write.c",
+          "line": 30,
+          "label": "__wt_reconcile"
+        },
+        {
+          "path": "src/third_party/wiredtiger/src/block/block_write.c",
+          "line": 194,
+          "label": "__wt_block_write"
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "type": "external",
+      "label": "dbPath의 *.wt",
+      "sublabel": "컬렉션, 인덱스마다 파일 하나",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        170,
+        70
+      ]
+    },
+    {
+      "id": "journal",
+      "type": "external",
+      "label": "journal/",
+      "sublabel": "WiredTigerLog.*",
+      "pos": [
+        870,
+        490
+      ],
+      "size": [
+        220,
+        70
+      ],
+      "sources": [
+        {
+          "path": "src/third_party/wiredtiger/src/txn/txn_log.c",
+          "line": 308,
+          "label": "__wt_txn_log_commit"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "client-query",
+      "from": "client",
+      "to": "query",
+      "label": "명령"
+    },
+    {
+      "id": "query-api",
+      "from": "query",
+      "to": "api"
+    },
+    {
+      "id": "api-wtkv",
+      "from": "api",
+      "to": "wtkv",
+      "label": "구현"
+    },
+    {
+      "id": "wtkv-cursor",
+      "from": "wtkv",
+      "to": "cursor",
+      "label": "key, value",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1030,
+        240
+      ]
+    },
+    {
+      "id": "cursor-cache",
+      "from": "cursor",
+      "to": "cache",
+      "label": "페이지 탐색",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cache-block",
+      "from": "cache",
+      "to": "block",
+      "label": "쓰기"
+    },
+    {
+      "id": "block-files",
+      "from": "block",
+      "to": "files"
+    },
+    {
+      "id": "evict-cache",
+      "from": "evict",
+      "to": "cache",
+      "label": "내보내기",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "cursor-journal",
+      "from": "cursor",
+      "to": "journal",
+      "label": "커밋 로그",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1030,
+        430
+      ]
+    }
+  ]
+}

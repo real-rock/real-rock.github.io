@@ -1,0 +1,206 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "읽기가 update chain에서 버전 하나를 고르는 과정",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "backend": {
+     "label": "체인 따라가기, 결과"
+    },
+    "security": {
+     "label": "트랜잭션 ID 검사"
+    },
+    "messagebus": {
+     "label": "timestamp 검사"
+    },
+    "database": {
+     "label": "메모리에 없을 때"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "id",
+    "label": "트랜잭션 ID",
+    "focus": [
+     "upd",
+     "idcheck",
+     "snapcheck",
+     "next"
+    ],
+    "note": "abort된 버전은 건너뛰고, 내 버전은 바로 보입니다. 남은 것은 스냅샷(snap_min, snap_max, 동시 트랜잭션 목록)으로 판단합니다."
+   },
+   {
+    "id": "ts",
+    "label": "timestamp",
+    "focus": [
+     "snapcheck",
+     "tscheck",
+     "shown",
+     "next"
+    ],
+    "note": "read timestamp가 있는 트랜잭션은 start_ts가 read timestamp 이하인 버전만 봅니다."
+   },
+   {
+    "id": "disk",
+    "label": "체인 끝",
+    "focus": [
+     "next",
+     "ondisk"
+    ],
+    "note": "체인에서 못 찾으면 디스크 이미지의 값을, 그것도 안 보이면 history store를 찾습니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "chain",
+   "label": "update chain"
+  },
+  {
+   "id": "idl",
+   "label": "트랜잭션 ID"
+  },
+  {
+   "id": "tsl",
+   "label": "timestamp"
+  },
+  {
+   "id": "res",
+   "label": "다음 후보",
+   "variant": "exception"
+  }
+ ],
+ "mainPath": [
+  "upd",
+  "idcheck",
+  "snapcheck",
+  "tscheck",
+  "shown"
+ ],
+ "nodes": [
+  {
+   "id": "upd",
+   "lane": "chain",
+   "col": 0,
+   "type": "backend",
+   "label": "WT_UPDATE 하나",
+   "sublabel": "새 버전부터",
+   "width": 160
+  },
+  {
+   "id": "idcheck",
+   "lane": "idl",
+   "col": 1,
+   "type": "security",
+   "label": "abort? 내 것?",
+   "sublabel": "abort 아니오, 내 것 예",
+   "width": 180
+  },
+  {
+   "id": "snapcheck",
+   "lane": "idl",
+   "col": 2,
+   "type": "security",
+   "label": "스냅샷에서 보이나",
+   "sublabel": "snap_min, snap_max, 목록",
+   "width": 190
+  },
+  {
+   "id": "tscheck",
+   "lane": "tsl",
+   "col": 3,
+   "type": "messagebus",
+   "label": "start_ts ≤ read_ts?",
+   "sublabel": "read timestamp가 있을 때",
+   "width": 190
+  },
+  {
+   "id": "shown",
+   "lane": "tsl",
+   "col": 4,
+   "type": "backend",
+   "label": "이 버전을 읽음",
+   "sublabel": "보이는 첫 버전",
+   "width": 160
+  },
+  {
+   "id": "next",
+   "lane": "res",
+   "col": 3,
+   "type": "backend",
+   "label": "next로 이동",
+   "sublabel": "한 단계 옛 버전",
+   "width": 160
+  },
+  {
+   "id": "ondisk",
+   "lane": "res",
+   "col": 5,
+   "type": "database",
+   "label": "디스크 값, 그다음 HS",
+   "sublabel": "체인이 끝나면",
+   "width": 190
+  }
+ ],
+ "edges": [
+  {
+   "id": "e1",
+   "from": "upd",
+   "to": "idcheck",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "idcheck",
+   "to": "snapcheck",
+   "label": "남의 것",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "snapcheck",
+   "to": "tscheck",
+   "label": "예",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "tscheck",
+   "to": "shown",
+   "label": "예",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "idcheck",
+   "to": "next",
+   "label": "abort",
+   "role": "branch"
+  },
+  {
+   "id": "e6",
+   "from": "snapcheck",
+   "to": "next",
+   "label": "아니오",
+   "role": "branch"
+  },
+  {
+   "id": "e7",
+   "from": "tscheck",
+   "to": "next",
+   "label": "아니오",
+   "role": "branch"
+  },
+  {
+   "id": "e8",
+   "from": "next",
+   "to": "ondisk",
+   "label": "체인 끝",
+   "role": "branch"
+  }
+ ]
+}

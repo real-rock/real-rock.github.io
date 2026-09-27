@@ -1,0 +1,182 @@
+{
+ "schema_version": 2,
+ "diagram_type": "workflow",
+ "meta": {
+  "title": "chunk migration (moveRange) 한 번의 단계",
+  "quality_profile": "showcase",
+  "legend": {
+   "mode": "auto",
+   "entries": {
+    "security": {
+     "label": "요청, 쓰기 차단"
+    },
+    "backend": {
+     "label": "원본 샤드 작업"
+    },
+    "database": {
+     "label": "받는 샤드 작업"
+    },
+    "messagebus": {
+     "label": "메타데이터 변경"
+    }
+   }
+  },
+  "views": [
+   {
+    "id": "copy",
+    "label": "복제",
+    "focus": [
+     "req",
+     "start",
+     "clone",
+     "catch"
+    ],
+    "note": "원본 샤드가 옮길 범위를 정하고, 받는 샤드가 도큐먼트를 끌어가 복제합니다. 그동안 원본은 쓰기를 계속 받고, 그 변경분도 따라잡습니다."
+   },
+   {
+    "id": "switch",
+    "label": "전환",
+    "focus": [
+     "crit",
+     "commit"
+    ],
+    "note": "원본이 그 범위의 쓰기를 잠깐 막고 마지막 변경분을 넘긴 뒤, config server의 chunk 소유 샤드와 버전을 바꿉니다."
+   },
+   {
+    "id": "cleanup",
+    "label": "정리",
+    "focus": [
+     "clean"
+    ],
+    "note": "원본에 남은 도큐먼트는 orphan입니다. range deleter가 orphanCleanupDelaySecs(기본 900초) 뒤에 지웁니다."
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "id": "cfg",
+   "label": "config server",
+   "variant": "exception"
+  },
+  {
+   "id": "donor",
+   "label": "원본 샤드"
+  },
+  {
+   "id": "recip",
+   "label": "받는 샤드"
+  }
+ ],
+ "mainPath": [
+  "req",
+  "start",
+  "clone",
+  "catch",
+  "crit",
+  "commit",
+  "clean"
+ ],
+ "nodes": [
+  {
+   "id": "req",
+   "lane": "cfg",
+   "col": 0,
+   "type": "security",
+   "label": "moveRange 요청",
+   "sublabel": "balancer 또는 사용자",
+   "width": 150
+  },
+  {
+   "id": "start",
+   "lane": "donor",
+   "col": 1,
+   "type": "backend",
+   "label": "범위 확정, 복제 시작",
+   "sublabel": "startClone",
+   "width": 160
+  },
+  {
+   "id": "clone",
+   "lane": "recip",
+   "col": 2,
+   "type": "database",
+   "label": "도큐먼트 복제",
+   "sublabel": "_migrateClone",
+   "width": 150
+  },
+  {
+   "id": "catch",
+   "lane": "recip",
+   "col": 3,
+   "type": "database",
+   "label": "변경분 따라잡기",
+   "sublabel": "_transferMods",
+   "width": 150
+  },
+  {
+   "id": "crit",
+   "lane": "donor",
+   "col": 4,
+   "type": "security",
+   "label": "critical section",
+   "sublabel": "쓰기 막고 마지막 변경분",
+   "width": 170
+  },
+  {
+   "id": "commit",
+   "lane": "cfg",
+   "col": 4,
+   "type": "messagebus",
+   "label": "config에 commit",
+   "sublabel": "major version + 1",
+   "width": 160
+  },
+  {
+   "id": "clean",
+   "lane": "donor",
+   "col": 5,
+   "type": "backend",
+   "label": "range deleter",
+   "sublabel": "원본의 orphan 삭제",
+   "width": 150
+  }
+ ],
+ "edges": [
+  {
+   "id": "e0",
+   "from": "req",
+   "to": "start",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e1",
+   "from": "start",
+   "to": "clone",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e2",
+   "from": "clone",
+   "to": "catch",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e3",
+   "from": "catch",
+   "to": "crit",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e4",
+   "from": "crit",
+   "to": "commit",
+   "variant": "emphasis"
+  },
+  {
+   "id": "e5",
+   "from": "commit",
+   "to": "clean",
+   "variant": "emphasis"
+  }
+ ]
+}
