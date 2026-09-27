@@ -1,0 +1,839 @@
+
+######## 0. 실습 환경: 3노드 레플리카셋
+
+$ docker run -d --init --name m05-1 --hostname m05-1 --network m05-net  mongo-internals:rocky9-8.0.32 sleep infinity
+b5e33c138138bb30c2832e371a1fb7990376a41c1b82c0f8626c829c42fb1d6d
+[exit=0]
+
+$ docker run -d --init --name m05-2 --hostname m05-2 --network m05-net  mongo-internals:rocky9-8.0.32 sleep infinity
+9bef51878aea3411a22704d52cf994426f2f1e31375bcc4eb7bbe24c16f6ab96
+[exit=0]
+
+$ docker run -d --init --name m05-3 --hostname m05-3 --network m05-net  mongo-internals:rocky9-8.0.32 sleep infinity
+b1bae0ff0eda7103fb3aa0ac77bbc984005085e78a6821e42246117dec5498d9
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+2.12.0
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 33
+[exit=0]
+
+# (m05-2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m05-3)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+test> rs.initiate({_id: "rs0", members: [{_id: 0, host: "m05-1:27017", priority: 2}, {_id: 1, host: "m05-2:27017"}, {_id: 2, host: "m05-3:27017"}]})
+{
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790515981, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790515981, i: 1 })
+}
+
+rs0 [direct: primary] test> rs.status().members.map(m => ({name: m.name, stateStr: m.stateStr, syncSourceHost: m.syncSourceHost}))
+[
+  { name: 'm05-1:27017', stateStr: 'PRIMARY', syncSourceHost: '' },
+  { name: 'm05-2:27017', stateStr: 'SECONDARY', syncSourceHost: '' },
+  { name: 'm05-3:27017', stateStr: 'SECONDARY', syncSourceHost: '' }
+]
+
+# (m05-2)
+$ jq -c 'select(.msg|test("^Initial sync (done|status)|Initial Sync Attempt|Sync source candidate chosen|Starting replication (fetcher|writer|applier)"))|{msg,attr:(.attr|{syncSource,durationMillis}|with_entries(select(.value!=null)))}' /data/mongod.log
+{"msg":"Sync source candidate chosen","attr":{"syncSource":"m05-3:27017"}}
+{"msg":"Initial sync status and statistics","attr":{}}
+{"msg":"Initial sync done","attr":{}}
+{"msg":"Starting replication fetcher thread","attr":{}}
+{"msg":"Starting replication writer thread","attr":{}}
+{"msg":"Starting replication applier thread","attr":{}}
+{"msg":"Sync source candidate chosen","attr":{"syncSource":"m05-1:27017"}}
+[exit=0]
+
+
+######## 1. oplog의 기본 크기
+
+$ jq -c 'select(.msg|test("Creating replication oplog|Oplog size is being rounded"))|{msg,attr}' /data/mongod.log
+$ df -B1 --output=avail /data/db
+{"msg":"Creating replication oplog","attr":{"oplogSizeMB":32730}}
+       Avail
+686415142912
+[exit=0]
+
+rs0 [direct: primary] test> rs.printReplicationInfo()
+actual oplog size
+'32730.94140625 MB'
+---
+configured oplog size
+'32730.94140625 MB'
+---
+log length start to end
+'10 secs (0 hrs)'
+---
+oplog first event time
+'Sun Sep 27 2026 13:33:01 GMT+0000 (Coordinated Universal Time)'
+---
+oplog last event time
+'Sun Sep 27 2026 13:33:11 GMT+0000 (Coordinated Universal Time)'
+---
+now
+'Sun Sep 27 2026 13:33:13 GMT+0000 (Coordinated Universal Time)'
+rs0 [direct: primary] test> db.getSiblingDB("local").getCollectionInfos({name: "oplog.rs"})[0].options
+{ capped: true, size: Long('34320879616'), autoIndexId: false }
+rs0 [direct: primary] test> db.getSiblingDB("local").oplog.rs.stats().wiredTiger.creationString.match(/key_format=\w+|oplogKeyExtractionVersion=\d/g)
+[ 'oplogKeyExtractionVersion=1', 'key_format=q' ]
+rs0 [direct: primary] test> db.adminCommand({replSetResizeOplog: 1, size: 100})
+MongoServerError[BadValue]: BSON field 'size' value must be >= 990, actual value '100'
+
+
+######## 2. insert, update, delete의 oplog 엔트리
+
+rs0 [direct: primary] test> db.acct.insertOne({_id: 1, owner: "kim", balance: 100, tags: ["new"]})
+{ acknowledged: true, insertedId: 1 }
+rs0 [direct: primary] test> db.acct.updateOne({_id: 1}, {$inc: {balance: 10}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> db.acct.updateOne({_id: 1}, {$push: {tags: "vip"}, $set: {owner: "lee"}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> db.acct.deleteOne({_id: 1})
+{ acknowledged: true, deletedCount: 1 }
+rs0 [direct: primary] test> var oplog = db.getSiblingDB("local").oplog.rs
+rs0 [direct: primary] test> oplog.find({ns: /^test\./}).sort({$natural: 1}).toArray()
+[
+  {
+    op: 'c',
+    ns: 'test.$cmd',
+    ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+    o: { create: 'acct', idIndex: { v: 2, key: { _id: 1 }, name: '_id_' } },
+    ts: Timestamp({ t: 1790515993, i: 1 }),
+    t: Long('1'),
+    v: Long('2'),
+    wall: ISODate('2026-09-27T13:33:13.959Z')
+  },
+  {
+    lsid: {
+      id: UUID('b118290d-8a6a-4978-98bd-e837a248813e'),
+      uid: Binary.createFromBase64('47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=', 0)
+    },
+    txnNumber: Long('1'),
+    op: 'i',
+    ns: 'test.acct',
+    ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+    o: { _id: 1, owner: 'kim', balance: 100, tags: [ 'new' ] },
+    o2: { _id: 1 },
+    stmtId: 0,
+    ts: Timestamp({ t: 1790515993, i: 2 }),
+    t: Long('1'),
+    v: Long('2'),
+    wall: ISODate('2026-09-27T13:33:13.959Z'),
+    prevOpTime: { ts: Timestamp({ t: 0, i: 0 }), t: Long('-1') }
+  },
+  {
+    lsid: {
+      id: UUID('b118290d-8a6a-4978-98bd-e837a248813e'),
+      uid: Binary.createFromBase64('47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=', 0)
+    },
+    txnNumber: Long('2'),
+    op: 'u',
+    ns: 'test.acct',
+    ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+    o: { '$v': 2, diff: { u: { balance: 110 } } },
+    o2: { _id: 1 },
+    stmtId: 0,
+    ts: Timestamp({ t: 1790515993, i: 3 }),
+    t: Long('1'),
+    v: Long('2'),
+    wall: ISODate('2026-09-27T13:33:13.971Z'),
+    prevOpTime: { ts: Timestamp({ t: 0, i: 0 }), t: Long('-1') }
+  },
+  {
+    lsid: {
+      id: UUID('b118290d-8a6a-4978-98bd-e837a248813e'),
+      uid: Binary.createFromBase64('47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=', 0)
+    },
+    txnNumber: Long('3'),
+    op: 'u',
+    ns: 'test.acct',
+    ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+    o: {
+      '$v': 2,
+      diff: { u: { owner: 'lee' }, stags: { a: true, u1: 'vip' } }
+    },
+    o2: { _id: 1 },
+    stmtId: 0,
+    ts: Timestamp({ t: 1790515993, i: 4 }),
+    t: Long('1'),
+    v: Long('2'),
+    wall: ISODate('2026-09-27T13:33:13.981Z'),
+    prevOpTime: { ts: Timestamp({ t: 0, i: 0 }), t: Long('-1') }
+  },
+  {
+    lsid: {
+      id: UUID('b118290d-8a6a-4978-98bd-e837a248813e'),
+      uid: Binary.createFromBase64('47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=', 0)
+    },
+    txnNumber: Long('4'),
+    op: 'd',
+    ns: 'test.acct',
+    ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+    o: { _id: 1 },
+    stmtId: 0,
+    ts: Timestamp({ t: 1790515993, i: 5 }),
+    t: Long('1'),
+    v: Long('2'),
+    wall: ISODate('2026-09-27T13:33:13.990Z'),
+    prevOpTime: { ts: Timestamp({ t: 0, i: 0 }), t: Long('-1') }
+  }
+]
+
+
+######## 3. 연산자 update는 결과 값으로 기록된다: 다시 적용해도 같다
+
+rs0 [direct: primary] test> db.acct.insertOne({_id: 2, balance: 100})
+{ acknowledged: true, insertedId: 2 }
+rs0 [direct: primary] test> db.acct.updateOne({_id: 2}, {$inc: {balance: 10}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> var e = db.getSiblingDB("local").oplog.rs.find({ns: "test.acct", op: "u", "o2._id": 2}).sort({$natural: -1}).limit(1).next()
+rs0 [direct: primary] test> e.o
+{ '$v': 2, diff: { u: { balance: 110 } } }
+rs0 [direct: primary] test> db.adminCommand({applyOps: [{op: "u", ns: "test.acct", o2: {_id: 2}, o: e.o}]})
+{
+  applied: 1,
+  results: [ true ],
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790515994, i: 2 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790515994, i: 2 })
+}
+rs0 [direct: primary] test> db.adminCommand({applyOps: [{op: "u", ns: "test.acct", o2: {_id: 2}, o: e.o}]})
+{
+  applied: 1,
+  results: [ true ],
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790515994, i: 2 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790515994, i: 2 })
+}
+rs0 [direct: primary] test> db.acct.findOne({_id: 2})
+{ _id: 2, balance: 110 }
+rs0 [direct: primary] test> db.acct.updateOne({_id: 2}, {$inc: {balance: 10}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> db.acct.findOne({_id: 2})
+{ _id: 2, balance: 120 }
+
+
+######## 4. 여러 도큐먼트를 바꾸는 명령과 트랜잭션
+
+rs0 [direct: primary] test> var start = db.getSiblingDB("local").oplog.rs.find().sort({$natural: -1}).limit(1).next().ts
+rs0 [direct: primary] test> db.acct.insertMany([{_id: 11, g: 1}, {_id: 12, g: 1}, {_id: 13, g: 1}])
+{ acknowledged: true, insertedIds: { '0': 11, '1': 12, '2': 13 } }
+rs0 [direct: primary] test> db.acct.updateMany({g: 1}, {$set: {g: 2}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 3,
+  modifiedCount: 3,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> db.acct.deleteMany({g: 2})
+{ acknowledged: true, deletedCount: 3 }
+rs0 [direct: primary] test> var s = db.getMongo().startSession()
+rs0 [direct: primary] test> s.startTransaction()
+rs0 [direct: primary] test> s.getDatabase("test").acct.insertOne({_id: 21, balance: 50})
+{ acknowledged: true, insertedId: 21 }
+rs0 [direct: primary] test> s.getDatabase("test").acct.updateOne({_id: 2}, {$inc: {balance: -50}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> s.commitTransaction()
+rs0 [direct: primary] test> db.getSiblingDB("local").oplog.rs.find({$or: [{ns: "test.acct"}, {"o.applyOps.ns": "test.acct"}], ts: {$gt: start}}, {op: 1, ns: 1, o: 1, o2: 1, txnNumber: 1, stmtId: 1}).sort({$natural: 1}).toArray()
+[
+  {
+    txnNumber: Long('1'),
+    op: 'c',
+    ns: 'admin.$cmd',
+    o: {
+      applyOps: [
+        {
+          op: 'i',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { _id: 11, g: 1 },
+          o2: { _id: 11 },
+          stmtId: 0
+        },
+        {
+          op: 'i',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { _id: 12, g: 1 },
+          o2: { _id: 12 },
+          stmtId: 1
+        },
+        {
+          op: 'i',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { _id: 13, g: 1 },
+          o2: { _id: 13 },
+          stmtId: 2
+        }
+      ]
+    }
+  },
+  {
+    op: 'u',
+    ns: 'test.acct',
+    o: { '$v': 2, diff: { u: { g: 2 } } },
+    o2: { _id: 11 }
+  },
+  {
+    op: 'u',
+    ns: 'test.acct',
+    o: { '$v': 2, diff: { u: { g: 2 } } },
+    o2: { _id: 12 }
+  },
+  {
+    op: 'u',
+    ns: 'test.acct',
+    o: { '$v': 2, diff: { u: { g: 2 } } },
+    o2: { _id: 13 }
+  },
+  {
+    op: 'c',
+    ns: 'admin.$cmd',
+    o: {
+      applyOps: [
+        {
+          op: 'd',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { _id: 13 }
+        },
+        {
+          op: 'd',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { _id: 12 }
+        },
+        {
+          op: 'd',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { _id: 11 }
+        }
+      ]
+    }
+  },
+  {
+    txnNumber: Long('2'),
+    op: 'c',
+    ns: 'admin.$cmd',
+    o: {
+      applyOps: [
+        {
+          op: 'i',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { _id: 21, balance: 50 },
+          o2: { _id: 21 }
+        },
+        {
+          op: 'u',
+          ns: 'test.acct',
+          ui: UUID('d975692c-f17f-4b5c-92a5-c412735d92d7'),
+          o: { '$v': 2, diff: { u: { balance: 70 } } },
+          o2: { _id: 2 }
+        }
+      ]
+    }
+  }
+]
+
+
+######## 5. secondary의 복제 파이프라인 지표
+
+# (m05-3) mongosh 
+rs0 [direct: secondary] test> rs.status().members.map(m => ({name: m.name, stateStr: m.stateStr, syncSourceHost: m.syncSourceHost}))
+[
+  { name: 'm05-1:27017', stateStr: 'PRIMARY', syncSourceHost: '' },
+  {
+    name: 'm05-2:27017',
+    stateStr: 'SECONDARY',
+    syncSourceHost: 'm05-1:27017'
+  },
+  {
+    name: 'm05-3:27017',
+    stateStr: 'SECONDARY',
+    syncSourceHost: 'm05-1:27017'
+  }
+]
+rs0 [direct: secondary] test> var r = db.serverStatus().metrics.repl
+rs0 [direct: secondary] test> r.buffer
+{
+  write: {
+    count: Long('0'),
+    sizeBytes: Long('0'),
+    maxSizeBytes: Long('268435456')
+  },
+  apply: {
+    count: Long('0'),
+    sizeBytes: Long('0'),
+    maxSizeBytes: Long('104857600'),
+    maxCount: Long('10000')
+  }
+}
+rs0 [direct: secondary] test> r.network
+{
+  bytes: Long('7667'),
+  getmores: { num: 27, totalMillis: 2781, numEmptyBatches: Long('13') },
+  notPrimaryLegacyUnacknowledgedWrites: Long('0'),
+  notPrimaryUnacknowledgedWrites: Long('0'),
+  oplogFetcherHighestFetchedOptime: { ts: Timestamp({ t: 1790515995, i: 6 }), t: Long('1') },
+  oplogFetcherLagSeconds: Long('0'),
+  oplogGetMoresProcessed: { num: 2, totalMillis: 0 },
+  ops: Long('31'),
+  readersCreated: Long('2'),
+  replSetUpdatePosition: { num: Long('53') }
+}
+rs0 [direct: secondary] test> r.apply
+{
+  attemptsToBecomeSecondary: Long('1'),
+  batchSize: Long('29'),
+  batches: { num: 26, totalMillis: 30 },
+  ops: Long('43')
+}
+rs0 [direct: secondary] test> r.write
+{ batchSize: Long('29'), batches: { num: 13, totalMillis: 0 } }
+
+
+######## 6. 복제 지연 만들기: secondary 하나를 멈춘다
+
+# (m05-3)
+$ kill -STOP 17
+$ ps -o pid,stat,cmd -p 17
+$ date -u +%T.%3N
+    PID STAT CMD
+     17 Tl   mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0
+13:33:15.865
+[exit=0]
+
+rs0 [direct: primary] test> new Date()
+ISODate('2026-09-27T13:33:16.172Z')
+rs0 [direct: primary] test> for (let i = 0; i < 1000; i++) db.lag.insertOne({i: i, pad: "x".repeat(200)})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab91b1c6e3ef956ff05513c')
+}
+rs0 [direct: primary] test> sleep(3000)
+rs0 [direct: primary] test> db.lag.insertOne({i: "last"})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab91b1f6e3ef956ff05513d')
+}
+rs0 [direct: primary] test> rs.printSecondaryReplicationInfo()
+source: m05-2:27017
+{
+  syncedTo: 'Sun Sep 27 2026 13:33:16 GMT+0000 (Coordinated Universal Time)',
+  replLag: '3 secs (0 hrs) behind the primary '
+}
+---
+source: m05-3:27017
+{
+  syncedTo: 'Sun Sep 27 2026 13:33:15 GMT+0000 (Coordinated Universal Time)',
+  replLag: '4 secs (0 hrs) behind the primary '
+}
+rs0 [direct: primary] test> rs.status().members.map(m => ({name: m.name, optimeDate: m.optimeDate, lastAppliedWallTime: m.lastAppliedWallTime}))
+[
+  {
+    name: 'm05-1:27017',
+    optimeDate: ISODate('2026-09-27T13:33:19.000Z'),
+    lastAppliedWallTime: ISODate('2026-09-27T13:33:19.949Z')
+  },
+  {
+    name: 'm05-2:27017',
+    optimeDate: ISODate('2026-09-27T13:33:16.000Z'),
+    lastAppliedWallTime: ISODate('2026-09-27T13:33:19.949Z')
+  },
+  {
+    name: 'm05-3:27017',
+    optimeDate: ISODate('2026-09-27T13:33:15.000Z'),
+    lastAppliedWallTime: ISODate('2026-09-27T13:33:15.088Z')
+  }
+]
+rs0 [direct: primary] test> db.lag.insertOne({i: "w3"}, {writeConcern: {w: 3, wtimeout: 3000}})
+Uncaught:
+MongoWriteConcernError[WriteConcernFailed]: waiting for replication timed out
+Additional information: {
+  wtimeout: true,
+  writeConcern: { w: 3, wtimeout: 3000, provenance: 'clientSupplied' }
+}
+Result: {
+  n: 1,
+  electionId: ObjectId('7fffffff0000000000000001'),
+  opTime: { ts: Timestamp({ t: 1790515999, i: 2 }), t: 1 },
+  writeConcernError: {
+    code: 64,
+    codeName: 'WriteConcernFailed',
+    errmsg: 'waiting for replication timed out',
+    errInfo: {
+      wtimeout: true,
+      writeConcern: { w: 3, wtimeout: 3000, provenance: 'clientSupplied' }
+    }
+  },
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790515999, i: 2 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: 0
+    }
+  },
+  operationTime: Timestamp({ t: 1790515999, i: 2 })
+}
+rs0 [direct: primary] test> db.lag.insertOne({i: "wmaj"}, {writeConcern: {w: "majority", wtimeout: 3000}})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab91b236e3ef956ff05513f')
+}
+
+rs0 [direct: primary] test> rs.status().members.map(m => ({name: m.name, stateStr: m.stateStr, health: m.health, optimeDate: m.optimeDate, lastHeartbeatMessage: m.lastHeartbeatMessage}))
+[
+  {
+    name: 'm05-1:27017',
+    stateStr: 'PRIMARY',
+    health: 1,
+    optimeDate: ISODate('2026-09-27T13:33:23.000Z'),
+    lastHeartbeatMessage: ''
+  },
+  {
+    name: 'm05-2:27017',
+    stateStr: 'SECONDARY',
+    health: 1,
+    optimeDate: ISODate('2026-09-27T13:33:23.000Z'),
+    lastHeartbeatMessage: ''
+  },
+  {
+    name: 'm05-3:27017',
+    stateStr: '(not reachable/healthy)',
+    health: 0,
+    optimeDate: ISODate('1970-01-01T00:00:00.000Z'),
+    lastHeartbeatMessage: 'no response within election timeout period'
+  }
+]
+
+
+######## 7. 멈춘 secondary를 다시 움직이면 따라잡는다
+
+# (m05-3)
+$ kill -CONT 17
+$ ps -o pid,stat,cmd -p 17
+    PID STAT CMD
+     17 Rl   mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0
+[exit=0]
+
+rs0 [direct: primary] test> rs.printSecondaryReplicationInfo()
+source: m05-2:27017
+{
+  syncedTo: 'Sun Sep 27 2026 13:33:23 GMT+0000 (Coordinated Universal Time)',
+  replLag: '0 secs (0 hrs) behind the primary '
+}
+---
+source: m05-3:27017
+{
+  syncedTo: 'Sun Sep 27 2026 13:33:23 GMT+0000 (Coordinated Universal Time)',
+  replLag: '0 secs (0 hrs) behind the primary '
+}
+
+# (m05-3) mongosh 
+rs0 [direct: secondary] test> db.lag.countDocuments()
+1003
+rs0 [direct: secondary] test> var r = db.serverStatus().metrics.repl
+rs0 [direct: secondary] test> r.apply
+{
+  attemptsToBecomeSecondary: Long('1'),
+  batchSize: Long('1033'),
+  batches: { num: 30, totalMillis: 45 },
+  ops: Long('2050')
+}
+rs0 [direct: secondary] test> r.buffer.apply
+{
+  count: Long('0'),
+  sizeBytes: Long('0'),
+  maxSizeBytes: Long('104857600'),
+  maxCount: Long('10000')
+}
+
+
+######## 8. 작은 oplog: --oplogSize 1로 새로 만든다
+
+$ docker run -d --init --name m05-1 --hostname m05-1 --network m05-net  mongo-internals:rocky9-8.0.32 sleep infinity
+20d9861ad3d4be9bd090109b1ee7a15bb69faca8cf5449f7797395951b70cbdf
+[exit=0]
+
+$ docker run -d --init --name m05-2 --hostname m05-2 --network m05-net  mongo-internals:rocky9-8.0.32 sleep infinity
+3696afbaf09451275e2b4c8e9a6f8c030096c318bb9e90b9d811f068080550f7
+[exit=0]
+
+$ docker run -d --init --name m05-3 --hostname m05-3 --network m05-net  mongo-internals:rocky9-8.0.32 sleep infinity
+3b4965c1979c15b70ca62e0e7d95e95b35aa27049d74281d4c993f02cb8948d6
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+2.12.0
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 --oplogSize 1 | grep -E 'forked|ERROR'
+forked process: 33
+[exit=0]
+
+# (m05-2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 --oplogSize 1 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m05-3)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 --oplogSize 1 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+test> rs.initiate({_id: "rs0", members: [{_id: 0, host: "m05-1:27017", priority: 2}, {_id: 1, host: "m05-2:27017"}, {_id: 2, host: "m05-3:27017"}]})
+{
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790516022, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790516022, i: 1 })
+}
+
+rs0 [direct: primary] test> rs.printReplicationInfo()
+actual oplog size
+'1 MB'
+---
+configured oplog size
+'1 MB'
+---
+log length start to end
+'10 secs (0 hrs)'
+---
+oplog first event time
+'Sun Sep 27 2026 13:33:42 GMT+0000 (Coordinated Universal Time)'
+---
+oplog last event time
+'Sun Sep 27 2026 13:33:52 GMT+0000 (Coordinated Universal Time)'
+---
+now
+'Sun Sep 27 2026 13:33:54 GMT+0000 (Coordinated Universal Time)'
+
+
+######## 9. oplog는 마지막 체크포인트 이전만 지운다
+
+rs0 [direct: primary] test> for (let i = 0; i < 3000; i++) db.big.insertOne({i: i, pad: "x".repeat(1000)})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab91b44974e2a4e5c4f782c')
+}
+rs0 [direct: primary] test> var st = db.getSiblingDB("local").oplog.rs.stats(); ({size: st.size, maxSize: st.maxSize, count: st.count})
+{ size: 3969425, maxSize: 1048576, count: 3017 }
+rs0 [direct: primary] test> var t0 = db.getSiblingDB("local").oplog.rs.find().sort({$natural: -1}).limit(1).next().ts
+rs0 [direct: primary] test> while (rs.status().lastStableRecoveryTimestamp.t <= t0.t) sleep(1000)
+rs0 [direct: primary] test> for (let i = 0; i < 1000; i++) db.big.insertOne({i: i, pad: "x".repeat(1000)})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab91b73974e2a4e5c4f7c14')
+}
+rs0 [direct: primary] test> sleep(2000)
+rs0 [direct: primary] test> var st = db.getSiblingDB("local").oplog.rs.stats(); ({size: st.size, maxSize: st.maxSize, count: st.count})
+{ size: 1379155, maxSize: 1048576, count: 1046 }
+rs0 [direct: primary] test> rs.printReplicationInfo()
+actual oplog size
+'1.3152647018432617 MB'
+---
+configured oplog size
+'1 MB'
+---
+log length start to end
+'47 secs (0.01 hrs)'
+---
+oplog first event time
+'Sun Sep 27 2026 13:33:56 GMT+0000 (Coordinated Universal Time)'
+---
+oplog last event time
+'Sun Sep 27 2026 13:34:43 GMT+0000 (Coordinated Universal Time)'
+---
+now
+'Sun Sep 27 2026 13:34:45 GMT+0000 (Coordinated Universal Time)'
+
+$ jq -c 'select(.msg=="WiredTiger record store oplog truncation finished")|{t:.t."$date",attr}' /data/mongod.log | tail -2
+{"t":"2026-09-27T13:34:42.977+00:00","attr":{"pinnedOplogTimestamp":{"$timestamp":{"t":1790516072,"i":1}},"numRecords":723,"dataSize":952149,"durationMillis":0}}
+{"t":"2026-09-27T13:34:43.043+00:00","attr":{"pinnedOplogTimestamp":{"$timestamp":{"t":1790516072,"i":1}},"numRecords":723,"dataSize":952149,"durationMillis":0}}
+[exit=0]
+
+
+######## 10. 멈춘 secondary가 oplog window 밖으로 밀려난다
+
+# (m05-3)
+$ kill -STOP 17
+$ date -u +%T.%3N
+13:34:45.690
+[exit=0]
+
+rs0 [direct: primary] test> for (let i = 0; i < 3000; i++) db.big.insertOne({i: i, pad: "x".repeat(1000)})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab91b78490e513e79abd6e2')
+}
+rs0 [direct: primary] test> var t0 = db.getSiblingDB("local").oplog.rs.find().sort({$natural: -1}).limit(1).next().ts
+rs0 [direct: primary] test> var m2 = new Mongo("m05-2:27017")
+rs0 [direct: primary] test> while (rs.status().lastStableRecoveryTimestamp.t <= t0.t || m2.getDB("admin").runCommand({replSetGetStatus: 1}).lastStableRecoveryTimestamp.t <= t0.t) sleep(1000)
+rs0 [direct: primary] test> for (let i = 0; i < 1000; i++) db.big.insertOne({i: i, pad: "x".repeat(1000)})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab91bb0490e513e79abdaca')
+}
+rs0 [direct: primary] test> sleep(2000)
+rs0 [direct: primary] test> db.getSiblingDB("local").oplog.rs.find().sort({$natural: 1}).limit(1).next().ts
+Timestamp({ t: 1790516088, i: 64 })
+rs0 [direct: primary] test> m2.getDB("local").oplog.rs.find().sort({$natural: 1}).limit(1).next().ts
+Timestamp({ t: 1790516088, i: 64 })
+
+# (m05-3)
+$ kill -CONT 17
+[exit=0]
+
+rs0 [direct: primary] test> rs.status().members.map(m => ({name: m.name, stateStr: m.stateStr, optimeDate: m.optimeDate}))
+[
+  {
+    name: 'm05-1:27017',
+    stateStr: 'PRIMARY',
+    optimeDate: ISODate('2026-09-27T13:35:44.000Z')
+  },
+  {
+    name: 'm05-2:27017',
+    stateStr: 'SECONDARY',
+    optimeDate: ISODate('2026-09-27T13:35:44.000Z')
+  },
+  {
+    name: 'm05-3:27017',
+    stateStr: 'RECOVERING',
+    optimeDate: ISODate('2026-09-27T13:34:47.000Z')
+  }
+]
+
+# (m05-3)
+$ jq -c 'select(.msg|test("too stale|Too stale"))|{t:.t."$date",s,msg,attr}' /data/mongod.log
+{"t":"2026-09-27T13:35:46.952+00:00","s":"W","msg":"Oplog fetcher discovered we are too stale to sync from sync source. Denylisting sync source","attr":{"syncSource":"m05-1:27017","denylistDurationMillis":60000}}
+{"t":"2026-09-27T13:35:46.953+00:00","s":"I","msg":"We are too stale to use candidate as a sync source. Denylisting this sync source because our last fetched timestamp is before their earliest timestamp","attr":{"candidate":"m05-2:27017","lastOpTimeFetchedTimestamp":{"$timestamp":{"t":1790516087,"i":299}},"remoteEarliestOpTimeTimestamp":{"$timestamp":{"t":1790516088,"i":64}},"denylistDurationMinutes":1,"denylistUntil":{"$date":"2026-09-27T13:36:46.953Z"}}}
+{"t":"2026-09-27T13:35:46.953+00:00","s":"E","msg":"Too stale to catch up. Entering maintenance mode. See http://dochub.mongodb.org/core/resyncingaverystalereplicasetmember","attr":{"lastOpTimeFetched":{"ts":{"$timestamp":{"t":1790516087,"i":299}},"t":1},"earliestOpTimeSeen":{"ts":{"$timestamp":{"t":1790516088,"i":64}},"t":1}}}
+[exit=0]
+
+# (m05-3) mongosh 
+rs0 [direct: other] test> rs.status().members.map(m => ({name: m.name, stateStr: m.stateStr, infoMessage: m.infoMessage}))
+[
+  { name: 'm05-1:27017', stateStr: 'PRIMARY', infoMessage: '' },
+  { name: 'm05-2:27017', stateStr: 'SECONDARY', infoMessage: '' },
+  {
+    name: 'm05-3:27017',
+    stateStr: 'RECOVERING',
+    infoMessage: 'Could not find member to sync from'
+  }
+]
+
+
+######## 11. initial sync로 다시 만든다
+
+# (m05-3)
+$ mongod --dbpath /data/db --shutdown | tail -1
+$ mkdir /data/db2
+$ mongod --dbpath /data/db2 --logpath /data/mongod2.log --bind_ip_all --fork --replSet rs0 --oplogSize 1 | grep -E 'forked|ERROR'
+Killing process with pid: 17
+forked process: 230
+[exit=0]
+
+# (m05-3)
+$ jq -c 'select(.msg|test("^Starting initial sync attempt|^Setting begin applying|^Finished cloning data|^Initial sync done"))|{t:.t."$date",msg,attr}' /data/mongod2.log
+{"t":"2026-09-27T13:35:52.950+00:00","msg":"Starting initial sync attempt","attr":{"initialSyncAttempt":1,"initialSyncMaxAttempts":10}}
+{"t":"2026-09-27T13:35:53.038+00:00","msg":"Finished cloning data. Beginning oplog replay","attr":{"databaseClonerFinishStatus":"OK"}}
+{"t":"2026-09-27T13:35:53.041+00:00","msg":"Initial sync done","attr":{"durationSeconds":0}}
+[exit=0]
+
+rs0 [direct: primary] test> rs.status().members.map(m => ({name: m.name, stateStr: m.stateStr, optimeDate: m.optimeDate}))
+[
+  {
+    name: 'm05-1:27017',
+    stateStr: 'PRIMARY',
+    optimeDate: ISODate('2026-09-27T13:35:44.000Z')
+  },
+  {
+    name: 'm05-2:27017',
+    stateStr: 'SECONDARY',
+    optimeDate: ISODate('2026-09-27T13:35:44.000Z')
+  },
+  {
+    name: 'm05-3:27017',
+    stateStr: 'SECONDARY',
+    optimeDate: ISODate('2026-09-27T13:35:44.000Z')
+  }
+]
+

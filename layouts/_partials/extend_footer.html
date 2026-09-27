@@ -2,10 +2,10 @@
 (function () {
   var root = document.documentElement;
 
-  /* 터미널·psql 세션 블록의 복사 버튼은 출력과 프롬프트를 빼고 명령만 복사한다 */
+  /* 터미널·psql·mongosh 세션 블록의 복사 버튼은 출력과 프롬프트를 빼고 명령만 복사한다 */
   document.addEventListener("click", function (e) {
     var btn = e.target.closest && e.target.closest(".copy-code");
-    var code = btn && btn.parentNode.querySelector("code.language-console, code.language-psql");
+    var code = btn && btn.parentNode.querySelector("code.language-console, code.language-psql, code.language-mongosh");
     if (!code || !navigator.clipboard) return;
     e.stopPropagation();
     var cmds = [].slice.call(code.querySelectorAll(".line")).filter(function (l) {

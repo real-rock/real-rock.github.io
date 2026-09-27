@@ -1,0 +1,278 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name m02-1 --hostname m02-1 --network m02-net  mongo-internals:rocky9-8.0.32 sleep infinity
+86dac93998c5969defce9a479431bada57826f400d2731361cb53a185edcd2ea
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+2.12.0
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork  | grep -E 'forked|ERROR'
+forked process: 33
+[exit=0]
+
+$ jq -r 'select(.msg == "Opening WiredTiger") | .attr.config' /data/mongod.log | grep -oE 'log=\([^)]*\)'
+$ ls -l /data/db/journal
+log=(enabled=true,remove=true,path=journal,compressor=snappy)
+log=(wait=0)
+total 204800
+-rw------- 1 mongod mongod 104857600 Sep 27 21:42 WiredTigerLog.0000000001
+-rw------- 1 mongod mongod 104857600 Sep 27 21:42 WiredTigerPreplog.0000000001
+[exit=0]
+
+test> db.adminCommand({getParameter: 1, syncdelay: 1, journalCommitInterval: 1})
+{ journalCommitInterval: 100, syncdelay: 60, ok: 1 }
+
+
+######## 1. 60초마다 도는 체크포인트
+
+$ setsid nohup mongosh --quiet --eval 'for (let i = 0; i < 130; i++) { db.tick.insertOne({i: i, at: new Date()}); sleep(1000); }' > /dev/null 2>&1 &
+[exit=0]
+
+$ jq -r 'select(.msg == "WiredTiger message" and (.attr.message.msg | test("saving checkpoint snapshot"))) | .t."$date" + "  " + .attr.message.msg' /data/mongod.log
+2026-09-27T21:43:42.896+00:00  saving checkpoint snapshot min: 99, snapshot max: 99 snapshot count: 0, oldest timestamp: (0, 0) , meta checkpoint timestamp: (0, 0) base write gen: 1
+2026-09-27T21:44:42.916+00:00  saving checkpoint snapshot min: 161, snapshot max: 161 snapshot count: 0, oldest timestamp: (0, 0) , meta checkpoint timestamp: (0, 0) base write gen: 1
+[exit=0]
+
+test> function ckpt() { const c = db.serverStatus().wiredTiger.checkpoint; return {succeeded: c["total succeed number of checkpoints"], startedByApi: c["number of checkpoints started by api"], skippedClean: c["checkpoints skipped because database was clean"], mostRecentMs: c["most recent time (msecs)"], maxMs: c["max time (msecs)"]}; }
+[Function: ckpt]
+test> ckpt()
+{
+  succeeded: 2,
+  startedByApi: 2,
+  skippedClean: 0,
+  mostRecentMs: 11,
+  maxMs: 16
+}
+test> db.tick.countDocuments()
+130
+
+$ grep -oE 'WiredTigerCheckpoint\.[0-9]+' /data/db/WiredTiger.turtle
+WiredTigerCheckpoint.2
+[exit=0]
+
+test> function ckpt() { const c = db.serverStatus().wiredTiger.checkpoint; return {succeeded: c["total succeed number of checkpoints"], startedByApi: c["number of checkpoints started by api"], skippedClean: c["checkpoints skipped because database was clean"], mostRecentMs: c["most recent time (msecs)"], maxMs: c["max time (msecs)"]}; }
+[Function: ckpt]
+test> ckpt()
+{
+  succeeded: 3,
+  startedByApi: 3,
+  skippedClean: 0,
+  mostRecentMs: 10,
+  maxMs: 16
+}
+
+$ jq -r 'select(.msg == "WiredTiger message" and (.attr.message.msg | test("saving checkpoint snapshot"))) | .t."$date"' /data/mongod.log | tail -2
+$ grep -oE 'WiredTigerCheckpoint\.[0-9]+' /data/db/WiredTiger.turtle
+2026-09-27T21:44:42.916+00:00
+2026-09-27T21:45:42.935+00:00
+WiredTigerCheckpoint.3
+[exit=0]
+
+
+######## 2. 저널 파일이 늘고 줄어드는 모습
+
+$ cat > /data/load.js <<'JS'
+$ // 1KB 남짓한 문서 25만 개(약 250MB)를 넣는다
+$ let seed = 7;
+$ const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+$ let pool = "";
+$ while (pool.length < 1000000) pool += rnd().toString(36);
+$ for (let b = 0; b < 250; b++) {
+$   const docs = [];
+$   for (let i = 0; i < 1000; i++)
+$     docs.push({_id: b * 1000 + i, amount: rnd() % 100000, memo: pool.substr(rnd() % 990000, 1000)});
+$   db.bulk.insertMany(docs);
+$ }
+$ JS
+[exit=0]
+
+test> function logstat() { const l = db.serverStatus().wiredTiger.log, b = db.serverStatus().wiredTiger["block-manager"]; return {logBytesWritten: l["log bytes written"], logSyncs: l["log sync operations"], maxLogFileSize: l["maximum log file size"], preallocUsed: l["pre-allocated log files used"], ckptBytesWritten: b["bytes written for checkpoint"]}; }
+[Function: logstat]
+test> logstat()
+{
+  logBytesWritten: 50688,
+  logSyncs: 154,
+  maxLogFileSize: 104857600,
+  preallocUsed: 0,
+  ckptBytesWritten: 327680
+}
+
+$ mongosh --quiet /data/load.js
+$ ls -l /data/db/journal
+total 306796
+-rw------- 1 mongod mongod 104605952 Sep 27 21:46 WiredTigerLog.0000000001
+-rw------- 1 mongod mongod 104690048 Sep 27 21:46 WiredTigerLog.0000000002
+-rw------- 1 mongod mongod 104857600 Sep 27 21:46 WiredTigerLog.0000000003
+[exit=0]
+
+test> function logstat() { const l = db.serverStatus().wiredTiger.log, b = db.serverStatus().wiredTiger["block-manager"]; return {logBytesWritten: l["log bytes written"], logSyncs: l["log sync operations"], maxLogFileSize: l["maximum log file size"], preallocUsed: l["pre-allocated log files used"], ckptBytesWritten: b["bytes written for checkpoint"]}; }
+[Function: logstat]
+test> logstat()
+{
+  logBytesWritten: 224924160,
+  logSyncs: 165,
+  maxLogFileSize: 104857600,
+  preallocUsed: 2,
+  ckptBytesWritten: 327680
+}
+test> db.adminCommand({fsync: 1})
+{ numFiles: 1, ok: 1 }
+test> logstat()
+{
+  logBytesWritten: 224926848,
+  logSyncs: 170,
+  maxLogFileSize: 104857600,
+  preallocUsed: 2,
+  ckptBytesWritten: 249569280
+}
+
+$ ls -l /data/db/journal
+total 204800
+-rw------- 1 mongod mongod 104857600 Sep 27 21:46 WiredTigerLog.0000000003
+-rw------- 1 mongod mongod 104857600 Sep 27 21:46 WiredTigerPreplog.0000000003
+[exit=0]
+
+
+######## 3. j:true와 j:false
+
+test> function syncs() { return db.serverStatus().wiredTiger.log["log sync operations"]; }
+[Function: syncs]
+test> let a = syncs(); sleep(5000); "idle 5s: log syncs +" + (syncs() - a)
+idle 5s: log syncs +0
+test> a = syncs(); let t = Date.now(), n = 0; while (Date.now() - t < 5000) { db.jt.insertOne({n: n++}, {writeConcern: {w: 1, j: false}}); sleep(10); } n + " inserts (j:false) in 5s: log syncs +" + (syncs() - a)
+324 inserts (j:false) in 5s: log syncs +50
+test> a = syncs(); t = Date.now(); for (let i = 0; i < 500; i++) db.jt.insertOne({i: i}, {writeConcern: {w: 1, j: false}}); "500 inserts j:false: " + (Date.now() - t) + " ms, log syncs +" + (syncs() - a)
+500 inserts j:false: 145 ms, log syncs +2
+test> a = syncs(); t = Date.now(); for (let i = 0; i < 500; i++) db.jt.insertOne({i: i}, {writeConcern: {w: 1, j: true}}); "500 inserts j:true: " + (Date.now() - t) + " ms, log syncs +" + (syncs() - a)
+500 inserts j:true: 174 ms, log syncs +500
+test> db.adminCommand({setParameter: 1, journalCommitInterval: 500})
+{ was: 100, ok: 1 }
+test> a = syncs(); t = Date.now(); n = 0; while (Date.now() - t < 5000) { db.jt.insertOne({n: n++}, {writeConcern: {w: 1, j: false}}); sleep(10); } n + " inserts (j:false, journalCommitInterval 500) in 5s: log syncs +" + (syncs() - a)
+332 inserts (j:false, journalCommitInterval 500) in 5s: log syncs +10
+test> db.adminCommand({setParameter: 1, journalCommitInterval: 100})
+{ was: 500, ok: 1 }
+
+
+######## 4. kill -9: 체크포인트 뒤의 쓰기는 저널에만 있다
+
+test> db.acct.insertMany(Array.from({length: 1000}, (_, i) => ({_id: i, balance: 100}))).insertedIds[999]
+999
+test> db.adminCommand({fsync: 1})
+{ numFiles: 1, ok: 1 }
+test> for (let i = 1000; i < 1003; i++) db.acct.insertOne({_id: i, balance: 200}, {writeConcern: {w: 1, j: true}}); db.acct.countDocuments()
+1003
+test> db.acct.updateOne({_id: 1}, {$inc: {balance: 5}}, {writeConcern: {w: 1, j: true}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+
+$ mongosh --quiet --eval 'for (let i = 2000; i < 2100; i++) db.acct.insertOne({_id: i, balance: 300}, {writeConcern: {w: 1, j: false}}); print(db.acct.countDocuments())' && kill -9 $(pgrep -x mongod)
+$ sleep 1; pgrep -x mongod || echo "mongod is gone"
+$ cp -a /data/db /tmp/crash-copy
+1103
+mongod is gone
+[exit=0]
+
+$ wt -r -h /tmp/crash-copy list -v file:collection-13-4293686799854559489.wt | tr ',' '\n' | grep -E '^(id|checkpoint)='
+$ wt -r -h /tmp/crash-copy list -c file:collection-13-4293686799854559489.wt
+$ wt -r -h /tmp/crash-copy dump table:collection-13-4293686799854559489 | sed -n '/^Data/,$p' | sed -n '2~2p' | wc -l
+id=17
+checkpoint=(WiredTigerCheckpoint.1=(addr="018281e47f2f0c1a8381e4ebfdf67c8481e4bdc8df7b808080e23fc0dfc0"
+file:collection-13-4293686799854559489.wt
+	 WiredTigerCheckpoint.1: Sun Sep 27 21:46:26 2026 (size 12 KB)
+		file-size: 24 KB, checkpoint-size: 8 KB
+
+		          offset, size, checksum
+		root    : 12288, 4096, 2133797978 (0x7f2f2c5a)
+		alloc   : 16384, 4096, 3959297724 (0xebfe16bc)
+		discard : 0, 0, 0 (0)
+		avail   : 20480, 4096, 3184066491 (0xbdc8ffbb)
+1000
+[exit=0]
+
+$ mv /tmp/crash-copy/journal/WiredTigerLog.* /tmp/crash-copy/
+$ echo 'log=(compressor=snappy)' > /tmp/crash-copy/WiredTiger.config
+$ wt -h /tmp/crash-copy printlog -u > /tmp/printlog.json
+$ jq -c '.[] | select(.type == "checkpoint" or .type == "commit") | {lsn, type, txnid, ops: ([.ops[]? | "\(.optype) fileid=\(.fileid)"] | group_by(.) | map("\(.[0]) x\(length)"))}' /tmp/printlog.json | tail -8
+{"lsn":[3,15858048],"type":"commit","txnid":2856,"ops":["row_put fileid=17 x500","row_put fileid=18 x500"]}
+{"lsn":[3,15865088],"type":"commit","txnid":2857,"ops":["row_put fileid=2 x3"]}
+{"lsn":[3,15865472],"type":"commit","txnid":2858,"ops":["row_put fileid=0 x8"]}
+{"lsn":[3,15867648],"type":"checkpoint","txnid":null,"ops":[]}
+{"lsn":[3,15867776],"type":"commit","txnid":2859,"ops":["row_put fileid=17 x1","row_put fileid=18 x1"]}
+{"lsn":[3,15867904],"type":"commit","txnid":2860,"ops":["row_put fileid=17 x1","row_put fileid=18 x1"]}
+{"lsn":[3,15868032],"type":"commit","txnid":2861,"ops":["row_put fileid=17 x1","row_put fileid=18 x1"]}
+{"lsn":[3,15868160],"type":"commit","txnid":2862,"ops":["row_put fileid=17 x1"]}
+[exit=0]
+
+$ wt -r -h /tmp/crash-copy list -v file:index-14-4293686799854559489.wt | tr ',' '\n' | grep -E '^id='
+id=18
+[exit=0]
+
+
+######## 5. 재기동: 마지막 체크포인트 + 저널 재생
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork  | grep -E 'forked|ERROR'
+forked process: 626
+[exit=0]
+
+$ jq -c 'select(.id == 22271 or .id == 22302 or .id == 4795906 or .c == "WTRECOV") | {t: .t."$date", c, msg: (.attr.message.msg // .msg), attr: (if .c == "WTRECOV" then null else .attr end)} | del(..|nulls)' /data/mongod.log | sed -n '/unclean shutdown/,$p'
+{"t":"2026-09-27T21:46:29.681+00:00","c":"STORAGE","msg":"Detected unclean shutdown - Lock file is not empty","attr":{"lockFile":"/data/db/mongod.lock"}}
+{"t":"2026-09-27T21:46:29.681+00:00","c":"STORAGE","msg":"Recovering data from the last clean checkpoint."}
+{"t":"2026-09-27T21:46:29.863+00:00","c":"WTRECOV","msg":"Recovering log 3 through 4"}
+{"t":"2026-09-27T21:46:29.870+00:00","c":"WTRECOV","msg":"Recovering log 4 through 4"}
+{"t":"2026-09-27T21:46:29.881+00:00","c":"WTRECOV","msg":"Main recovery loop: starting at 3/15865344 to 4/256"}
+{"t":"2026-09-27T21:46:29.881+00:00","c":"WTRECOV","msg":"Recovering log 3 through 4"}
+{"t":"2026-09-27T21:46:29.889+00:00","c":"WTRECOV","msg":"Recovering log 4 through 4"}
+{"t":"2026-09-27T21:46:29.898+00:00","c":"WTRECOV","msg":"recovery log replay has successfully finished and ran for 35 milliseconds"}
+{"t":"2026-09-27T21:46:29.898+00:00","c":"WTRECOV","msg":"Set global recovery timestamp: (0, 0)"}
+{"t":"2026-09-27T21:46:29.898+00:00","c":"WTRECOV","msg":"Set global oldest timestamp: (0, 0)"}
+{"t":"2026-09-27T21:46:29.899+00:00","c":"WTRECOV","msg":"recovery rollback to stable has successfully finished and ran for 0 milliseconds"}
+{"t":"2026-09-27T21:46:29.902+00:00","c":"WTRECOV","msg":"recovery checkpoint has successfully finished and ran for 2 milliseconds"}
+{"t":"2026-09-27T21:46:29.902+00:00","c":"WTRECOV","msg":"recovery was completed successfully and took 39ms, including 35ms for the log replay, 0ms for the rollback to stable, and 2ms for the checkpoint."}
+{"t":"2026-09-27T21:46:29.902+00:00","c":"WTRECOV","msg":"recovery was completed successfully and took 39ms, including 35ms for the log replay, 0ms for the rollback to stable, and 2ms for the checkpoint."}
+{"t":"2026-09-27T21:46:29.902+00:00","c":"STORAGE","msg":"WiredTiger opened","attr":{"durationMillis":221}}
+[exit=0]
+
+test> db.acct.countDocuments({balance: 100}) + " / " + db.acct.countDocuments({balance: 200}) + " / " + db.acct.countDocuments({balance: 300})
+999 / 3 / 0
+test> db.acct.findOne({_id: 1})
+{ _id: 1, balance: 105 }
+
+
+######## 6. 레플리카셋에서는 사용자 컬렉션을 저널에 쓰지 않는다
+
+$ docker run -d --init --name m02-2 --hostname m02-2 --network m02-net  mongo-internals:rocky9-8.0.32 sleep infinity
+911d3d6ad73e4335a9c083b83614db1091ae673e0d40e41e200604c487f42cf7
+[exit=0]
+
+# (m02-2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m02-2) mongosh 
+test> rs.initiate().ok
+1
+
+# (m02-2) mongosh 
+test> db.acct.insertOne({_id: 1, balance: 100}).acknowledged
+true
+test> db.acct.stats().wiredTiger.creationString.match(/log=\([^)]*\)/)[0]
+log=(enabled=false)
+test> db.getSiblingDB("local").oplog.rs.stats().wiredTiger.creationString.match(/log=\([^)]*\)/)[0]
+log=(enabled=true)
+test> db.getSiblingDB("local").system.replset.stats().wiredTiger.creationString.match(/log=\([^)]*\)/)[0]
+log=(enabled=true)
+
+done

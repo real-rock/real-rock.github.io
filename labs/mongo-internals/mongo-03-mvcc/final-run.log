@@ -1,0 +1,463 @@
+
+######## 0. 실습 환경: 단일 노드 레플리카셋
+
+$ docker run -d --init --name m03-1 --hostname m03-1 --network m03-net  mongo-internals:rocky9-8.0.32 sleep infinity
+badb6bd2f9a9ee62df6823cdb4a9ca7536e185c8edf03b8aa3c8321bb817216b
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+2.12.0
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 32
+[exit=0]
+
+test> rs.initiate({_id: "rs0", members: [{_id: 0, host: "m03-1:27017"}]}).ok
+1
+
+rs0 [direct: primary] test> db.acct.insertMany([{_id: 1, balance: 100}, {_id: 2, balance: 100}])
+{ acknowledged: true, insertedIds: { '0': 1, '1': 2 } }
+
+
+######## 1. 스냅샷 격리: 트랜잭션은 시작할 때의 스냅샷을 끝까지 본다
+
+# 세션 A 시작 (m03-1): mongosh 
+
+# 세션 B 시작 (m03-1): mongosh 
+
+[세션 A] rs0 [direct: primary] test> sA = db.getMongo().startSession(); cA = sA.getDatabase("test").acct;
+test.acct
+
+[세션 B] rs0 [direct: primary] test> sB = db.getMongo().startSession(); cB = sB.getDatabase("test").acct;
+test.acct
+
+[세션 A] rs0 [direct: primary] test> sA.startTransaction({readConcern: {level: "snapshot"}})
+
+[세션 A] rs0 [direct: primary] test> cA.findOne({_id: 1})
+{ _id: 1, balance: 100 }
+
+[세션 B] rs0 [direct: primary] test> sB.startTransaction()
+
+[세션 B] rs0 [direct: primary] test> cB.updateOne({_id: 1}, {$set: {balance: 200}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+
+[세션 B] rs0 [direct: primary] test> sB.commitTransaction()
+
+[세션 B] rs0 [direct: primary] test> sB.getOperationTime()
+Timestamp({ t: 1790513779, i: 1 })
+
+[세션 A] rs0 [direct: primary] test> cA.findOne({_id: 1})
+{ _id: 1, balance: 100 }
+
+rs0 [direct: primary] test> db.acct.findOne({_id: 1})
+{ _id: 1, balance: 200 }
+rs0 [direct: primary] test> db.getSiblingDB("admin").aggregate([{$currentOp: {idleSessions: true}}, {$match: {"transaction.parameters.autocommit": false}}, {$project: {_id: 0, active: 1, readConcern: "$transaction.parameters.readConcern.level", readTimestamp: "$transaction.readTimestamp", startWallClockTime: "$transaction.startWallClockTime", expiryTime: "$transaction.expiryTime"}}])
+[
+  {
+    active: false,
+    readConcern: 'snapshot',
+    readTimestamp: Timestamp({ t: 1790513767, i: 2 }),
+    startWallClockTime: '2026-09-27T12:56:15.681+00:00',
+    expiryTime: '2026-09-27T12:57:15.681+00:00'
+  }
+]
+
+
+######## 2. 스냅샷이 붙잡은 옛 버전 위에 쓰면 WriteConflict
+
+[세션 A] rs0 [direct: primary] test> try { cA.updateOne({_id: 1}, {$inc: {balance: 1}}) } catch (e) { printjson({codeName: e.codeName, errorLabels: e.errorLabels, errmsg: e.errmsg}) }
+{
+  codeName: 'WriteConflict',
+  errorLabels: [
+    'TransientTransactionError'
+  ],
+  errmsg: 'Caused by :: Write conflict during plan execution and yielding is disabled. :: Please retry your operation or multi-document transaction.'
+}
+
+[세션 A] rs0 [direct: primary] test> sA.commitTransaction()
+MongoServerError[NoSuchTransaction]: Transaction with { txnNumber: 1 } has been aborted.
+
+
+######## 3. 두 트랜잭션이 같은 도큐먼트를 고치면 뒤에 쓴 쪽이 바로 실패한다
+
+rs0 [direct: primary] test> db.serverStatus().wiredTiger.transaction["update conflicts"]
+1
+
+[세션 A] rs0 [direct: primary] test> sA.startTransaction(); cA.updateOne({_id: 2}, {$inc: {balance: 10}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+
+[세션 B] rs0 [direct: primary] test> sB.startTransaction(); try { cB.updateOne({_id: 2}, {$inc: {balance: 1}}) } catch (e) { printjson({codeName: e.codeName, errorLabels: e.errorLabels}) }
+{
+  codeName: 'WriteConflict',
+  errorLabels: [
+    'TransientTransactionError'
+  ]
+}
+
+[세션 B] rs0 [direct: primary] test> sB.abortTransaction()
+
+[세션 A] rs0 [direct: primary] test> sA.commitTransaction()
+
+rs0 [direct: primary] test> db.acct.findOne({_id: 2})
+{ _id: 2, balance: 110 }
+rs0 [direct: primary] test> db.serverStatus().wiredTiger.transaction["update conflicts"]
+2
+
+
+######## 4. 트랜잭션 밖의 쓰기는 서버 안에서 재시도하며 기다린다
+
+rs0 [direct: primary] test> db.serverStatus().metrics.operation.writeConflicts
+Long('2')
+
+[세션 A] rs0 [direct: primary] test> sA.startTransaction(); cA.updateOne({_id: 1}, {$inc: {balance: 1000}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+
+[세션 B] rs0 [direct: primary] test> db.acct.updateOne({_id: 1}, {$inc: {balance: 1}})
+
+rs0 [direct: primary] test> db.getSiblingDB("admin").aggregate([{$currentOp: {}}, {$match: {ns: "test.acct", op: "update"}}, {$project: {_id: 0, op: 1, secs_running: 1, writeConflicts: 1, numYields: 1, waitingForLock: 1}}])
+[
+  {
+    secs_running: Long('2'),
+    op: 'update',
+    writeConflicts: Long('208'),
+    numYields: 207,
+    waitingForLock: false
+  }
+]
+rs0 [direct: primary] test> db.serverStatus().metrics.operation.writeConflicts
+Long('2')
+
+[세션 A] rs0 [direct: primary] test> sA.commitTransaction()
+
+[세션 B] (앞 명령의 결과를 기다림)
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+
+rs0 [direct: primary] test> db.acct.findOne({_id: 1})
+{ _id: 1, balance: 1201 }
+rs0 [direct: primary] test> db.serverStatus().metrics.operation.writeConflicts
+Long('213')
+
+$ jq -c 'select(.msg == "Slow query" and .attr.ns == "test.acct" and .attr.writeConflicts) | {msg, type: .attr.type, planSummary: .attr.planSummary, writeConflicts: .attr.writeConflicts, numYields: .attr.numYields, durationMillis: .attr.durationMillis}' /data/mongod.log
+{"msg":"Slow query","type":"update","planSummary":"EXPRESS_IXSCAN { _id: 1 },EXPRESS_UPDATE","writeConflicts":211,"numYields":211,"durationMillis":3012}
+[exit=0]
+
+
+######## 5. history store: 기본 300초 창에서는 트랜잭션이 없어도 옛 버전이 쌓인다
+
+rs0 [direct: primary] test> db.adminCommand({getParameter: 1, minSnapshotHistoryWindowInSeconds: 1})
+{
+  minSnapshotHistoryWindowInSeconds: 300,
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513795, i: 2 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513795, i: 2 })
+}
+rs0 [direct: primary] test> db.bulk.insertMany(Array.from({length: 100000}, (_, i) => ({_id: i, balance: 100, pad: "x".repeat(200)}))).acknowledged
+true
+rs0 [direct: primary] test> db.bulk.countDocuments()
+100000
+rs0 [direct: primary] test> hs = () => { const w = db.serverStatus().wiredTiger; return {onDiskBytes: w.cache["history store table on-disk size"], insertCalls: w.cache["history store table insert calls"], idsPinned: w.transaction["transaction range of IDs currently pinned"], tsPinnedByReader: w.transaction["transaction range of timestamps pinned by the oldest active read timestamp"]} }
+[Function: hs]
+rs0 [direct: primary] test> db.adminCommand({fsync: 1}).ok
+1
+rs0 [direct: primary] test> hs()
+{
+  onDiskBytes: 24576,
+  insertCalls: 209,
+  idsPinned: 0,
+  tsPinnedByReader: 0
+}
+rs0 [direct: primary] test> db.bulk.updateMany({}, {$inc: {balance: 1}}).modifiedCount
+100000
+rs0 [direct: primary] test> db.adminCommand({fsync: 1}).ok
+1
+rs0 [direct: primary] test> hs()
+{
+  onDiskBytes: 3420160,
+  insertCalls: 100209,
+  idsPinned: 0,
+  tsPinnedByReader: 0
+}
+
+$ ls -l /data/db/WiredTigerHS.wt
+-rw------- 1 mongod mongod 3420160 Sep 27 12:56 /data/db/WiredTigerHS.wt
+[exit=0]
+
+
+######## 6. 창을 0으로 줄이면 쌓이지 않고, 스냅샷을 열어 두면 다시 쌓인다
+
+rs0 [direct: primary] test> hs = () => { const w = db.serverStatus().wiredTiger; return {onDiskBytes: w.cache["history store table on-disk size"], insertCalls: w.cache["history store table insert calls"], idsPinned: w.transaction["transaction range of IDs currently pinned"], tsPinnedByReader: w.transaction["transaction range of timestamps pinned by the oldest active read timestamp"]} }
+[Function: hs]
+rs0 [direct: primary] test> db.adminCommand({setParameter: 1, minSnapshotHistoryWindowInSeconds: 0}).was
+300
+rs0 [direct: primary] test> sleep(2000)
+rs0 [direct: primary] test> db.adminCommand({fsync: 1}).ok
+1
+rs0 [direct: primary] test> hs()
+{
+  onDiskBytes: 3420160,
+  insertCalls: 100209,
+  idsPinned: 1,
+  tsPinnedByReader: 0
+}
+rs0 [direct: primary] test> db.bulk.updateMany({}, {$inc: {balance: 1}}).modifiedCount
+100000
+rs0 [direct: primary] test> sleep(2000)
+rs0 [direct: primary] test> db.adminCommand({fsync: 1}).ok
+1
+rs0 [direct: primary] test> hs()
+{
+  onDiskBytes: 3420160,
+  insertCalls: 119691,
+  idsPinned: 0,
+  tsPinnedByReader: 0
+}
+
+[세션 A] rs0 [direct: primary] test> sA.startTransaction({readConcern: {level: "snapshot"}}); sA.getDatabase("test").bulk.findOne({_id: 7})
+{
+  _id: 7,
+  balance: 102,
+  pad: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+}
+
+rs0 [direct: primary] test> hs = () => { const w = db.serverStatus().wiredTiger; return {onDiskBytes: w.cache["history store table on-disk size"], insertCalls: w.cache["history store table insert calls"], idsPinned: w.transaction["transaction range of IDs currently pinned"], tsPinnedByReader: w.transaction["transaction range of timestamps pinned by the oldest active read timestamp"]} }
+[Function: hs]
+rs0 [direct: primary] test> db.bulk.updateMany({}, {$inc: {balance: 1}}).modifiedCount
+100000
+rs0 [direct: primary] test> sleep(2000)
+rs0 [direct: primary] test> db.adminCommand({fsync: 1}).ok
+1
+rs0 [direct: primary] test> hs()
+{
+  onDiskBytes: 6504448,
+  insertCalls: 300214,
+  idsPinned: 100006,
+  tsPinnedByReader: Long('17179869184')
+}
+rs0 [direct: primary] test> db.bulk.findOne({_id: 7})
+{
+  _id: 7,
+  balance: 103,
+  pad: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+}
+
+$ ls -l /data/db/WiredTigerHS.wt
+-rw------- 1 mongod mongod 6504448 Sep 27 12:56 /data/db/WiredTigerHS.wt
+[exit=0]
+
+[세션 A] rs0 [direct: primary] test> sA.getDatabase("test").bulk.findOne({_id: 7})
+{
+  _id: 7,
+  balance: 102,
+  pad: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+}
+
+[세션 A] rs0 [direct: primary] test> sA.abortTransaction()
+
+rs0 [direct: primary] test> hs = () => { const w = db.serverStatus().wiredTiger; return {onDiskBytes: w.cache["history store table on-disk size"], insertCalls: w.cache["history store table insert calls"], idsPinned: w.transaction["transaction range of IDs currently pinned"], tsPinnedByReader: w.transaction["transaction range of timestamps pinned by the oldest active read timestamp"]} }
+[Function: hs]
+rs0 [direct: primary] test> hs()
+{
+  onDiskBytes: 6504448,
+  insertCalls: 300214,
+  idsPinned: 0,
+  tsPinnedByReader: 0
+}
+rs0 [direct: primary] test> db.bulk.updateMany({}, {$inc: {balance: 1}}).modifiedCount
+100000
+rs0 [direct: primary] test> sleep(2000)
+rs0 [direct: primary] test> db.adminCommand({fsync: 1}).ok
+1
+rs0 [direct: primary] test> hs()
+{
+  onDiskBytes: 6504448,
+  insertCalls: 300214,
+  idsPinned: 0,
+  tsPinnedByReader: 0
+}
+
+$ ls -l /data/db/WiredTigerHS.wt
+-rw------- 1 mongod mongod 6504448 Sep 27 12:56 /data/db/WiredTigerHS.wt
+[exit=0]
+
+
+######## 7. wt로 본 history store: 데이터 파일에는 최신 버전만 있다
+
+rs0 [direct: primary] test> db.adminCommand({setParameter: 1, minSnapshotHistoryWindowInSeconds: 300}).was
+0
+rs0 [direct: primary] test> db.runCommand({insert: "ver", documents: [{_id: 1, v: "v1-first"}]}).operationTime
+Timestamp({ t: 1790513815, i: 2 })
+rs0 [direct: primary] test> db.runCommand({update: "ver", updates: [{q: {_id: 1}, u: {$set: {v: "v2-second"}}}]}).operationTime
+Timestamp({ t: 1790513815, i: 3 })
+rs0 [direct: primary] test> db.runCommand({update: "ver", updates: [{q: {_id: 1}, u: {$set: {v: "v3-third"}}}]}).operationTime
+Timestamp({ t: 1790513815, i: 4 })
+rs0 [direct: primary] test> db.adminCommand({fsync: 1}).ok
+1
+rs0 [direct: primary] test> db.ver.stats().wiredTiger.uri
+statistics:table:collection-42-10313453530085067927
+
+$ URI=$(mongosh --quiet --eval 'db.ver.stats().wiredTiger.uri.replace("statistics:table:", "")')
+$ mongod --dbpath /data/db --shutdown | grep -v '^{'
+$ ID=$(wt -h /data/db list -v file:$URI.wt | tr ',' '\n' | grep '^id=' | cut -d= -f2)
+$ echo "file:$URI.wt id=$ID"
+$ wt -h /data/db list -v file:WiredTigerHS.wt | tr ',' '\n' | grep -E '^(key|value)_format='
+$ wt -h /data/db dump -p file:$URI.wt | sed -n '/^Data/,$p'
+$ wt -h /data/db dump -p file:WiredTigerHS.wt | sed -n '/^Data/,$p' | grep -A1 "^$ID,"
+$ for ts in $(wt -h /data/db dump -p file:WiredTigerHS.wt | grep "^$ID," | cut -d, -f3); do echo "$ts = Timestamp($((ts >> 32)), $((ts & 0xffffffff)))"; done
+Killing process with pid: 32
+file:collection-42-10313453530085067927.wt id=46
+key_format=IuQQ
+value_format=QQQu
+Data
+1
+\1e\00\00\00\10_id\00\01\00\00\00\02v\00\09\00\00\00v3-third\00\00
+46,\81,7690198278461194242,0
+7690198278461194243,7690198278461194242,3,\1e\00\00\00\10_id\00\01\00\00\00\02v\00\09\00\00\00v1-first\00\00
+46,\81,7690198278461194243,0
+7690198278461194244,7690198278461194243,3,\1f\00\00\00\10_id\00\01\00\00\00\02v\00\0a\00\00\00v2-second\00\00
+7690198278461194242 = Timestamp(1790513815, 2)
+7690198278461194243 = Timestamp(1790513815, 3)
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 1291
+[exit=0]
+
+
+######## 8. 과거 시점 읽기(atClusterTime)와 SnapshotTooOld
+
+rs0 [direct: primary] test> T = db.runCommand({update: "acct", updates: [{q: {_id: 1}, u: {$set: {balance: 0}}}]}).operationTime
+Timestamp({ t: 1790513819, i: 1 })
+rs0 [direct: primary] test> db.acct.updateOne({_id: 1}, {$set: {balance: -1}}).modifiedCount
+1
+rs0 [direct: primary] test> db.runCommand({find: "acct", filter: {_id: 1}, readConcern: {level: "snapshot", atClusterTime: T}}).cursor.firstBatch
+[ { _id: 1, balance: 0 } ]
+rs0 [direct: primary] test> db.acct.findOne({_id: 1})
+{ _id: 1, balance: -1 }
+rs0 [direct: primary] test> db.serverStatus().wiredTiger["snapshot-window-settings"]
+{
+  'total number of SnapshotTooOld errors': Long('0'),
+  'minimum target snapshot window size in seconds': 300,
+  'current available snapshot window size in seconds': 7,
+  'latest majority snapshot timestamp available': 'Sep 27 12:56:59:2',
+  'oldest majority snapshot timestamp available': 'Sep 27 12:56:52:4404',
+  'pinned timestamp requests': 0,
+  'min pinned timestamp': Timestamp({ t: 4294967295, i: 4294967295 })
+}
+rs0 [direct: primary] test> db.adminCommand({setParameter: 1, minSnapshotHistoryWindowInSeconds: 5}).was
+300
+rs0 [direct: primary] test> sleep(12000)
+rs0 [direct: primary] test> db.acct.updateOne({_id: 2}, {$inc: {balance: 1}}).modifiedCount
+1
+rs0 [direct: primary] test> sleep(1000)
+rs0 [direct: primary] test> db.serverStatus().wiredTiger["snapshot-window-settings"]
+{
+  'total number of SnapshotTooOld errors': Long('0'),
+  'minimum target snapshot window size in seconds': 5,
+  'current available snapshot window size in seconds': 5,
+  'latest majority snapshot timestamp available': 'Sep 27 12:57:11:1',
+  'oldest majority snapshot timestamp available': 'Sep 27 12:57:06:1',
+  'pinned timestamp requests': 0,
+  'min pinned timestamp': Timestamp({ t: 4294967295, i: 4294967295 })
+}
+rs0 [direct: primary] test> db.runCommand({find: "acct", filter: {_id: 1}, readConcern: {level: "snapshot", atClusterTime: T}})
+MongoServerError[SnapshotTooOld]: Read timestamp Timestamp(1790513819, 1) is older than the oldest available timestamp.
+rs0 [direct: primary] test> db.adminCommand({setParameter: 1, minSnapshotHistoryWindowInSeconds: 300}).was
+5
+
+
+######## 9. transactionLifetimeLimitSeconds: 오래 열린 트랜잭션은 서버가 abort한다
+
+# 세션 C 시작 (m03-1): mongosh 
+
+rs0 [direct: primary] test> db.adminCommand({getParameter: 1, transactionLifetimeLimitSeconds: 1})
+{
+  transactionLifetimeLimitSeconds: 60,
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513831, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513831, i: 1 })
+}
+rs0 [direct: primary] test> db.adminCommand({setParameter: 1, transactionLifetimeLimitSeconds: 5}).was
+60
+
+[세션 C] rs0 [direct: primary] test> sC = db.getMongo().startSession(); cC = sC.getDatabase("test").acct;
+test.acct
+
+[세션 C] rs0 [direct: primary] test> sC.startTransaction(); cC.insertOne({_id: 3, balance: 1})
+{ acknowledged: true, insertedId: 3 }
+
+rs0 [direct: primary] test> db.serverStatus().transactions.currentOpen
+Long('1')
+
+[세션 C] rs0 [direct: primary] test> sleep(8000)
+
+[세션 C] rs0 [direct: primary] test> cC.insertOne({_id: 4, balance: 1})
+MongoServerError[NoSuchTransaction]: Transaction with { txnNumber: 1 } has been aborted.
+
+[세션 C] rs0 [direct: primary] test> try { cC.insertOne({_id: 5, balance: 1}) } catch (e) { printjson({codeName: e.codeName, errorLabels: e.errorLabels}) }
+{
+  codeName: 'NoSuchTransaction',
+  errorLabels: [
+    'TransientTransactionError'
+  ]
+}
+
+[세션 C] rs0 [direct: primary] test> sC.commitTransaction()
+MongoServerError[NoSuchTransaction]: Transaction with { txnNumber: 1 } has been aborted.
+
+rs0 [direct: primary] test> db.acct.find({_id: {$gte: 3}}).toArray()
+[]
+rs0 [direct: primary] test> db.serverStatus().metrics.abortExpiredTransactions
+{
+  passes: Long('8'),
+  successfulKills: Long('1'),
+  timedOutKills: Long('0')
+}
+rs0 [direct: primary] test> db.adminCommand({setParameter: 1, transactionLifetimeLimitSeconds: 60}).was
+5
+
+$ jq -c 'select(.id == 20707) | {msg, txnNumber: .attr.txnNumberAndRetryCounter.txnNumber}' /data/mongod.log
+{"msg":"Aborting transaction because it has been running for longer than 'transactionLifetimeLimitSeconds'","txnNumber":1}
+[exit=0]
+
+done

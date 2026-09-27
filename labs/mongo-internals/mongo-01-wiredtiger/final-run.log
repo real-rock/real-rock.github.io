@@ -1,0 +1,599 @@
+
+######## 0. 실습 환경
+
+$ docker run -d --init --name m01-1 --hostname m01-1 --network m01-net  mongo-internals:rocky9-8.0.32 sleep infinity
+72938de7593129f148adacb4c034c6c2eb93ee6ac978c932a73694545c7bc0de
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+2.12.0
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork  | grep -E 'forked|ERROR'
+forked process: 33
+[exit=0]
+
+$ jq -r 'select(.msg == "Opening WiredTiger") | .attr.config' /data/mongod.log
+create,cache_size=15508M,session_max=33000,eviction=(threads_min=4,threads_max=4),config_base=false,statistics=(fast),log=(enabled=true,remove=true,path=journal,compressor=snappy),builtin_extension_config=(zstd=(compression_level=6)),file_manager=(close_idle_time=600,close_scan_interval=10,close_handle_minimum=2000),statistics_log=(wait=0),json_output=(error,message),verbose=[recovery_progress:1,checkpoint_progress:1,compact_progress:1,backup:0,checkpoint:0,compact:0,evict:0,history_store:0,recovery:0,rts:0,salvage:0,tiered:0,timestamp:0,transaction:0,verify:0,log:0],prefetch=(available=true,default=false),
+[exit=0]
+
+
+######## 1. dbPath의 파일
+
+test> db.orders.insertMany([{_id: 1, item: "apple", qty: 10}, {_id: 2, item: "banana", qty: 20}, {_id: 3, item: "cherry", qty: 30}])
+{ acknowledged: true, insertedIds: { '0': 1, '1': 2, '2': 3 } }
+test> db.orders.createIndex({item: 1})
+item_1
+
+$ ls -l /data/db
+$ ls -l /data/db/journal
+$ cat /data/db/WiredTiger
+$ bsondump --quiet /data/db/storage.bson
+$ cat /data/db/mongod.lock; echo; pgrep -x mongod
+total 104
+-rw------- 1 mongod mongod    50 Sep 27 21:41 WiredTiger
+-rw------- 1 mongod mongod    21 Sep 27 21:41 WiredTiger.lock
+-rw------- 1 mongod mongod  1165 Sep 27 21:41 WiredTiger.turtle
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 WiredTiger.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 WiredTigerHS.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 _mdb_catalog.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 collection-0-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 collection-2-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 collection-4-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 collection-7-7164268511808313993.wt
+drwx------ 2 mongod mongod  4096 Sep 27 21:41 diagnostic.data
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 index-1-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 index-3-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 index-5-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 index-6-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 index-8-7164268511808313993.wt
+-rw------- 1 mongod mongod 20480 Sep 27 21:41 index-9-7164268511808313993.wt
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 internal-10-7164268511808313993.wt
+drwx------ 2 mongod mongod  4096 Sep 27 21:41 journal
+-rw------- 1 mongod mongod     3 Sep 27 21:41 mongod.lock
+-rw------- 1 mongod mongod  4096 Sep 27 21:41 sizeStorer.wt
+-rw------- 1 mongod mongod   114 Sep 27 21:41 storage.bson
+total 204800
+-rw------- 1 mongod mongod 104857600 Sep 27 21:41 WiredTigerLog.0000000001
+-rw------- 1 mongod mongod 104857600 Sep 27 21:41 WiredTigerPreplog.0000000001
+WiredTiger
+WiredTiger 11.3.0: (November 16, 2023)
+{"storage":{"engine":"wiredTiger","options":{"directoryPerDB":false,"directoryForIndexes":false,"groupCollections":false}}}
+33
+
+33
+[exit=0]
+
+
+######## 2. 컬렉션 이름과 ident: _mdb_catalog
+
+test> db.getSiblingDB("admin").aggregate([{$listCatalog: {}}, {$project: {_id: 0, ns: 1, ident: 1, idxIdent: 1}}])
+[
+  {
+    idxIdent: { _id_: 'index-1-7164268511808313993' },
+    ns: 'admin.system.version',
+    ident: 'collection-0-7164268511808313993'
+  },
+  {
+    idxIdent: { _id_: 'index-3-7164268511808313993' },
+    ns: 'local.startup_log',
+    ident: 'collection-2-7164268511808313993'
+  },
+  {
+    idxIdent: {
+      _id_: 'index-5-7164268511808313993',
+      lsidTTLIndex: 'index-6-7164268511808313993'
+    },
+    ns: 'config.system.sessions',
+    ident: 'collection-4-7164268511808313993'
+  },
+  {
+    idxIdent: {
+      _id_: 'index-8-7164268511808313993',
+      item_1: 'index-9-7164268511808313993'
+    },
+    ns: 'test.orders',
+    ident: 'collection-7-7164268511808313993'
+  }
+]
+test> db.orders.stats().wiredTiger.uri
+statistics:table:collection-7-7164268511808313993
+test> Object.entries(db.orders.stats({indexDetails: true}).indexDetails).map(([name, d]) => name + " -> " + d.uri)
+[
+  '_id_ -> statistics:table:index-8-7164268511808313993',
+  'item_1 -> statistics:table:index-9-7164268511808313993'
+]
+
+
+######## 3. WiredTiger 테이블을 만든 설정: creationString
+
+test> const pick = (cs) => cs.split(",").filter(kv => /^(type|key_format|value_format|block_compressor|internal_page_max|leaf_page_max|memory_page_max|split_pct|prefix_compression|log)=/.test(kv))
+test> pick(db.orders.stats().wiredTiger.creationString)
+[
+  'block_compressor=snappy',
+  'internal_page_max=4KB',
+  'key_format=q',
+  'leaf_page_max=32KB',
+  'log=(enabled=true)',
+  'memory_page_max=10m',
+  'prefix_compression=false',
+  'split_pct=90',
+  'type=file',
+  'value_format=u'
+]
+test> pick(db.orders.stats({indexDetails: true}).indexDetails.item_1.creationString)
+[
+  'block_compressor=',
+  'internal_page_max=16k',
+  'key_format=u',
+  'leaf_page_max=16k',
+  'log=(enabled=true)',
+  'memory_page_max=5MB',
+  'prefix_compression=true',
+  'split_pct=90',
+  'type=file',
+  'value_format=u'
+]
+
+
+######## 4. 압축 방식별 크기
+
+test> db.createCollection("c_snappy")
+{ ok: 1 }
+test> db.createCollection("c_zstd", {storageEngine: {wiredTiger: {configString: "block_compressor=zstd"}}})
+{ ok: 1 }
+test> db.createCollection("c_zlib", {storageEngine: {wiredTiger: {configString: "block_compressor=zlib"}}})
+{ ok: 1 }
+test> db.createCollection("c_none", {storageEngine: {wiredTiger: {configString: "block_compressor=none"}}})
+{ ok: 1 }
+test> ["c_snappy", "c_zstd", "c_zlib", "c_none"].map(c => c + ": " + db[c].stats().wiredTiger.creationString.match(/block_compressor=\w*/)[0])
+[
+  'c_snappy: block_compressor=snappy',
+  'c_zstd: block_compressor=zstd',
+  'c_zlib: block_compressor=zlib',
+  'c_none: block_compressor=none'
+]
+
+$ cat > /data/load-comp.js <<'JS'
+$ // 같은 문서 10만 개를 네 컬렉션에 똑같이 넣는다(난수 씨앗 고정)
+$ let seed = 42;
+$ const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+$ const cities = ["Seoul", "Busan", "Incheon", "Daegu", "Daejeon", "Gwangju", "Ulsan", "Suwon"];
+$ const words = ["order", "delivery", "refund", "coupon", "member", "payment", "shipping", "review", "cart", "event",
+$   "point", "gift", "return", "exchange", "stock", "price", "sale", "brand", "size", "color"];
+$ for (let b = 0; b < 100; b++) {
+$   const docs = [];
+$   for (let i = 0; i < 1000; i++) {
+$     const n = b * 1000 + i;
+$     docs.push({_id: n, user: "user" + (rnd() % 50000), email: "user" + n + "@example.com",
+$       city: cities[rnd() % cities.length], status: ["active", "inactive", "pending"][rnd() % 3],
+$       amount: (rnd() % 1000000) / 100, tags: [words[rnd() % 20], words[rnd() % 20]],
+$       createdAt: new Date(1780000000000 + rnd() % 31536000000),
+$       memo: Array.from({length: 15}, () => words[rnd() % 20]).join(" ")});
+$   }
+$   for (const c of ["c_snappy", "c_zstd", "c_zlib", "c_none"]) db[c].insertMany(docs);
+$ }
+$ JS
+$ mongosh --quiet /data/load-comp.js
+[exit=0]
+
+test> db.c_snappy.findOne({_id: 7})
+{
+  _id: 7,
+  user: 'user18224',
+  email: 'user7@example.com',
+  city: 'Seoul',
+  status: 'inactive',
+  amount: 6594.56,
+  tags: [ 'member', 'cart' ],
+  createdAt: ISODate('2026-06-16T23:31:02.336Z'),
+  memo: 'order order cart sale return cart order sale order order sale order return sale return'
+}
+test> db.adminCommand({fsync: 1})
+{ numFiles: 1, ok: 1 }
+test> ["c_snappy", "c_zstd", "c_zlib", "c_none"].map(c => { const s = db[c].stats(); return {coll: c, count: s.count, size: s.size, storageSize: s.storageSize, ratio: (s.size / s.storageSize).toFixed(2)}; })
+[
+  {
+    coll: 'c_snappy',
+    count: 100000,
+    size: 27461165,
+    storageSize: 10211328,
+    ratio: '2.69'
+  },
+  {
+    coll: 'c_zstd',
+    count: 100000,
+    size: 27461165,
+    storageSize: 4886528,
+    ratio: '5.62'
+  },
+  {
+    coll: 'c_zlib',
+    count: 100000,
+    size: 27461165,
+    storageSize: 4882432,
+    ratio: '5.62'
+  },
+  {
+    coll: 'c_none',
+    count: 100000,
+    size: 27461165,
+    storageSize: 28405760,
+    ratio: '0.97'
+  }
+]
+
+$ ls -l /data/db/collection-11-7164268511808313993.wt /data/db/collection-13-7164268511808313993.wt /data/db/collection-17-7164268511808313993.wt
+-rw------- 1 mongod mongod 10211328 Sep 27 21:41 /data/db/collection-11-7164268511808313993.wt
+-rw------- 1 mongod mongod  4886528 Sep 27 21:41 /data/db/collection-13-7164268511808313993.wt
+-rw------- 1 mongod mongod 28405760 Sep 27 21:41 /data/db/collection-17-7164268511808313993.wt
+[exit=0]
+
+
+######## 5. wt 유틸리티로 본 파일 (mongod를 멈춘 뒤)
+
+$ mongod --dbpath /data/db --shutdown | grep -v '^{'
+Killing process with pid: 33
+[exit=0]
+
+$ wt -h /data/db list | grep '^table:'
+table:_mdb_catalog
+table:collection-0-7164268511808313993
+table:collection-11-7164268511808313993
+table:collection-13-7164268511808313993
+table:collection-15-7164268511808313993
+table:collection-17-7164268511808313993
+table:collection-2-7164268511808313993
+table:collection-4-7164268511808313993
+table:collection-7-7164268511808313993
+table:index-1-7164268511808313993
+table:index-12-7164268511808313993
+table:index-14-7164268511808313993
+table:index-16-7164268511808313993
+table:index-18-7164268511808313993
+table:index-3-7164268511808313993
+table:index-5-7164268511808313993
+table:index-6-7164268511808313993
+table:index-8-7164268511808313993
+table:index-9-7164268511808313993
+table:sizeStorer
+[exit=0]
+
+$ wt -h /data/db dump -x table:collection-7-7164268511808313993 | sed -n '/^Data/,$p'
+Data
+81
+27000000105f69640001000000026974656d00060000006170706c650010717479000a00000000
+82
+28000000105f69640002000000026974656d000700000062616e616e610010717479001400000000
+83
+28000000105f69640003000000026974656d00070000006368657272790010717479001e00000000
+[exit=0]
+
+$ wt -h /data/db dump -x table:collection-7-7164268511808313993 | sed -n '/^Data/,$p' | sed -n 3p | xxd -r -p | bsondump --quiet
+{"_id":{"$numberInt":"1"},"item":"apple","qty":{"$numberInt":"10"}}
+[exit=0]
+
+$ wt -h /data/db dump -x table:index-9-7164268511808313993 | sed -n '/^Data/,$p'
+$ wt -h /data/db dump -x table:index-8-7164268511808313993 | sed -n '/^Data/,$p'
+Data
+3c6170706c6500040008
+
+3c62616e616e6100040010
+
+3c63686572727900040018
+
+Data
+2b0204
+0008
+2b0404
+0010
+2b0604
+0018
+[exit=0]
+
+$ wt -h /data/db verify -d dump_layout table:collection-11-7164268511808313993 2>&1 | grep -vE '^\['
+$ wt -h /data/db verify -d dump_layout table:collection-17-7164268511808313993 2>&1 | grep -vE '^\['
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+file:collection-11-7164268511808313993.wt, ckpt_name: WiredTigerCheckpoint.1
+Root:
+	> addr: [0: 10199040-10203136, 4096, 3539864155]
+Internal page tree-depth (total 4):
+	001: 1
+	002: 3
+Leaf page tree-depth (total 580):
+	003: 580
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+file:collection-17-7164268511808313993.wt, ckpt_name: WiredTigerCheckpoint.1
+Root:
+	> addr: [0: 28393472-28397568, 4096, 2100132084]
+Internal page tree-depth (total 6):
+	001: 1
+	002: 5
+Leaf page tree-depth (total 991):
+	003: 991
+[exit=0]
+
+$ wt -h /data/db verify -d dump_address table:collection-11-7164268511808313993 2>&1 | head -9 | cut -c1-44
+$ wt -h /data/db verify -d dump_address table:collection-17-7164268511808313993 2>&1 | head -9 | cut -c1-44
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+file:collection-11-7164268511808313993.wt, c
+Root:
+	> addr: [0: 10199040-10203136, 4096, 353986
+[NoAddr] -/-,-/- row-store internal write ge
+[0: 10186752-10190848, 4096, 4021143610] new
+[0: 4096-40960, 36864, 1162190748] newest_du
+[0: 40960-77824, 36864, 3643813452] newest_d
+[0: 77824-114688, 36864, 3315467987] newest_
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+file:collection-17-7164268511808313993.wt, c
+Root:
+	> addr: [0: 28393472-28397568, 4096, 210013
+[NoAddr] -/-,-/- row-store internal write ge
+[0: 28372992-28377088, 4096, 3467847535] new
+[0: 4096-32768, 28672, 2770148487] newest_du
+[0: 32768-61440, 28672, 1153302453] newest_d
+[0: 61440-90112, 28672, 553415368] newest_du
+[exit=0]
+
+$ wt -h /data/db stat table:collection-11-7164268511808313993 | grep -E 'btree: (maximum (internal|leaf) page size|number of key/value pairs|row-store (internal|leaf) pages)|block-manager: file size'
+block-manager: file size in bytes=10M (10211328)
+btree: maximum internal page size=4096
+btree: maximum leaf page size=32768
+btree: number of key/value pairs=100000
+btree: row-store internal pages=4
+btree: row-store leaf pages=580
+[exit=0]
+
+
+######## 6. 메모리의 페이지와 디스크의 블록
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork  | grep -E 'forked|ERROR'
+forked process: 809
+[exit=0]
+
+test> function cacheOf(c) { const s = db[c].stats(); return {coll: c, storageSize: s.storageSize, size: s.size, inCache: s.wiredTiger.cache["bytes currently in the cache"], readIntoCache: s.wiredTiger.cache["bytes read into cache"]}; }
+[Function: cacheOf]
+test> cacheOf("c_snappy")
+{
+  coll: 'c_snappy',
+  storageSize: 10211328,
+  size: 27461165,
+  inCache: 383,
+  readIntoCache: 9059
+}
+test> db.c_snappy.aggregate([{$group: {_id: null, n: {$sum: 1}, total: {$sum: "$amount"}}}])
+[ { _id: null, n: 100000, total: 494173742.55 } ]
+test> cacheOf("c_snappy")
+{
+  coll: 'c_snappy',
+  storageSize: 10211328,
+  size: 27461165,
+  inCache: 31422776,
+  readIntoCache: 28220035
+}
+test> db.c_none.aggregate([{$group: {_id: null, n: {$sum: 1}, total: {$sum: "$amount"}}}])
+[ { _id: null, n: 100000, total: 494173742.55 } ]
+test> cacheOf("c_none")
+{
+  coll: 'c_none',
+  storageSize: 28405760,
+  size: 27461165,
+  inCache: 31511577,
+  readIntoCache: 28249003
+}
+
+
+######## 7. 기본 캐시 크기: 메모리 제한이 있는 컨테이너
+
+$ docker run -d --init --name m01-2 --hostname m01-2 --network m01-net --memory 1g mongo-internals:rocky9-8.0.32 sleep infinity
+cd794c3947b43173ce697b7d863083221caaf10f48e9e298901e377321e05eac
+[exit=0]
+
+$ docker run -d --init --name m01-3 --hostname m01-3 --network m01-net --memory 2g mongo-internals:rocky9-8.0.32 sleep infinity
+6cd9bb81b340215717a79d05ea95b167b7161701050256b4bbd358bf96be5e37
+[exit=0]
+
+$ docker run -d --init --name m01-4 --hostname m01-4 --network m01-net --memory 4g mongo-internals:rocky9-8.0.32 sleep infinity
+3878ffd72e8ad603b4b5ca2b11fbeb01ba428bb83481b95db29deea03519961e
+[exit=0]
+
+# (m01-2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork  | grep -E 'forked|ERROR'
+forked process: 16
+[exit=0]
+
+# (m01-3)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork  | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m01-4)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork  | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+$ cat /sys/fs/cgroup/memory.max
+$ jq -r 'select(.msg == "Opening WiredTiger") | .attr.config' /data/mongod.log | grep -oE 'cache_size=[0-9]+M'
+max
+cache_size=15508M
+[exit=0]
+
+test> const h = db.adminCommand({hostInfo: 1}).system; ({memSizeMB: h.memSizeMB, memLimitMB: h.memLimitMB, cacheMaxBytes: db.serverStatus().wiredTiger.cache["maximum bytes configured"]})
+{
+  memSizeMB: Long('32041'),
+  memLimitMB: Long('32041'),
+  cacheMaxBytes: Long('16261316608')
+}
+
+# (m01-2)
+$ cat /sys/fs/cgroup/memory.max
+$ jq -r 'select(.msg == "Opening WiredTiger") | .attr.config' /data/mongod.log | grep -oE 'cache_size=[0-9]+M'
+1073741824
+cache_size=256M
+[exit=0]
+
+# (m01-2) mongosh 
+test> const h = db.adminCommand({hostInfo: 1}).system; ({memSizeMB: h.memSizeMB, memLimitMB: h.memLimitMB, cacheMaxBytes: db.serverStatus().wiredTiger.cache["maximum bytes configured"]})
+{
+  memSizeMB: Long('32041'),
+  memLimitMB: Long('1024'),
+  cacheMaxBytes: 268435456
+}
+
+# (m01-3)
+$ cat /sys/fs/cgroup/memory.max
+$ jq -r 'select(.msg == "Opening WiredTiger") | .attr.config' /data/mongod.log | grep -oE 'cache_size=[0-9]+M'
+2147483648
+cache_size=512M
+[exit=0]
+
+# (m01-3) mongosh 
+test> const h = db.adminCommand({hostInfo: 1}).system; ({memSizeMB: h.memSizeMB, memLimitMB: h.memLimitMB, cacheMaxBytes: db.serverStatus().wiredTiger.cache["maximum bytes configured"]})
+{
+  memSizeMB: Long('32041'),
+  memLimitMB: Long('2048'),
+  cacheMaxBytes: 536870912
+}
+
+# (m01-4)
+$ cat /sys/fs/cgroup/memory.max
+$ jq -r 'select(.msg == "Opening WiredTiger") | .attr.config' /data/mongod.log | grep -oE 'cache_size=[0-9]+M'
+4294967296
+cache_size=1536M
+[exit=0]
+
+# (m01-4) mongosh 
+test> const h = db.adminCommand({hostInfo: 1}).system; ({memSizeMB: h.memSizeMB, memLimitMB: h.memLimitMB, cacheMaxBytes: db.serverStatus().wiredTiger.cache["maximum bytes configured"]})
+{
+  memSizeMB: Long('32041'),
+  memLimitMB: Long('4096'),
+  cacheMaxBytes: 1610612736
+}
+
+
+######## 8. 작은 캐시(256MB)에서 캐시보다 큰 데이터
+
+$ mongod --dbpath /data/db --shutdown | grep -v '^{'
+Killing process with pid: 809
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --wiredTigerCacheSizeGB 0.25 | grep -E 'forked|ERROR'
+forked process: 978
+[exit=0]
+
+$ cat > /data/cache.js <<'JS'
+$ function cache() {
+$   const c = db.serverStatus().wiredTiger.cache, mb = (b) => Math.round(b / 1048576);
+$   const max = c["maximum bytes configured"];
+$   return {maxMB: mb(max), inCacheMB: mb(c["bytes currently in the cache"]), usedPct: +(100 * c["bytes currently in the cache"] / max).toFixed(1),
+$     dirtyMB: mb(c["tracked dirty bytes in the cache"]), dirtyPct: +(100 * c["tracked dirty bytes in the cache"] / max).toFixed(1),
+$     pagesRead: c["pages read into cache"], pagesWritten: c["pages written from cache"],
+$     workerEvict: c["evict page attempts by eviction worker threads"], appEvict: c["page evict attempts by application threads"],
+$     appEvictUsecs: c["application thread time evicting (usecs)"],
+$     cleanEvicted: c["unmodified pages evicted"], dirtyEvicted: c["modified pages evicted"],
+$     dirtyTrigger: c["number of times dirty trigger was reached"], evictionTrigger: c["number of times eviction trigger was reached"]};
+$ }
+$ JS
+$ cat > /data/load-ev.js <<'JS'
+$ // 1KB 남짓한 문서 40만 개(약 400MB)를 넣는다
+$ let seed = 7;
+$ const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+$ let pool = "";
+$ while (pool.length < 1000000) pool += rnd().toString(36);
+$ for (let b = 0; b < 400; b++) {
+$   const docs = [];
+$   for (let i = 0; i < 1000; i++)
+$     docs.push({_id: b * 1000 + i, user: "user" + (rnd() % 100000), amount: rnd() % 100000, memo: pool.substr(rnd() % 990000, 1000)});
+$   db.ev.insertMany(docs);
+$ }
+$ JS
+[exit=0]
+
+test> cache()
+{
+  maxMB: 256,
+  inCacheMB: 0,
+  usedPct: 0,
+  dirtyMB: 0,
+  dirtyPct: 0,
+  pagesRead: 23,
+  pagesWritten: 3,
+  workerEvict: 0,
+  appEvict: 0,
+  appEvictUsecs: 0,
+  cleanEvicted: 0,
+  dirtyEvicted: 0,
+  dirtyTrigger: 0,
+  evictionTrigger: 0
+}
+
+$ time mongosh --quiet /data/load-ev.js
+
+real	0m2.046s
+user	0m1.521s
+sys	0m0.176s
+[exit=0]
+
+test> cache()
+{
+  maxMB: 256,
+  inCacheMB: 180,
+  usedPct: 70.4,
+  dirtyMB: 1,
+  dirtyPct: 0.5,
+  pagesRead: 32,
+  pagesWritten: 8979,
+  workerEvict: 688,
+  appEvict: 63,
+  appEvictUsecs: 17973,
+  cleanEvicted: 601,
+  dirtyEvicted: 248,
+  dirtyTrigger: 0,
+  evictionTrigger: 0
+}
+test> const s = db.ev.stats(); ({count: s.count, sizeMB: Math.round(s.size / 1048576), storageSizeMB: Math.round(s.storageSize / 1048576)})
+{ count: 400000, sizeMB: 403, storageSizeMB: 336 }
+test> let t = Date.now(); db.ev.updateMany({}, {$inc: {amount: 1}}).modifiedCount + " docs, " + (Date.now() - t) + " ms"
+400000 docs, 967 ms
+test> cache()
+{
+  maxMB: 256,
+  inCacheMB: 206,
+  usedPct: 80.6,
+  dirtyMB: 11,
+  dirtyPct: 4.3,
+  pagesRead: 5128,
+  pagesWritten: 22401,
+  workerEvict: 10952,
+  appEvict: 68,
+  appEvictUsecs: 18383,
+  cleanEvicted: 2395,
+  dirtyEvicted: 8770,
+  dirtyTrigger: 9,
+  evictionTrigger: 0
+}
+test> t = Date.now(); db.ev.aggregate([{$group: {_id: null, n: {$sum: 1}, total: {$sum: "$amount"}}}]).toArray()[0].n + " docs, " + (Date.now() - t) + " ms"
+400000 docs, 143 ms
+test> cache()
+{
+  maxMB: 256,
+  inCacheMB: 199,
+  usedPct: 77.8,
+  dirtyMB: 11,
+  dirtyPct: 4.3,
+  pagesRead: 15308,
+  pagesWritten: 22401,
+  workerEvict: 21297,
+  appEvict: 72,
+  appEvictUsecs: 18388,
+  cleanEvicted: 12701,
+  dirtyEvicted: 8770,
+  dirtyTrigger: 9,
+  evictionTrigger: 1
+}
+
+done

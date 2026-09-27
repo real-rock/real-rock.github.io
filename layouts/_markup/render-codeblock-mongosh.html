@@ -1,0 +1,17 @@
+{{- /* mongosh 세션 블록: 프롬프트("test> ", "rs0 [direct: primary] test> ", "[direct: mongos] test> ",
+       세션 구분용 "A test> ") 뒤와 여러 줄 명령의 이어지는 줄("... ")은 JavaScript로 하이라이팅하고,
+       나머지 줄은 결과(go)로 표시한다. console, psql 블록과 같은 구조로 출력한다. */ -}}
+{{- $out := slice -}}
+{{- range split (strings.TrimRight "\n" .Inner) "\n" -}}
+  {{- $m := findRESubmatch `^((?:[A-Z] )?(?:[A-Za-z0-9_-]+ )?(?:\[[^\]]+\] )?[A-Za-z0-9_.-]+>|\.\.\.) (.*)$` . 1 -}}
+  {{- if $m -}}
+    {{- $m = index $m 0 -}}
+    {{- $js := transform.Highlight (index $m 2) "javascript" "hl_inline=true" | replaceRE `^<code[^>]*>|</code>$` "" -}}
+    {{- $out = $out | append (printf `<span class="line"><span class="cl"><span class="gp">%s</span> %s
+</span></span>` (index $m 1) $js) -}}
+  {{- else -}}
+    {{- $out = $out | append (printf `<span class="line"><span class="cl"><span class="go">%s
+</span></span></span>` (htmlEscape .)) -}}
+  {{- end -}}
+{{- end -}}
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-mongosh" data-lang="mongosh">{{ delimit $out "" | safeHTML }}</code></pre></div>

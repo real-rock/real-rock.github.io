@@ -1,0 +1,603 @@
+
+######## 0. 실습 환경: 3노드 레플리카셋
+
+$ docker run -d --init --name m08-1 --hostname m08-1 --network m08-net  mongo-internals:rocky9-8.0.32 sleep infinity
+085ce0ea4a08ee198b2d4c281b9eb55fbaa14fb911c37b0b01fd69876049f346
+[exit=0]
+
+$ docker run -d --init --name m08-2 --hostname m08-2 --network m08-net  mongo-internals:rocky9-8.0.32 sleep infinity
+9aef5213ba3308741c68dbf5e6daebd799b8afc63c2ac74c31e36bd8670221ba
+[exit=0]
+
+$ docker run -d --init --name m08-3 --hostname m08-3 --network m08-net  mongo-internals:rocky9-8.0.32 sleep infinity
+06de9e348b0ace1c151104414f6a6f9de95ef1d79b7c462c4f005fe1b5ecd698
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+2.12.0
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 33
+[exit=0]
+
+# (m08-2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 18
+[exit=0]
+
+# (m08-3)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+test> rs.initiate({_id: 'rs0', settings: {electionTimeoutMillis: 30000}, members: [{_id: 0, host: 'm08-1:27017', priority: 2}, {_id: 1, host: 'm08-2:27017'}, {_id: 2, host: 'm08-3:27017'}]})
+{
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513535, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513535, i: 1 })
+}
+
+rs0 [direct: primary] test> rs.status().members.map(m => m.name + ' ' + m.stateStr)
+[
+  'm08-1:27017 PRIMARY',
+  'm08-2:27017 SECONDARY',
+  'm08-3:27017 SECONDARY'
+]
+
+
+######## 1. 기본 read/write concern
+
+rs0 [direct: primary] test> db.adminCommand({getDefaultRWConcern: 1})
+{
+  defaultReadConcern: { level: 'local' },
+  defaultWriteConcern: { w: 'majority', wtimeout: 0 },
+  defaultWriteConcernSource: 'implicit',
+  defaultReadConcernSource: 'implicit',
+  localUpdateWallClockTime: ISODate('2026-09-27T12:52:49.513Z'),
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513567, i: 16 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513567, i: 16 })
+}
+rs0 [direct: primary] test> rs.conf().writeConcernMajorityJournalDefault
+true
+rs0 [direct: primary] test> rs.conf().settings.electionTimeoutMillis
+30000
+
+
+######## 2. write concern을 붙인 쓰기와 응답
+
+rs0 [direct: primary] test> db.t.insertOne({_id: 'majority-1', v: 1}, {writeConcern: {w: 'majority'}})
+{ acknowledged: true, insertedId: 'majority-1' }
+rs0 [direct: primary] test> db.runCommand({insert: 't', documents: [{_id: 'majority-2', v: 2}], writeConcern: {w: 'majority', wtimeout: 5000}})
+{
+  n: 1,
+  electionId: ObjectId('7fffffff0000000000000001'),
+  opTime: { ts: Timestamp({ t: 1790513570, i: 1 }), t: Long('1') },
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513570, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513570, i: 1 })
+}
+rs0 [direct: primary] test> db.runCommand({insert: 't', documents: [{_id: 'w1-1', v: 3}], writeConcern: {w: 1}})
+{
+  n: 1,
+  electionId: ObjectId('7fffffff0000000000000001'),
+  opTime: { ts: Timestamp({ t: 1790513570, i: 2 }), t: Long('1') },
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513570, i: 2 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513570, i: 2 })
+}
+
+
+######## 2b. snapshot read: 과거 시점(atClusterTime)으로 읽기
+
+rs0 [direct: primary] test> const t1 = db.runCommand({insert: 'snap', documents: [{_id: 1, v: 'old'}]}).operationTime; t1
+Timestamp({ t: 1790513570, i: 4 })
+rs0 [direct: primary] test> db.snap.updateOne({_id: 1}, {$set: {v: 'new'}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> db.snap.find()
+[ { _id: 1, v: 'new' } ]
+rs0 [direct: primary] test> db.runCommand({find: 'snap', filter: {_id: 1}, readConcern: {level: 'snapshot', atClusterTime: t1}}).cursor.firstBatch
+[ { _id: 1, v: 'old' } ]
+rs0 [direct: primary] test> db.adminCommand({getParameter: 1, minSnapshotHistoryWindowInSeconds: 1}).minSnapshotHistoryWindowInSeconds
+300
+
+
+######## 3. w:1, w:majority, j:true 지연 비교 (같은 실행 안에서의 비교)
+
+rs0 [direct: primary] test> function bench(wc, n) { const t0 = Date.now(); for (let i = 0; i < n; i++) { db.bench.insertOne({i: i}, {writeConcern: wc}); } return (Date.now() - t0) + ' ms / ' + n; }
+[Function: bench]
+rs0 [direct: primary] test> bench({w: 1}, 300)
+207 ms / 300
+rs0 [direct: primary] test> bench({w: 1, j: true}, 300)
+216 ms / 300
+rs0 [direct: primary] test> bench({w: 'majority'}, 300)
+246 ms / 300
+rs0 [direct: primary] test> bench({w: 3}, 300)
+235 ms / 300
+
+
+######## 4. commit point: replSetGetStatus의 optimes
+
+rs0 [direct: primary] test> const o = db.adminCommand({replSetGetStatus: 1}).optimes; ({lastCommittedOpTime: o.lastCommittedOpTime, readConcernMajorityOpTime: o.readConcernMajorityOpTime, appliedOpTime: o.appliedOpTime, writtenOpTime: o.writtenOpTime, durableOpTime: o.durableOpTime})
+{
+  lastCommittedOpTime: { ts: Timestamp({ t: 1790513571, i: 1150 }), t: Long('1') },
+  readConcernMajorityOpTime: { ts: Timestamp({ t: 1790513571, i: 1150 }), t: Long('1') },
+  appliedOpTime: { ts: Timestamp({ t: 1790513571, i: 1150 }), t: Long('1') },
+  writtenOpTime: { ts: Timestamp({ t: 1790513571, i: 1150 }), t: Long('1') },
+  durableOpTime: { ts: Timestamp({ t: 1790513571, i: 1150 }), t: Long('1') }
+}
+
+
+######## 5. secondary 둘을 멈추면: w:1은 성공, w:majority는 wtimeout
+
+# 세션 A 시작 (m08-1): mongosh 
+
+# (m08-2 root) kill -STOP 18
+# (m08-2 root) ps -o pid,stat,comm -p 18
+    PID STAT COMMAND
+     18 Tl   mongod
+[exit=0]
+
+# (m08-3 root) kill -STOP 17
+# (m08-3 root) ps -o pid,stat,comm -p 17
+    PID STAT COMMAND
+     17 Tl   mongod
+[exit=0]
+
+[세션 A] rs0 [direct: primary] test> db.t.insertOne({_id: 'w1-stalled', v: 10}, {writeConcern: {w: 1}})
+{ acknowledged: true, insertedId: 'w1-stalled' }
+
+[세션 A] rs0 [direct: primary] test> db.runCommand({insert: 't', documents: [{_id: 'maj-stalled', v: 11}], writeConcern: {w: 'majority', wtimeout: 2000}})
+Uncaught:
+MongoWriteConcernError[WriteConcernFailed]: waiting for replication timed out
+Additional information: {
+  wtimeout: true,
+  writeConcern: { w: 'majority', wtimeout: 2000, provenance: 'clientSupplied' }
+}
+Result: {
+  n: 1,
+  electionId: ObjectId('7fffffff0000000000000001'),
+  opTime: { ts: Timestamp({ t: 1790513576, i: 1 }), t: 1 },
+  writeConcernError: {
+    code: 64,
+    codeName: 'WriteConcernFailed',
+    errmsg: 'waiting for replication timed out',
+    errInfo: {
+      wtimeout: true,
+      writeConcern: { w: 'majority', wtimeout: 2000, provenance: 'clientSupplied' }
+    }
+  },
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513576, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: 0
+    }
+  },
+  operationTime: Timestamp({ t: 1790513576, i: 1 })
+}
+
+[세션 A] rs0 [direct: primary] test> db.runCommand({insert: 't', documents: [{_id: 'default-stalled', v: 12}], maxTimeMS: 2000})
+Uncaught:
+MongoWriteConcernError[MaxTimeMSExpired]: operation exceeded time limit
+Additional information: {
+  writeConcern: { w: 'majority', wtimeout: 0, provenance: 'implicitDefault' }
+}
+Result: {
+  n: 1,
+  electionId: ObjectId('7fffffff0000000000000001'),
+  opTime: { ts: Timestamp({ t: 1790513580, i: 1 }), t: 1 },
+  writeConcernError: {
+    code: 50,
+    codeName: 'MaxTimeMSExpired',
+    errmsg: 'operation exceeded time limit',
+    errInfo: {
+      writeConcern: { w: 'majority', wtimeout: 0, provenance: 'implicitDefault' }
+    }
+  },
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513580, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: 0
+    }
+  },
+  operationTime: Timestamp({ t: 1790513580, i: 1 })
+}
+
+[세션 A] rs0 [direct: primary] test> db.t.find({v: {$gte: 10}}).readConcern('local').toArray()
+[
+  { _id: 'w1-stalled', v: 10 },
+  { _id: 'maj-stalled', v: 11 },
+  { _id: 'default-stalled', v: 12 }
+]
+
+[세션 A] rs0 [direct: primary] test> db.t.find({v: {$gte: 10}}).readConcern('majority').toArray()
+[]
+
+[세션 A] rs0 [direct: primary] test> const s = db.adminCommand({replSetGetStatus: 1}); ({lastCommittedOpTime: s.optimes.lastCommittedOpTime.ts, appliedOpTime: s.optimes.appliedOpTime.ts, members: s.members.map(m => m.name + ' ' + m.stateStr + ' ' + (m.health === 1 ? 'up' : 'down'))})
+{
+  lastCommittedOpTime: Timestamp({ t: 1790513571, i: 1150 }),
+  appliedOpTime: Timestamp({ t: 1790513580, i: 1 }),
+  members: [
+    'm08-1:27017 PRIMARY up',
+    'm08-2:27017 (not reachable/healthy) down',
+    'm08-3:27017 (not reachable/healthy) down'
+  ]
+}
+
+[세션 A] rs0 [direct: primary] test> db.runCommand({find: 't', filter: {_id: 'majority-1'}, readConcern: {level: 'linearizable'}, maxTimeMS: 2000})
+MongoServerError[MaxTimeMSExpired]: operation exceeded time limit
+
+# (m08-2 root) kill -CONT 18
+[exit=0]
+
+# (m08-3 root) kill -CONT 17
+[exit=0]
+
+rs0 [direct: primary] test> db.t.find({v: {$gte: 10}}).readConcern('majority').toArray()
+[
+  { _id: 'w1-stalled', v: 10 },
+  { _id: 'maj-stalled', v: 11 },
+  { _id: 'default-stalled', v: 12 }
+]
+rs0 [direct: primary] test> db.getSiblingDB('local').oplog.rs.find({op: 'n', 'o.msg': 'linearizable read'}, {ts: 1, op: 1, o: 1}).toArray()
+[
+  {
+    op: 'n',
+    o: { msg: 'linearizable read' },
+    ts: Timestamp({ t: 1790513588, i: 1 })
+  }
+]
+rs0 [direct: primary] test> db.runCommand({find: 't', filter: {_id: 'majority-1'}, readConcern: {level: 'linearizable'}, maxTimeMS: 2000}).cursor.firstBatch
+[ { _id: 'majority-1', v: 1 } ]
+rs0 [direct: primary] test> rs.status().members.map(m => m.name + ' ' + m.stateStr)
+[
+  'm08-1:27017 PRIMARY',
+  'm08-2:27017 SECONDARY',
+  'm08-3:27017 SECONDARY'
+]
+
+
+######## 6. causal consistency: 멈춘 secondary에서 afterClusterTime 읽기
+
+# (m08-3) mongosh 
+rs0 [direct: secondary] test> db.fsyncLock()
+{
+  info: 'now locked against writes, use db.fsyncUnlock() to unlock',
+  lockCount: Long('1'),
+  seeAlso: 'http://dochub.mongodb.org/core/fsynccommand',
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513596, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513596, i: 1 })
+}
+
+rs0 [direct: primary] test> const r = db.runCommand({insert: 't', documents: [{_id: 'causal-1', v: 20}], writeConcern: {w: 'majority'}}); r
+{
+  n: 1,
+  electionId: ObjectId('7fffffff0000000000000001'),
+  opTime: { ts: Timestamp({ t: 1790513597, i: 1 }), t: Long('1') },
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513597, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513597, i: 1 })
+}
+rs0 [direct: primary] test> r.operationTime
+Timestamp({ t: 1790513597, i: 1 })
+
+# (m08-3) mongosh 
+rs0 [direct: secondary] test> db.t.find({_id: 'causal-1'}).readConcern('local').toArray()
+[]
+rs0 [direct: secondary] test> db.t.find({_id: 'causal-1'}).readConcern('majority').toArray()
+[]
+rs0 [direct: secondary] test> db.runCommand({find: 't', filter: {_id: 'causal-1'}, readConcern: {level: 'majority', afterClusterTime: Timestamp({t: 1790513597, i: 1})}, maxTimeMS: 3000})
+MongoServerError[MaxTimeMSExpired]: Error waiting for snapshot not less than { ts: Timestamp(1790513597, 1), t: -1 }, current relevant optime is { ts: Timestamp(1790513596, 1), t: 1 }. :: caused by :: operation exceeded time limit
+
+# 세션 B 시작 (m08-3): mongosh 
+
+[세션 B] rs0 [direct: secondary] test> db.runCommand({find: 't', filter: {_id: 'causal-1'}, readConcern: {level: 'majority', afterClusterTime: Timestamp({t: 1790513597, i: 1})}}).cursor.firstBatch
+
+# (m08-3) mongosh 
+rs0 [direct: secondary] test> db.fsyncUnlock()
+{
+  info: 'fsyncUnlock completed',
+  lockCount: Long('0'),
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513597, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513596, i: 1 })
+}
+
+[세션 B] (앞 명령의 결과를 기다림)
+[ { _id: 'causal-1', v: 20 } ]
+
+
+######## 7. causal consistency 세션: 드라이버가 afterClusterTime을 붙인다
+
+# m08-2, m08-3의 slowms를 -1로 두어 받은 명령을 모두 로그에 남긴다
+
+rs0 [direct: primary] test> const s = db.getMongo().startSession({causalConsistency: true}); const sdb = s.getDatabase('test')
+rs0 [direct: primary] test> sdb.t.insertOne({_id: 'causal-2', v: 21})
+{ acknowledged: true, insertedId: 'causal-2' }
+rs0 [direct: primary] test> s.getOperationTime()
+Timestamp({ t: 1790513609, i: 1 })
+rs0 [direct: primary] test> sdb.t.find({_id: 'causal-2'}).readPref('secondary').readConcern('majority').toArray()
+[ { _id: 'causal-2', v: 21 } ]
+
+# (m08-2)
+$ jq -c 'select(.msg == "Slow query" and .attr.command.find == "t" and .attr.command.filter._id == "causal-2") | {readConcern: .attr.command.readConcern, readPreference: .attr.command["$readPreference"]}' /data/mongod.log
+{"readConcern":{"level":"majority","afterClusterTime":{"$timestamp":{"t":1790513609,"i":1}}},"readPreference":{"mode":"secondary"}}
+[exit=0]
+
+# (m08-3)
+$ jq -c 'select(.msg == "Slow query" and .attr.command.find == "t" and .attr.command.filter._id == "causal-2") | {readConcern: .attr.command.readConcern, readPreference: .attr.command["$readPreference"]}' /data/mongod.log
+[exit=0]
+
+
+######## 8. rollback 준비: priority를 되돌리고 m08-1을 primary로
+
+rs0 [direct: primary] test> const cfg = rs.conf(); cfg.members[0].priority = 1; rs.reconfig(cfg).ok
+1
+rs0 [direct: primary] test> db.t.insertOne({_id: 'before-partition', v: 30}, {writeConcern: {w: 'majority'}})
+{ acknowledged: true, insertedId: 'before-partition' }
+rs0 [direct: primary] test> rs.status().members.map(m => m.name + ' ' + m.stateStr)
+[
+  'm08-1:27017 PRIMARY',
+  'm08-2:27017 SECONDARY',
+  'm08-3:27017 SECONDARY'
+]
+
+
+######## 9. primary를 네트워크에서 떼어 내고 w:1로 쓰기
+
+$ docker network disconnect m08-net m08-1
+[exit=0]
+
+rs0 [direct: primary] test> db.hello().isWritablePrimary
+true
+rs0 [direct: primary] test> db.t.insertOne({_id: 'lost-w1', v: 31}, {writeConcern: {w: 1}})
+{ acknowledged: true, insertedId: 'lost-w1' }
+rs0 [direct: primary] test> db.t.updateOne({_id: 'before-partition'}, {$set: {v: 300}}, {writeConcern: {w: 1}})
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+rs0 [direct: primary] test> db.t.insertOne({_id: 'lost-majority-timeout', v: 32}, {writeConcern: {w: 'majority', wtimeout: 2000}})
+Uncaught:
+MongoWriteConcernError[WriteConcernFailed]: waiting for replication timed out
+Additional information: {
+  wtimeout: true,
+  writeConcern: { w: 'majority', wtimeout: 2000, provenance: 'clientSupplied' }
+}
+Result: {
+  n: 1,
+  electionId: ObjectId('7fffffff0000000000000001'),
+  opTime: { ts: Timestamp({ t: 1790513611, i: 3 }), t: 1 },
+  writeConcernError: {
+    code: 64,
+    codeName: 'WriteConcernFailed',
+    errmsg: 'waiting for replication timed out',
+    errInfo: {
+      wtimeout: true,
+      writeConcern: { w: 'majority', wtimeout: 2000, provenance: 'clientSupplied' }
+    }
+  },
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513611, i: 3 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: 0
+    }
+  },
+  operationTime: Timestamp({ t: 1790513611, i: 3 })
+}
+rs0 [direct: primary] test> db.t.find({v: {$gte: 30}}).toArray()
+[
+  { _id: 'before-partition', v: 300 },
+  { _id: 'lost-w1', v: 31 },
+  { _id: 'lost-majority-timeout', v: 32 }
+]
+
+
+######## 10. 나머지 둘이 새 primary를 뽑고, 새 primary에 다른 쓰기
+
+# 새 primary: m08-3
+# (m08-3) mongosh 
+rs0 [direct: primary] test> db.hello().isWritablePrimary
+true
+rs0 [direct: primary] test> db.t.insertOne({_id: 'after-failover', v: 40}, {writeConcern: {w: 'majority'}})
+{ acknowledged: true, insertedId: 'after-failover' }
+rs0 [direct: primary] test> db.t.find({v: {$gte: 30}}).toArray()
+[
+  { _id: 'before-partition', v: 30 },
+  { _id: 'after-failover', v: 40 }
+]
+rs0 [direct: primary] test> rs.status().members.map(m => m.name + ' ' + m.stateStr)
+[
+  'm08-1:27017 (not reachable/healthy)',
+  'm08-2:27017 SECONDARY',
+  'm08-3:27017 PRIMARY'
+]
+
+$ jq -c 'select(.msg | test("relinquishing primary|Stepping down from primary|Can.t see a majority")) | {t: .t."$date", msg}' /data/mongod.log
+{"t":"2026-09-27T12:54:00.859+00:00","msg":"Can't see a majority of the set, relinquishing primary"}
+{"t":"2026-09-27T12:54:00.859+00:00","msg":"Stepping down from primary in response to heartbeat"}
+[exit=0]
+
+
+######## 11. 옛 primary를 다시 붙이면: ROLLBACK을 거쳐 SECONDARY
+
+$ docker network connect m08-net m08-1
+[exit=0]
+
+$ jq -c 'select(.c == "ROLLBACK" or (.msg | test("Transition to ROLLBACK|Starting rollback|rollback"))) | {t: .t."$date", msg}' /data/mongod.log
+{"t":"2026-09-27T12:52:15.036+00:00","msg":"Initialized the rollback ID"}
+{"t":"2026-09-27T12:54:03.881+00:00","msg":"Starting rollback due to fetcher error"}
+{"t":"2026-09-27T12:54:03.881+00:00","msg":"Scheduling rollback"}
+{"t":"2026-09-27T12:54:03.881+00:00","msg":"Transition to ROLLBACK"}
+{"t":"2026-09-27T12:54:03.881+00:00","msg":"Finding common point"}
+{"t":"2026-09-27T12:54:03.884+00:00","msg":"Rollback common point"}
+{"t":"2026-09-27T12:54:03.884+00:00","msg":"Incremented the rollback ID"}
+{"t":"2026-09-27T12:54:03.884+00:00","msg":"Stopping index builds before rollback"}
+{"t":"2026-09-27T12:54:03.884+00:00","msg":"Waiting for all background operations to complete before starting rollback"}
+{"t":"2026-09-27T12:54:03.884+00:00","msg":"Finished waiting for background operations to complete before rollback"}
+{"t":"2026-09-27T12:54:03.884+00:00","msg":"Finding record store counts"}
+{"t":"2026-09-27T12:54:03.884+00:00","msg":"Preparing to write deleted documents to a rollback file"}
+{"t":"2026-09-27T12:54:03.986+00:00","msg":"Rolling back to the stable timestamp"}
+{"t":"2026-09-27T12:54:04.007+00:00","msg":"Rolling back to the stable timestamp completed by storage engine"}
+{"t":"2026-09-27T12:54:04.014+00:00","msg":"Operations reverted by rollback"}
+{"t":"2026-09-27T12:54:04.018+00:00","msg":"Marking to truncate all oplog entries with timestamps greater than common point"}
+{"t":"2026-09-27T12:54:04.019+00:00","msg":"Not updating committed snapshot because we are in rollback"}
+{"t":"2026-09-27T12:54:04.019+00:00","msg":"Triggering the rollback op observer"}
+{"t":"2026-09-27T12:54:04.019+00:00","msg":"Rollback complete"}
+{"t":"2026-09-27T12:54:04.019+00:00","msg":"Rollback summary"}
+{"t":"2026-09-27T12:54:04.019+00:00","msg":"Transition to SECONDARY"}
+[exit=0]
+
+$ jq -c 'select(.msg == "Starting rollback due to fetcher error") | .attr' /data/mongod.log
+{"error":"OplogStartMissing: the sync source's oplog and our oplog have diverged, going into rollback. our last optime fetched: { ts: Timestamp(1790513637, 1), t: 1 }. optime of first document in batch: { ts: Timestamp(1790513641, 2), t: 2 }. sync source's first optime: { ts: Timestamp(1790513535, 1), t: -1 }","lastCommittedOpTime":{"ts":{"$timestamp":{"t":1790513610,"i":2}},"t":1}}
+[exit=0]
+
+$ jq -c 'select(.msg == "Rollback common point" or .msg == "Operations reverted by rollback" or .msg == "Preparing to write deleted documents to a rollback file") | {msg, attr}' /data/mongod.log
+{"msg":"Rollback common point","attr":{"commonPointOpTime":{"ts":{"$timestamp":{"t":1790513610,"i":2}},"t":1}}}
+{"msg":"Preparing to write deleted documents to a rollback file","attr":{"namespace":"test.t","uuid":"e16a3931-c0ef-487c-a251-1a236d215b48","file":"/data/db/rollback/e16a3931-c0ef-487c-a251-1a236d215b48/removed.2026-09-27T12-54-03.0.bson"}}
+{"msg":"Operations reverted by rollback","attr":{"insert":2,"update":1,"delete":0,"insertGlobalIndexKey":0,"deleteGlobalIndexKey":0}}
+[exit=0]
+
+$ jq -c 'select(.msg == "Rollback summary") | .attr | {startTime, endTime, syncSource, rbid, lastOptimeRolledBack, commonPoint, lastWallClockTimeRolledBack, firstOpWallClockTimeAfterCommonPoint, truncateTimestamp, stableTimestamp, rollbackDataFileDirectory, rollbackCommandCounts, totalEntriesRolledBackIncludingNoops}' /data/mongod.log
+{"startTime":{"$date":"2026-09-27T12:54:03.881Z"},"endTime":{"$date":"2026-09-27T12:54:04.019Z"},"syncSource":"m08-2:27017","rbid":2,"lastOptimeRolledBack":{"ts":{"$timestamp":{"t":1790513637,"i":1}},"t":1},"commonPoint":{"ts":{"$timestamp":{"t":1790513610,"i":2}},"t":1},"lastWallClockTimeRolledBack":{"$date":"2026-09-27T12:53:57.392Z"},"firstOpWallClockTimeAfterCommonPoint":{"$date":"2026-09-27T12:53:31.368Z"},"truncateTimestamp":{"$timestamp":{"t":1790513610,"i":2}},"stableTimestamp":{"$timestamp":{"t":1790513610,"i":2}},"rollbackDataFileDirectory":"/data/db/rollback/e16a3931-c0ef-487c-a251-1a236d215b48","rollbackCommandCounts":{"update":1,"insert":2},"totalEntriesRolledBackIncludingNoops":5}
+[exit=0]
+
+$ find /data/db/rollback -type f
+$ bsondump --quiet $(find /data/db/rollback -name 'removed.*.bson')
+/data/db/rollback/e16a3931-c0ef-487c-a251-1a236d215b48/removed.2026-09-27T12-54-03.0.bson
+{"_id":"lost-w1","v":{"$numberInt":"31"}}
+{"_id":"lost-majority-timeout","v":{"$numberInt":"32"}}
+{"_id":"before-partition","v":{"$numberInt":"300"}}
+[exit=0]
+
+rs0 [direct: secondary] test> rs.status().members.map(m => m.name + ' ' + m.stateStr)
+[
+  'm08-1:27017 SECONDARY',
+  'm08-2:27017 SECONDARY',
+  'm08-3:27017 PRIMARY'
+]
+rs0 [direct: secondary] test> db.t.find({v: {$gte: 30}}).readPref('secondaryPreferred').toArray()
+[
+  { _id: 'before-partition', v: 30 },
+  { _id: 'after-failover', v: 40 }
+]
+
+
+######## 12. arbiter를 더하면 기본 write concern이 달라진다
+
+$ docker run -d --init --name m08-4 --hostname m08-4 --network m08-net  mongo-internals:rocky9-8.0.32 sleep infinity
+5eba22fd4178b8e8b43a2d23391faab4cdddc17ec89623381b7778f1f4c8fc3d
+[exit=0]
+
+# (m08-4)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m08-3) mongosh 
+rs0 [direct: primary] test> rs.addArb('m08-4:27017')
+MongoServerError[NewReplicaSetConfigurationIncompatible]: Reconfig attempted to install a config that would change the implicit default write concern. Use the setDefaultRWConcern command to set a cluster-wide write concern and try the reconfig again.
+rs0 [direct: primary] test> db.adminCommand({setDefaultRWConcern: 1, defaultWriteConcern: {w: 'majority'}, writeConcern: {w: 'majority'}})
+{
+  defaultReadConcern: { level: 'local' },
+  defaultWriteConcern: { w: 'majority', wtimeout: 0 },
+  updateOpTime: Timestamp({ t: 1790513642, i: 1 }),
+  updateWallClockTime: ISODate('2026-09-27T12:54:07.945Z'),
+  defaultWriteConcernSource: 'global',
+  defaultReadConcernSource: 'implicit',
+  localUpdateWallClockTime: ISODate('2026-09-27T12:54:07.953Z'),
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513647, i: 2 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513647, i: 2 })
+}
+rs0 [direct: primary] test> rs.addArb('m08-4:27017').ok
+1
+rs0 [direct: primary] test> db.adminCommand({getDefaultRWConcern: 1})
+{
+  defaultReadConcern: { level: 'local' },
+  defaultWriteConcern: { w: 'majority', wtimeout: 0 },
+  updateOpTime: Timestamp({ t: 1790513642, i: 1 }),
+  updateWallClockTime: ISODate('2026-09-27T12:54:07.945Z'),
+  defaultWriteConcernSource: 'global',
+  defaultReadConcernSource: 'implicit',
+  localUpdateWallClockTime: ISODate('2026-09-27T12:54:07.953Z'),
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790513647, i: 3 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790513647, i: 3 })
+}
+

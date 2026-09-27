@@ -1,0 +1,532 @@
+
+######## 0. 실습 환경: config server, 샤드 2개, mongos
+
+$ docker run -d --init --name m07-cfg --hostname m07-cfg --network m07-net  mongo-internals:rocky9-8.0.32 sleep infinity
+107d77a5a604b74134e40df27828691bf3500d989b3675936d80475d96814d12
+[exit=0]
+
+$ docker run -d --init --name m07-sh1 --hostname m07-sh1 --network m07-net  mongo-internals:rocky9-8.0.32 sleep infinity
+10cc572acdb53062e961124ea2964201befa6e361b1da573f0c0a5089970af61
+[exit=0]
+
+$ docker run -d --init --name m07-sh2 --hostname m07-sh2 --network m07-net  mongo-internals:rocky9-8.0.32 sleep infinity
+0ddf04d6902ca46f61685de721ba74898ee35f3172b488da2e42f53accddb2a7
+[exit=0]
+
+$ docker run -d --init --name m07-mongos --hostname m07-mongos --network m07-net  mongo-internals:rocky9-8.0.32 sleep infinity
+55d32d662b1d94745a9226727c64e892f50861282e208abc76fb6a4a7a1f5ecd
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongos --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+mongos version v8.0.32
+2.12.0
+[exit=0]
+
+# (m07-cfg)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --configsvr --replSet cfg --port 27017 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m07-cfg) mongosh 
+test> rs.initiate({_id: 'cfg', configsvr: true, members: [{_id: 0, host: 'm07-cfg:27017'}]}).ok
+1
+
+# (m07-sh1)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --shardsvr --replSet sh1 --port 27017 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m07-sh1) mongosh 
+test> rs.initiate({_id: 'sh1', members: [{_id: 0, host: 'm07-sh1:27017'}]}).ok
+1
+
+# (m07-sh2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --shardsvr --replSet sh2 --port 27017 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m07-sh2) mongosh 
+test> rs.initiate({_id: 'sh2', members: [{_id: 0, host: 'm07-sh2:27017'}]}).ok
+1
+
+$ mongos --configdb cfg/m07-cfg:27017 --bind_ip_all --port 27017 --logpath /data/mongos.log --fork | grep -E 'forked|ERROR'
+$ mongos --configdb cfg/m07-cfg:27017 --bind_ip_all --port 27018 --logpath /data/mongos-b.log --fork | grep -E 'forked|ERROR'
+forked process: 35
+forked process: 76
+[exit=0]
+
+
+######## 1. 샤드 추가와 config 데이터베이스
+
+[direct: mongos] test> sh.addShard('sh1/m07-sh1:27017').shardAdded
+sh1
+[direct: mongos] test> sh.addShard('sh2/m07-sh2:27017').shardAdded
+sh2
+[direct: mongos] test> db.getSiblingDB('config').shards.find()
+[
+  {
+    _id: 'sh1',
+    host: 'sh1/m07-sh1:27017',
+    state: 1,
+    topologyTime: Timestamp({ t: 1790514860, i: 10 }),
+    replSetConfigVersion: Long('-1')
+  },
+  {
+    _id: 'sh2',
+    host: 'sh2/m07-sh2:27017',
+    state: 1,
+    topologyTime: Timestamp({ t: 1790514860, i: 28 }),
+    replSetConfigVersion: Long('-1')
+  }
+]
+[direct: mongos] test> db.getSiblingDB('config').getCollectionNames().filter(n => ['shards', 'databases', 'collections', 'chunks', 'settings', 'changelog', 'version', 'mongos'].includes(n))
+[
+  'mongos',
+  'version',
+  'collections',
+  'changelog',
+  'shards',
+  'settings',
+  'databases',
+  'chunks'
+]
+[direct: mongos] test> db.getSiblingDB('config').mongos.find({}, {_id: 1, mongoVersion: 1})
+[
+  { _id: 'm07-mongos:27017', mongoVersion: '8.0.32' },
+  { _id: 'm07-mongos:27018', mongoVersion: '8.0.32' }
+]
+
+
+######## 2. range shard key로 샤딩: 빈 컬렉션은 chunk 하나
+
+[direct: mongos] test> db.getSiblingDB('config').settings.find()
+[direct: mongos] test> db.adminCommand({enableSharding: 'shop', primaryShard: 'sh1'}).ok
+1
+[direct: mongos] test> sh.shardCollection('shop.orders', {customerId: 1}).collectionsharded
+shop.orders
+[direct: mongos] test> db.getSiblingDB('config').databases.find({_id: 'shop'})
+[
+  {
+    _id: 'shop',
+    primary: 'sh1',
+    version: {
+      uuid: UUID('3402b6a2-b9ab-4f97-a30a-410b7ff2b9fa'),
+      timestamp: Timestamp({ t: 1790514860, i: 45 }),
+      lastMod: 1
+    }
+  }
+]
+[direct: mongos] test> db.getSiblingDB('config').collections.findOne({_id: 'shop.orders'}, {key: 1, unique: 1, uuid: 1, timestamp: 1})
+{
+  _id: 'shop.orders',
+  timestamp: Timestamp({ t: 1790514860, i: 64 }),
+  uuid: UUID('a25230b3-f5d2-467e-955e-8f77b5680469'),
+  key: { customerId: 1 },
+  unique: false
+}
+[direct: mongos] test> const ou = db.getSiblingDB('config').collections.findOne({_id: 'shop.orders'}).uuid; db.getSiblingDB('config').chunks.find({uuid: ou}, {_id: 0, min: 1, max: 1, shard: 1, lastmod: 1})
+[
+  {
+    min: { customerId: MinKey() },
+    max: { customerId: MaxKey() },
+    shard: 'sh1',
+    lastmod: Timestamp({ t: 1, i: 0 })
+  }
+]
+
+
+######## 3. chunk 크기를 1MB로 줄이고 데이터를 넣으면 balancer가 옮긴다
+
+[direct: mongos] test> db.getSiblingDB('config').settings.updateOne({_id: 'chunksize'}, {$set: {value: 1}}, {upsert: true}).acknowledged
+true
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> const pad = 'x'.repeat(200); for (let b = 0; b < 40; b++) { const docs = []; for (let i = 0; i < 2000; i++) { const c = b * 2000 + i; docs.push({customerId: c, status: c % 10 === 0 ? 'cancelled' : 'paid', amount: c % 997, pad: pad}); } db.orders.insertMany(docs); } 'inserted'
+inserted
+[direct: mongos] shop> db.orders.countDocuments()
+80000
+[direct: mongos] shop> sh.balancerCollectionStatus('shop.orders')
+{
+  chunkSize: 1,
+  balancerCompliant: false,
+  firstComplianceViolation: 'chunksImbalance',
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790514861, i: 161 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790514861, i: 1 })
+}
+
+[direct: mongos] test> sh.balancerCollectionStatus('shop.orders')
+{
+  chunkSize: 1,
+  balancerCompliant: true,
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790514876, i: 21 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790514876, i: 21 })
+}
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> db.orders.aggregate([{$collStats: {storageStats: {}}}, {$project: {_id: 0, shard: 1, count: '$storageStats.count', numOrphanDocs: '$storageStats.numOrphanDocs'}}, {$sort: {shard: 1}}])
+[
+  { shard: 'sh1', count: 80000, numOrphanDocs: 37840 },
+  { shard: 'sh2', count: 37840, numOrphanDocs: 0 }
+]
+[direct: mongos] shop> const ou = db.getSiblingDB('config').collections.findOne({_id: 'shop.orders'}).uuid; db.getSiblingDB('config').chunks.aggregate([{$match: {uuid: ou}}, {$group: {_id: '$shard', chunks: {$sum: 1}}}, {$sort: {_id: 1}}])
+[ { _id: 'sh1', chunks: 1 }, { _id: 'sh2', chunks: 10 } ]
+[direct: mongos] shop> db.getSiblingDB('config').chunks.find({uuid: ou}, {_id: 0, min: 1, max: 1, shard: 1}).sort({min: 1}).limit(4)
+[
+  {
+    min: { customerId: MinKey() },
+    max: { customerId: 3784 },
+    shard: 'sh2'
+  },
+  { min: { customerId: 3784 }, max: { customerId: 7568 }, shard: 'sh2' },
+  { min: { customerId: 7568 }, max: { customerId: 11352 }, shard: 'sh2' },
+  {
+    min: { customerId: 11352 },
+    max: { customerId: 15136 },
+    shard: 'sh2'
+  }
+]
+[direct: mongos] shop> db.getSiblingDB('config').changelog.aggregate([{$match: {ns: 'shop.orders'}}, {$group: {_id: '$what', n: {$sum: 1}}}, {$sort: {_id: 1}}])
+[
+  { _id: 'moveChunk.commit', n: 10 },
+  { _id: 'moveChunk.from', n: 10 },
+  { _id: 'moveChunk.start', n: 10 },
+  { _id: 'moveChunk.to', n: 10 },
+  { _id: 'shardCollection.end', n: 1 },
+  { _id: 'shardCollection.start', n: 1 }
+]
+[direct: mongos] shop> db.getSiblingDB('config').changelog.find({ns: 'shop.orders', what: 'moveChunk.commit'}, {_id: 0, time: 1, what: 1, details: 1}).sort({time: 1}).limit(1)
+[
+  {
+    time: ISODate('2026-09-27T13:14:25.547Z'),
+    what: 'moveChunk.commit',
+    details: {
+      min: { customerId: MinKey() },
+      max: { customerId: 3784 },
+      from: 'sh1',
+      to: 'sh2',
+      counts: {
+        cloned: Long('3784'),
+        clonedBytes: Long('1050063'),
+        catchup: Long('0'),
+        steady: Long('0')
+      }
+    }
+  }
+]
+
+# (m07-cfg)
+$ jq -r 'select(.msg | test("alanc")) | .msg' /data/mongod.log | sort | uniq -c
+      1 Balancer command scheduler start requested
+      1 Balancer scheduler recovery complete. Switching to regular execution
+      1 Balancer scheduler thread started
+      1 Balancer worker thread initialised. Entering main loop.
+      1 CSRS balancer is starting
+      1 Performing balancer warning checks
+[exit=0]
+
+
+######## 4. orphan: 옮겨 간 range는 원본 샤드에 잠시 남는다
+
+# (m07-sh1) mongosh 
+sh1 [direct: primary] test> db.getSiblingDB('config').rangeDeletions.find({}, {_id: 0, nss: 1, range: 1, whenToClean: 1, numOrphanDocs: 1}).limit(3)
+[
+  {
+    nss: 'shop.orders',
+    range: { min: { customerId: MinKey() }, max: { customerId: 3784 } },
+    whenToClean: 'delayed',
+    numOrphanDocs: Long('3784')
+  },
+  {
+    nss: 'shop.orders',
+    range: { min: { customerId: 3784 }, max: { customerId: 7568 } },
+    whenToClean: 'delayed',
+    numOrphanDocs: Long('3784')
+  },
+  {
+    nss: 'shop.orders',
+    range: { min: { customerId: 7568 }, max: { customerId: 11352 } },
+    whenToClean: 'delayed',
+    numOrphanDocs: Long('3784')
+  }
+]
+sh1 [direct: primary] test> db.getSiblingDB('config').rangeDeletions.countDocuments()
+10
+sh1 [direct: primary] test> db.getSiblingDB('shop').orders.countDocuments()
+80000
+sh1 [direct: primary] test> db.adminCommand({getParameter: 1, orphanCleanupDelaySecs: 1}).orphanCleanupDelaySecs
+900
+
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> db.orders.countDocuments()
+80000
+
+
+######## 5. 쿼리 라우팅: shard key로 찾으면 한 샤드, 아니면 모든 샤드
+
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> function route(e) { const p = e.queryPlanner.winningPlan; return {stage: p.stage, shards: p.shards.map(s => s.shardName)}; }
+[Function: route]
+[direct: mongos] shop> route(db.orders.find({customerId: 12345}).explain())
+{ stage: 'SINGLE_SHARD', shards: [ 'sh2' ] }
+[direct: mongos] shop> route(db.orders.find({status: 'cancelled', amount: 5}).explain())
+{ stage: 'SHARD_MERGE', shards: [ 'sh1', 'sh2' ] }
+[direct: mongos] shop> route(db.orders.find({customerId: {$gte: 100, $lt: 200}}).explain())
+{ stage: 'SINGLE_SHARD', shards: [ 'sh2' ] }
+[direct: mongos] shop> route(db.orders.find({customerId: {$gte: 0, $lt: 80000}}).explain())
+{ stage: 'SHARD_MERGE', shards: [ 'sh1', 'sh2' ] }
+[direct: mongos] shop> const x = db.orders.find({status: 'cancelled', amount: 5}).explain('executionStats').executionStats; ({nReturned: x.nReturned, totalDocsExamined: x.totalDocsExamined, shards: x.executionStages.shards.map(s => ({shard: s.shardName, nReturned: s.nReturned, docsExamined: s.totalDocsExamined}))})
+{
+  nReturned: 8,
+  totalDocsExamined: 117840,
+  shards: [
+    { shard: 'sh2', nReturned: 4, docsExamined: 37840 },
+    { shard: 'sh1', nReturned: 4, docsExamined: 80000 }
+  ]
+}
+[direct: mongos] shop> const y = db.orders.find({customerId: 12345}).explain('executionStats').executionStats; ({nReturned: y.nReturned, totalDocsExamined: y.totalDocsExamined, shards: y.executionStages.shards.map(s => ({shard: s.shardName, nReturned: s.nReturned, docsExamined: s.totalDocsExamined}))})
+{
+  nReturned: 1,
+  totalDocsExamined: 1,
+  shards: [ { shard: 'sh2', nReturned: 1, docsExamined: 1 } ]
+}
+
+
+######## 6. 단조 증가 shard key: 새 도큐먼트가 모두 한 샤드로
+
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> const ou = db.getSiblingDB('config').collections.findOne({_id: 'shop.orders'}).uuid; db.getSiblingDB('config').chunks.find({uuid: ou, 'max.customerId': MaxKey}, {_id: 0, min: 1, max: 1, shard: 1})
+[
+  {
+    min: { customerId: 37840 },
+    max: { customerId: MaxKey() },
+    shard: 'sh1'
+  }
+]
+[direct: mongos] shop> sh.stopBalancer().ok
+1
+[direct: mongos] shop> const pad = 'x'.repeat(200); for (let b = 40; b < 50; b++) { const docs = []; for (let i = 0; i < 2000; i++) { const c = b * 2000 + i; docs.push({customerId: c, status: 'paid', amount: c % 997, pad: pad}); } db.orders.insertMany(docs); } 'inserted'
+inserted
+[direct: mongos] shop> const z = db.orders.find({customerId: {$gte: 80000}}).explain('executionStats').executionStats; ({nReturned: z.nReturned, shards: z.executionStages.shards.map(s => ({shard: s.shardName, nReturned: s.nReturned}))})
+{ nReturned: 20000, shards: [ { shard: 'sh1', nReturned: 20000 } ] }
+
+
+######## 7. hashed shard key: 빈 컬렉션도 샤드마다 chunk
+
+[direct: mongos] test> sh.shardCollection('shop.users', {userId: 'hashed'}).collectionsharded
+shop.users
+[direct: mongos] test> const uu = db.getSiblingDB('config').collections.findOne({_id: 'shop.users'}).uuid; db.getSiblingDB('config').chunks.find({uuid: uu}, {_id: 0, min: 1, max: 1, shard: 1})
+[
+  { min: { userId: MinKey() }, max: { userId: Long('0') }, shard: 'sh2' },
+  { min: { userId: Long('0') }, max: { userId: MaxKey() }, shard: 'sh1' }
+]
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> for (let b = 0; b < 10; b++) { const docs = []; for (let i = 0; i < 2000; i++) { docs.push({userId: b * 2000 + i, name: 'u' + (b * 2000 + i)}); } db.users.insertMany(docs); } 'inserted'
+inserted
+[direct: mongos] shop> db.users.getShardDistribution()
+Shard sh1 at sh1/m07-sh1:27017
+{
+  data: '485KiB',
+  docs: 9860,
+  chunks: 1,
+  'estimated data per chunk': '485KiB',
+  'estimated docs per chunk': 9860
+}
+---
+Shard sh2 at sh2/m07-sh2:27017
+{
+  data: '499KiB',
+  docs: 10140,
+  chunks: 1,
+  'estimated data per chunk': '499KiB',
+  'estimated docs per chunk': 10140
+}
+---
+Totals
+{
+  data: '985KiB',
+  docs: 20000,
+  chunks: 2,
+  'Shard sh1': [
+    '49.28 % data',
+    '49.3 % docs in cluster',
+    '50B avg obj size on shard'
+  ],
+  'Shard sh2': [
+    '50.71 % data',
+    '50.7 % docs in cluster',
+    '50B avg obj size on shard'
+  ]
+}
+[direct: mongos] shop> function route(e) { const p = e.queryPlanner.winningPlan; return {stage: p.stage, shards: p.shards.map(s => s.shardName)}; }
+[Function: route]
+[direct: mongos] shop> route(db.users.find({userId: 777}).explain())
+{ stage: 'SINGLE_SHARD', shards: [ 'sh2' ] }
+[direct: mongos] shop> route(db.users.find({userId: {$gte: 100, $lt: 110}}).explain())
+{ stage: 'SHARD_MERGE', shards: [ 'sh1', 'sh2' ] }
+[direct: mongos] shop> db.users.find({userId: 777}, {_id: 0}).toArray()
+[ { userId: 777, name: 'u777' } ]
+
+
+######## 8. 수동 chunk 이동(moveRange)과 migration 단계
+
+# mongos B(27018)가 shop.orders의 routing table을 먼저 캐시해 둔다
+
+# MaxKey chunk: sh1, min customerId 37840 -> sh2
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> db.orders.countDocuments({customerId: {$gte: 37840, $lt: 37940}})
+100
+[direct: mongos] shop> db.adminCommand({getShardVersion: 'shop.orders'}).version
+Timestamp({ t: 11, i: 1 })
+
+# 옮겨 왔던 range를 곧바로 되돌려 보내면: 원래 샤드에 orphan이 남아 있어 실패한다
+
+[direct: mongos] test> db.adminCommand({moveRange: 'shop.orders', min: {customerId: MinKey}, toShard: 'sh1'})
+MongoServerError[OperationFailed]: Command request failed on source shard. :: caused by :: Data transfer error: migrate failed: ExceededTimeLimit: Migration failed because the orphans cleanup routine didn't clear yet a portion of the range being migrated that was previously owned by the recipient shard.
+
+# (m07-sh1)
+$ jq -c 'select(.c == "MIGRATE") | {t: .t."$date", msg}' /data/mongod.log | tail -4
+{"t":"2026-09-27T13:14:44.681+00:00","msg":"Migration paused because the requested range overlaps with a range already scheduled for deletion"}
+{"t":"2026-09-27T13:14:44.681+00:00","msg":"Waiting for deletion of orphans"}
+{"t":"2026-09-27T13:14:54.682+00:00","msg":"Error during migration"}
+{"t":"2026-09-27T13:14:54.682+00:00","msg":"clearReceiveChunk"}
+[exit=0]
+
+# 한 번도 sh2에 없던 range를 옮긴다 (max를 주지 않으면 원본 샤드가 chunk 크기로 잘라 정한다)
+
+[direct: mongos] test> db.adminCommand({moveRange: 'shop.orders', min: {customerId: 37840}, toShard: 'sh2', waitForDelete: true}).ok
+1
+[direct: mongos] test> const ou = db.getSiblingDB('config').collections.findOne({_id: 'shop.orders'}).uuid; db.getSiblingDB('config').chunks.find({uuid: ou, 'min.customerId': {$gte: 37840}}, {_id: 0, min: 1, max: 1, shard: 1, lastmod: 1}).sort({min: 1})
+[
+  {
+    min: { customerId: 37840 },
+    max: { customerId: 41624 },
+    shard: 'sh2',
+    lastmod: Timestamp({ t: 12, i: 0 })
+  },
+  {
+    min: { customerId: 41624 },
+    max: { customerId: MaxKey() },
+    shard: 'sh1',
+    lastmod: Timestamp({ t: 12, i: 1 })
+  }
+]
+[direct: mongos] test> db.getSiblingDB('config').changelog.find({ns: 'shop.orders', what: 'moveChunk.from'}, {_id: 0, what: 1, details: 1}).sort({time: -1}).limit(1)
+[
+  {
+    what: 'moveChunk.from',
+    details: {
+      'step 1 of 6': 0,
+      'step 2 of 6': 2,
+      'step 3 of 6': 9,
+      'step 4 of 6': 104,
+      'step 5 of 6': 15,
+      'step 6 of 6': 54,
+      min: { customerId: 37840 },
+      max: { customerId: 41624 },
+      to: 'sh2',
+      from: 'sh1',
+      note: 'success'
+    }
+  }
+]
+
+# (m07-sh1)
+$ jq -c 'select(.c == "MIGRATE" or .c == "RANGEDEL") | {t: .t."$date", c, msg}' /data/mongod.log | tail -12
+$ jq -c 'select(.msg == "Migration finished") | .attr' /data/mongod.log | tail -1
+{"t":"2026-09-27T13:14:44.681+00:00","c":"MIGRATE","msg":"Migration paused because the requested range overlaps with a range already scheduled for deletion"}
+{"t":"2026-09-27T13:14:44.681+00:00","c":"MIGRATE","msg":"Waiting for deletion of orphans"}
+{"t":"2026-09-27T13:14:54.682+00:00","c":"MIGRATE","msg":"Error during migration"}
+{"t":"2026-09-27T13:14:54.682+00:00","c":"MIGRATE","msg":"clearReceiveChunk"}
+{"t":"2026-09-27T13:14:55.613+00:00","c":"MIGRATE","msg":"Starting chunk migration donation"}
+{"t":"2026-09-27T13:14:55.730+00:00","c":"MIGRATE","msg":"Migration successfully entered critical section"}
+{"t":"2026-09-27T13:14:55.750+00:00","c":"MIGRATE","msg":"Migration succeeded and updated collection placement version"}
+{"t":"2026-09-27T13:14:55.750+00:00","c":"MIGRATE","msg":"Exiting commit critical section"}
+{"t":"2026-09-27T13:14:55.750+00:00","c":"MIGRATE","msg":"Finished critical section"}
+{"t":"2026-09-27T13:14:55.750+00:00","c":"MIGRATE","msg":"MigrationCoordinator delivering decision to self and to recipient"}
+{"t":"2026-09-27T13:14:55.761+00:00","c":"MIGRATE","msg":"Waiting for migration cleanup after chunk commit"}
+{"t":"2026-09-27T13:14:55.802+00:00","c":"MIGRATE","msg":"Unregistering donate chunk"}
+{"migrationId":"1b6d9bd6-a654-4816-b64c-98d0be8f1eed","totalTimeMillis":187,"docsCloned":3784,"bytesCloned":1050063,"cloneTime":111}
+[exit=0]
+
+# (m07-sh2)
+$ jq -c 'select(.c == "MIGRATE") | {t: .t."$date", msg}' /data/mongod.log | tail -5
+{"t":"2026-09-27T13:14:55.730+00:00","msg":"Chunk data replicated successfully."}
+{"t":"2026-09-27T13:14:55.744+00:00","msg":"Migration commit succeeded flushing to secondaries"}
+{"t":"2026-09-27T13:14:55.746+00:00","msg":"Entered migration recipient critical section"}
+{"t":"2026-09-27T13:14:55.751+00:00","msg":"Exited migration recipient critical section"}
+{"t":"2026-09-27T13:14:55.755+00:00","msg":"clearReceiveChunk"}
+[exit=0]
+
+# (m07-sh1) mongosh 
+sh1 [direct: primary] test> db.getSiblingDB('shop').orders.countDocuments({customerId: {$gte: 37840, $lt: 41624}})
+0
+sh1 [direct: primary] test> db.getSiblingDB('shop').orders.countDocuments({customerId: {$lt: 3784}})
+3784
+sh1 [direct: primary] test> db.getSiblingDB('config').rangeDeletions.countDocuments()
+10
+
+
+######## 9. stale config: 다른 mongos는 옛 routing table로 보낸 뒤 고친다
+
+[direct: mongos] test> db.adminCommand({getShardVersion: 'shop.orders'}).version
+Timestamp({ t: 11, i: 1 })
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> db.orders.countDocuments({customerId: {$gte: 37840, $lt: 37940}})
+100
+[direct: mongos] shop> db.adminCommand({getShardVersion: 'shop.orders'}).version
+Timestamp({ t: 12, i: 1 })
+
+# sh1 countStaleConfigErrors: Long('1') -> Long('2')
+# sh2 countStaleConfigErrors: Long('0') -> Long('0')
+$ jq -c 'select(.msg == "Refreshed cached collection" and .attr.namespace == "shop.orders") | {t: .t."$date", msg, newVersion: (.attr.newVersion | capture("v: (?<v>Timestamp\\([0-9, ]+\\))").v), durationMillis: .attr.durationMillis}' /data/mongos-b.log
+{"t":"2026-09-27T13:14:44.177+00:00","msg":"Refreshed cached collection","newVersion":"Timestamp(11, 1)","durationMillis":0}
+{"t":"2026-09-27T13:14:56.974+00:00","msg":"Refreshed cached collection","newVersion":"Timestamp(12, 1)","durationMillis":0}
+[exit=0]
+
+
+######## 10. 8.0: 샤딩하지 않은 컬렉션을 다른 샤드로 옮기기(moveCollection)
+
+# (m07-cfg) mongosh 
+cfg [direct: primary] test> db.adminCommand({setParameter: 1, reshardingMinimumOperationDurationMillis: 0}).ok
+1
+
+[direct: mongos] test> use shop
+switched to db shop
+[direct: mongos] shop> db.logs.insertMany([{m: 'a'}, {m: 'b'}, {m: 'c'}]).acknowledged
+true
+[direct: mongos] shop> db.getSiblingDB('config').collections.findOne({_id: 'shop.logs'})
+null
+[direct: mongos] shop> db.adminCommand({moveCollection: 'shop.logs', toShard: 'sh2'}).ok
+1
+[direct: mongos] shop> db.getSiblingDB('config').collections.findOne({_id: 'shop.logs'}, {_id: 1, key: 1, unsplittable: 1})
+{ _id: 'shop.logs', key: { _id: 1 }, unsplittable: true }
+[direct: mongos] shop> const lu = db.getSiblingDB('config').collections.findOne({_id: 'shop.logs'}).uuid; db.getSiblingDB('config').chunks.find({uuid: lu}, {_id: 0, min: 1, max: 1, shard: 1})
+[ { min: { _id: MinKey() }, max: { _id: MaxKey() }, shard: 'sh2' } ]
+[direct: mongos] shop> db.logs.countDocuments()
+3
+

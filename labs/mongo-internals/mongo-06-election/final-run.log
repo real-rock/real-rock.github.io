@@ -1,0 +1,532 @@
+
+######## 0. 실습 환경: 3노드 레플리카셋과 클라이언트
+
+$ docker run -d --init --name m06-1 --hostname m06-1 --network m06-net  mongo-internals:rocky9-8.0.32 sleep infinity
+e1e8d4ffc4b9f3cd02fe179ccbab4a3cda1068b815839cae9fe93ec0bab18792
+[exit=0]
+
+$ docker run -d --init --name m06-2 --hostname m06-2 --network m06-net  mongo-internals:rocky9-8.0.32 sleep infinity
+56cc0f22006e720104d8b5c67b0377da43c2b12be30bec54d59c48b9101c99c5
+[exit=0]
+
+$ docker run -d --init --name m06-3 --hostname m06-3 --network m06-net  mongo-internals:rocky9-8.0.32 sleep infinity
+95ce701977850112f1b5c09596f3148a1a51819263b3cb6c0d1729f302ec544e
+[exit=0]
+
+$ cat /etc/rocky-release
+$ mongod --version | head -1
+$ mongosh --version
+Rocky Linux release 9.8 (Blue Onyx)
+db version v8.0.32
+2.12.0
+[exit=0]
+
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 33
+[exit=0]
+
+# (m06-2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+# (m06-3)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 17
+[exit=0]
+
+$ docker run -d --init --name m06-c --hostname m06-c --network m06-net  mongo-internals:rocky9-8.0.32 sleep infinity
+91d9c663de79ba0a14f87cd2ba953fab9f107863dbd77644e6dae0d39660a45b
+[exit=0]
+
+test> rs.initiate({_id: "rs0", members: [{_id: 0, host: "m06-1:27017"}, {_id: 1, host: "m06-2:27017"}, {_id: 2, host: "m06-3:27017"}]})
+{
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790517460, i: 1 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790517460, i: 1 })
+}
+
+# primary: m06-1
+$ cat > /tmp/elog.jq <<'JQ'
+$ select(.msg | test("Starting an election|dry run|Dry election|Election succeeded|catch-up mode|Transition to primary complete|priority takeover|Stepping down from primary|see a majority|replSetStepUp|Handing off election|kill user operations|Replica set state transition"))
+$ | {t: .t."$date"[11:23], msg, attr: (.attr | {oldState, newState, term, newTerm, when, target} | with_entries(select(.value != null)))}
+$ JQ
+[exit=0]
+
+# (m06-2)
+$ cat > /tmp/elog.jq <<'JQ'
+$ select(.msg | test("Starting an election|dry run|Dry election|Election succeeded|catch-up mode|Transition to primary complete|priority takeover|Stepping down from primary|see a majority|replSetStepUp|Handing off election|kill user operations|Replica set state transition"))
+$ | {t: .t."$date"[11:23], msg, attr: (.attr | {oldState, newState, term, newTerm, when, target} | with_entries(select(.value != null)))}
+$ JQ
+[exit=0]
+
+# (m06-3)
+$ cat > /tmp/elog.jq <<'JQ'
+$ select(.msg | test("Starting an election|dry run|Dry election|Election succeeded|catch-up mode|Transition to primary complete|priority takeover|Stepping down from primary|see a majority|replSetStepUp|Handing off election|kill user operations|Replica set state transition"))
+$ | {t: .t."$date"[11:23], msg, attr: (.attr | {oldState, newState, term, newTerm, when, target} | with_entries(select(.value != null)))}
+$ JQ
+[exit=0]
+
+
+######## 1. 선출 설정과 term
+
+rs0 [direct: primary] test> rs.conf().protocolVersion
+Long('1')
+rs0 [direct: primary] test> var s = rs.conf().settings; ({heartbeatIntervalMillis: s.heartbeatIntervalMillis, heartbeatTimeoutSecs: s.heartbeatTimeoutSecs, electionTimeoutMillis: s.electionTimeoutMillis, catchUpTimeoutMillis: s.catchUpTimeoutMillis, catchUpTakeoverDelayMillis: s.catchUpTakeoverDelayMillis})
+{
+  heartbeatIntervalMillis: 2000,
+  heartbeatTimeoutSecs: 10,
+  electionTimeoutMillis: 10000,
+  catchUpTimeoutMillis: -1,
+  catchUpTakeoverDelayMillis: 30000
+}
+rs0 [direct: primary] test> rs.conf().members.map(m => ({host: m.host, priority: m.priority, votes: m.votes}))
+[
+  { host: 'm06-1:27017', priority: 1, votes: 1 },
+  { host: 'm06-2:27017', priority: 1, votes: 1 },
+  { host: 'm06-3:27017', priority: 1, votes: 1 }
+]
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr, electionDate: m.electionDate}))})
+{
+  term: Long('1'),
+  members: [
+    {
+      name: 'm06-1:27017',
+      stateStr: 'PRIMARY',
+      electionDate: ISODate('2026-09-27T13:57:51.000Z')
+    },
+    {
+      name: 'm06-2:27017',
+      stateStr: 'SECONDARY',
+      electionDate: undefined
+    },
+    {
+      name: 'm06-3:27017',
+      stateStr: 'SECONDARY',
+      electionDate: undefined
+    }
+  ]
+}
+rs0 [direct: primary] test> rs.status().electionCandidateMetrics
+{
+  lastElectionReason: 'electionTimeout',
+  lastElectionDate: ISODate('2026-09-27T13:57:51.910Z'),
+  electionTerm: Long('1'),
+  lastCommittedOpTimeAtElection: { ts: Timestamp({ t: 1790517460, i: 1 }), t: Long('-1') },
+  lastSeenWrittenOpTimeAtElection: { ts: Timestamp({ t: 1790517460, i: 1 }), t: Long('-1') },
+  lastSeenOpTimeAtElection: { ts: Timestamp({ t: 1790517460, i: 1 }), t: Long('-1') },
+  numVotesNeeded: 2,
+  priorityAtElection: 1,
+  electionTimeoutMillis: Long('10000'),
+  numCatchUpOps: Long('0'),
+  newTermStartDate: ISODate('2026-09-27T13:57:51.935Z'),
+  wMajorityWriteAvailabilityDate: ISODate('2026-09-27T13:57:52.428Z')
+}
+
+
+######## 2. rs.stepDown()
+
+rs0 [direct: primary] test> db.t.insertOne({before: "stepDown"})
+{
+  acknowledged: true,
+  insertedId: ObjectId('6ab920e160932de5a5fdfe24')
+}
+rs0 [direct: primary] test> rs.stepDown()
+{
+  ok: 1,
+  '$clusterTime': {
+    clusterTime: Timestamp({ t: 1790517473, i: 2 }),
+    signature: {
+      hash: Binary.createFromBase64('AAAAAAAAAAAAAAAAAAAAAAAAAAA=', 0),
+      keyId: Long('0')
+    }
+  },
+  operationTime: Timestamp({ t: 1790517473, i: 2 })
+}
+rs0 [direct: secondary] test> db.t.insertOne({after: "stepDown"})
+Uncaught:
+MongoServerSelectionError: not primary
+Caused by: 
+MongoServerError[NotWritablePrimary]: not primary
+
+# 새 primary: m06-2
+# (m06-2) mongosh 
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr}))})
+{
+  term: Long('2'),
+  members: [
+    { name: 'm06-1:27017', stateStr: 'SECONDARY' },
+    { name: 'm06-2:27017', stateStr: 'PRIMARY' },
+    { name: 'm06-3:27017', stateStr: 'SECONDARY' }
+  ]
+}
+rs0 [direct: primary] test> var m = rs.status().electionCandidateMetrics; ({lastElectionReason: m.lastElectionReason, electionTerm: m.electionTerm, numVotesNeeded: m.numVotesNeeded, priorPrimaryMemberId: m.priorPrimaryMemberId, numCatchUpOps: m.numCatchUpOps})
+{
+  lastElectionReason: 'stepUpRequestSkipDryRun',
+  electionTerm: Long('2'),
+  numVotesNeeded: 2,
+  priorPrimaryMemberId: 0,
+  numCatchUpOps: Long('0')
+}
+
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -3
+{"t":"13:57:53.768","msg":"Starting to kill user operations","attr":{}}
+{"t":"13:57:53.769","msg":"Replica set state transition","attr":{"oldState":"PRIMARY","newState":"SECONDARY"}}
+{"t":"13:57:53.769","msg":"Handing off election","attr":{"target":"m06-2:27017"}}
+[exit=0]
+
+# (m06-2)
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -9
+{"t":"13:57:53.769","msg":"Received replSetStepUp request","attr":{}}
+{"t":"13:57:53.769","msg":"Starting an election due to step up request","attr":{}}
+{"t":"13:57:53.769","msg":"Skipping dry run and running for election","attr":{"newTerm":2}}
+{"t":"13:57:53.770","msg":"Election succeeded, assuming primary role","attr":{"term":2}}
+{"t":"13:57:53.770","msg":"Replica set state transition","attr":{"oldState":"SECONDARY","newState":"PRIMARY"}}
+{"t":"13:57:53.770","msg":"Entering primary catch-up mode","attr":{}}
+{"t":"13:57:53.770","msg":"Exited primary catch-up mode","attr":{}}
+{"t":"13:57:53.770","msg":"Starting to kill user operations","attr":{}}
+{"t":"13:57:53.771","msg":"Transition to primary complete; database writes are now permitted","attr":{"term":2}}
+[exit=0]
+
+
+######## 3. primary를 kill -9: electionTimeout 선출
+
+# (m06-c)
+$ cat > /tmp/w.js <<'JS'
+$ let i = 0; const end = Date.now() + 40000;
+$ while (Date.now() < end) {
+$   const t = Date.now();
+$   try {
+$     db.getCollection(C).insertOne({i: i});
+$     const ms = Date.now() - t;
+$     if (ms > 300) print(new Date().toISOString().slice(11, 23), "i=" + i, "ok after", ms, "ms");
+$   } catch (e) {
+$     print(new Date().toISOString().slice(11, 23), "i=" + i, "error after", Date.now() - t, "ms:", e.codeName || e.name, "-", e.message);
+$   }
+$   i++; sleep(100);
+$ }
+$ print("done", i, "inserts,", db.getCollection(C).countDocuments(), "docs");
+$ JS
+$ nohup mongosh "mongodb://m06-1:27017,m06-2:27017,m06-3:27017/test?replicaSet=rs0" --quiet --eval 'var C = "retry"' --file /tmp/w.js > /tmp/retry.log 2>&1 < /dev/null &
+$ nohup mongosh "mongodb://m06-1:27017,m06-2:27017,m06-3:27017/test?replicaSet=rs0&retryWrites=false" --quiet --eval 'var C = "noretry"' --file /tmp/w.js > /tmp/noretry.log 2>&1 < /dev/null &
+$ sleep 3
+[exit=0]
+
+# (m06-2)
+$ kill -9 17
+$ date -u +%T.%3N
+13:58:02.135
+[exit=0]
+
+# 새 primary: m06-3
+# (m06-3) mongosh 
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr, health: m.health}))})
+{
+  term: Long('3'),
+  members: [
+    { name: 'm06-1:27017', stateStr: 'SECONDARY', health: 1 },
+    {
+      name: 'm06-2:27017',
+      stateStr: '(not reachable/healthy)',
+      health: 0
+    },
+    { name: 'm06-3:27017', stateStr: 'PRIMARY', health: 1 }
+  ]
+}
+rs0 [direct: primary] test> rs.status().electionCandidateMetrics
+{
+  lastElectionReason: 'electionTimeout',
+  lastElectionDate: ISODate('2026-09-27T13:58:12.997Z'),
+  electionTerm: Long('3'),
+  lastCommittedOpTimeAtElection: { ts: Timestamp({ t: 1790517482, i: 2 }), t: Long('2') },
+  lastSeenWrittenOpTimeAtElection: { ts: Timestamp({ t: 1790517482, i: 2 }), t: Long('2') },
+  lastSeenOpTimeAtElection: { ts: Timestamp({ t: 1790517482, i: 2 }), t: Long('2') },
+  numVotesNeeded: 2,
+  priorityAtElection: 1,
+  electionTimeoutMillis: Long('10000'),
+  numCatchUpOps: Long('0'),
+  newTermStartDate: ISODate('2026-09-27T13:58:13.008Z'),
+  wMajorityWriteAvailabilityDate: ISODate('2026-09-27T13:58:13.016Z')
+}
+
+rs0 [direct: secondary] test> rs.status().electionParticipantMetrics
+{
+  votedForCandidate: true,
+  electionTerm: Long('3'),
+  lastVoteDate: ISODate('2026-09-27T13:58:13.003Z'),
+  electionCandidateMemberId: 2,
+  voteReason: '',
+  lastWrittenOpTimeAtElection: { ts: Timestamp({ t: 1790517482, i: 2 }), t: Long('2') },
+  maxWrittenOpTimeInSet: { ts: Timestamp({ t: 1790517482, i: 2 }), t: Long('2') },
+  lastAppliedOpTimeAtElection: { ts: Timestamp({ t: 1790517482, i: 2 }), t: Long('2') },
+  maxAppliedOpTimeInSet: { ts: Timestamp({ t: 1790517482, i: 2 }), t: Long('2') },
+  priorityAtElection: 1,
+  newTermStartDate: ISODate('2026-09-27T13:58:13.008Z'),
+  newTermAppliedDate: ISODate('2026-09-27T13:58:13.015Z')
+}
+
+# (m06-3)
+$ jq -c 'select(.msg=="Heartbeat failed after max retries" and .attr.target=="m06-2:27017")|{t:.t."$date"[11:23],msg,attr:{target:.attr.target,error:.attr.error.errmsg}}' /data/mongod.log | head -1
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -10
+{"t":"13:58:03.793","msg":"Heartbeat failed after max retries","attr":{"target":"m06-2:27017","error":"Error connecting to m06-2:27017 (172.21.0.3:27017) :: caused by :: onInvoke :: caused by :: Connection refused"}}
+{"t":"13:57:42.302","msg":"Replica set state transition","attr":{"oldState":"RECOVERING","newState":"SECONDARY"}}
+{"t":"13:58:12.995","msg":"Starting an election, since we've seen no PRIMARY in election timeout period","attr":{}}
+{"t":"13:58:12.995","msg":"Conducting a dry run election to see if we could be elected","attr":{}}
+{"t":"13:58:12.997","msg":"Dry election run succeeded, running for election","attr":{"newTerm":3}}
+{"t":"13:58:13.004","msg":"Election succeeded, assuming primary role","attr":{"term":3}}
+{"t":"13:58:13.004","msg":"Replica set state transition","attr":{"oldState":"SECONDARY","newState":"PRIMARY"}}
+{"t":"13:58:13.004","msg":"Entering primary catch-up mode","attr":{}}
+{"t":"13:58:13.006","msg":"Exited primary catch-up mode","attr":{}}
+{"t":"13:58:13.007","msg":"Starting to kill user operations","attr":{}}
+{"t":"13:58:13.008","msg":"Transition to primary complete; database writes are now permitted","attr":{"term":3}}
+[exit=0]
+
+$ jq -c 'select(.msg=="Responding to vote request")|{t:.t."$date",msg,attr:(.attr|{request,response})}' /data/mongod.log | tail -2
+{"t":"2026-09-27T13:58:12.996+00:00","msg":"Responding to vote request","attr":{"request":"{ replSetRequestVotes: 1, setName: \"rs0\", dryRun: true, term: 2, candidateIndex: 2, configVersion: 1, configTerm: 2, lastWrittenOpTime: { ts: Timestamp(1790517482, 2), t: 2 }, lastAppliedOpTime: { ts: Timestamp(1790517482, 2), t: 2 } }","response":"{ term: 2, voteGranted: true, reason: \"\" }"}}
+{"t":"2026-09-27T13:58:13.003+00:00","msg":"Responding to vote request","attr":{"request":"{ replSetRequestVotes: 1, setName: \"rs0\", dryRun: false, term: 3, candidateIndex: 2, configVersion: 1, configTerm: 2, lastWrittenOpTime: { ts: Timestamp(1790517482, 2), t: 2 }, lastAppliedOpTime: { ts: Timestamp(1790517482, 2), t: 2 } }","response":"{ term: 3, voteGranted: true, reason: \"\" }"}}
+[exit=0]
+
+# (m06-c)
+$ cat /tmp/retry.log
+$ cat /tmp/noretry.log
+13:58:13.016 i=28 ok after 10812 ms
+done 271 inserts, 271 docs
+13:58:13.016 i=28 ok after 10815 ms
+done 271 inserts, 271 docs
+[exit=0]
+
+
+######## 4. 죽은 멤버를 다시 켜면 secondary로 돌아온다
+
+# (m06-2)
+$ mongod --dbpath /data/db --logpath /data/mongod.log --bind_ip_all --fork --replSet rs0 | grep -E 'forked|ERROR'
+forked process: 483
+[exit=0]
+
+# (m06-3) mongosh 
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr}))})
+{
+  term: Long('3'),
+  members: [
+    { name: 'm06-1:27017', stateStr: 'SECONDARY' },
+    { name: 'm06-2:27017', stateStr: 'SECONDARY' },
+    { name: 'm06-3:27017', stateStr: 'PRIMARY' }
+  ]
+}
+
+
+######## 5. priority takeover
+
+# priority 3을 줄 멤버: m06-2 (members[1])
+# (m06-3) mongosh 
+rs0 [direct: primary] test> var c = rs.conf(); c.members[1].priority = 3; rs.reconfig(c).ok
+1
+
+# (m06-2) mongosh 
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr}))})
+{
+  term: Long('4'),
+  members: [
+    { name: 'm06-1:27017', stateStr: 'SECONDARY' },
+    { name: 'm06-2:27017', stateStr: 'PRIMARY' },
+    { name: 'm06-3:27017', stateStr: 'SECONDARY' }
+  ]
+}
+rs0 [direct: primary] test> var m = rs.status().electionCandidateMetrics; ({lastElectionReason: m.lastElectionReason, electionTerm: m.electionTerm, priorityAtElection: m.priorityAtElection})
+{
+  lastElectionReason: 'priorityTakeover',
+  electionTerm: Long('4'),
+  priorityAtElection: 3
+}
+
+# (m06-2)
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -10
+{"t":"13:58:57.791","msg":"Canceling priority takeover callback","attr":{}}
+{"t":"13:58:57.791","msg":"Starting an election for a priority takeover","attr":{}}
+{"t":"13:58:57.791","msg":"Conducting a dry run election to see if we could be elected","attr":{}}
+{"t":"13:58:57.792","msg":"Dry election run succeeded, running for election","attr":{"newTerm":4}}
+{"t":"13:58:57.796","msg":"Election succeeded, assuming primary role","attr":{"term":4}}
+{"t":"13:58:57.796","msg":"Replica set state transition","attr":{"oldState":"SECONDARY","newState":"PRIMARY"}}
+{"t":"13:58:57.796","msg":"Entering primary catch-up mode","attr":{}}
+{"t":"13:58:57.797","msg":"Exited primary catch-up mode","attr":{}}
+{"t":"13:58:57.798","msg":"Starting to kill user operations","attr":{}}
+{"t":"13:58:57.801","msg":"Transition to primary complete; database writes are now permitted","attr":{"term":4}}
+[exit=0]
+
+# (m06-3)
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -3
+{"t":"13:58:57.795","msg":"Stepping down from primary, because a new term has begun","attr":{"term":4}}
+{"t":"13:58:57.795","msg":"Starting to kill user operations","attr":{}}
+{"t":"13:58:57.795","msg":"Replica set state transition","attr":{"oldState":"PRIMARY","newState":"SECONDARY"}}
+[exit=0]
+
+
+######## 6. 네트워크 분할: primary를 떼어 낸다
+
+# (m06-c)
+$ nohup mongosh "mongodb://m06-1:27017,m06-2:27017,m06-3:27017/test?replicaSet=rs0" --quiet --eval 'var C = "retry2"' --file /tmp/w.js > /tmp/retry2.log 2>&1 < /dev/null &
+$ nohup mongosh "mongodb://m06-1:27017,m06-2:27017,m06-3:27017/test?replicaSet=rs0&retryWrites=false" --quiet --eval 'var C = "noretry2"' --file /tmp/w.js > /tmp/noretry2.log 2>&1 < /dev/null &
+$ sleep 3
+[exit=0]
+
+$ docker network disconnect m06-net m06-2 && docker exec m06-c date -u +%T.%3N
+13:59:02.458
+[exit=0]
+
+# (m06-2) mongosh 
+rs0 [direct: secondary] test> var st = rs.status(); ({term: st.term, myState: st.myState, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr, health: m.health}))})
+{
+  term: Long('4'),
+  myState: 2,
+  members: [
+    {
+      name: 'm06-1:27017',
+      stateStr: '(not reachable/healthy)',
+      health: 0
+    },
+    { name: 'm06-2:27017', stateStr: 'SECONDARY', health: 1 },
+    {
+      name: 'm06-3:27017',
+      stateStr: '(not reachable/healthy)',
+      health: 0
+    }
+  ]
+}
+rs0 [direct: secondary] test> db.t.insertOne({from: "isolated"})
+MongoServerError[NotWritablePrimary]: not primary
+
+# (m06-2)
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -4
+{"t":"13:59:12.308","msg":"Can't see a majority of the set, relinquishing primary","attr":{}}
+{"t":"13:59:12.308","msg":"Stepping down from primary in response to heartbeat","attr":{}}
+{"t":"13:59:12.309","msg":"Starting to kill user operations","attr":{}}
+{"t":"13:59:12.310","msg":"Replica set state transition","attr":{"oldState":"PRIMARY","newState":"SECONDARY"}}
+[exit=0]
+
+# 나머지 쪽의 primary: m06-3
+# (m06-3) mongosh 
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr, health: m.health}))})
+{
+  term: Long('5'),
+  members: [
+    { name: 'm06-1:27017', stateStr: 'SECONDARY', health: 1 },
+    {
+      name: 'm06-2:27017',
+      stateStr: '(not reachable/healthy)',
+      health: 0
+    },
+    { name: 'm06-3:27017', stateStr: 'PRIMARY', health: 1 }
+  ]
+}
+rs0 [direct: primary] test> rs.status().electionCandidateMetrics.lastElectionReason
+electionTimeout
+
+$ docker network connect m06-net m06-2 && docker exec m06-c date -u +%T.%3N
+13:59:19.221
+[exit=0]
+
+# (m06-3) mongosh 
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr}))})
+{
+  term: Long('5'),
+  members: [
+    { name: 'm06-1:27017', stateStr: 'SECONDARY' },
+    { name: 'm06-2:27017', stateStr: 'SECONDARY' },
+    { name: 'm06-3:27017', stateStr: 'PRIMARY' }
+  ]
+}
+
+# (m06-2) mongosh 
+rs0 [direct: primary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr}))})
+{
+  term: Long('6'),
+  members: [
+    { name: 'm06-1:27017', stateStr: 'SECONDARY' },
+    { name: 'm06-2:27017', stateStr: 'PRIMARY' },
+    { name: 'm06-3:27017', stateStr: 'SECONDARY' }
+  ]
+}
+rs0 [direct: primary] test> rs.status().electionCandidateMetrics.lastElectionReason
+priorityTakeover
+
+# (m06-2)
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -12
+$ jq -c 'select(.msg|test("[Rr]ollback"))|{t:.t."$date"[11:23],msg}' /data/mongod.log | head -5
+{"t":"13:59:12.310","msg":"Replica set state transition","attr":{"oldState":"PRIMARY","newState":"SECONDARY"}}
+{"t":"13:59:19.378","msg":"Scheduling priority takeover","attr":{"when":{"$date":"2026-09-27T13:59:30.602Z"}}}
+{"t":"13:59:30.602","msg":"Canceling priority takeover callback","attr":{}}
+{"t":"13:59:30.602","msg":"Starting an election for a priority takeover","attr":{}}
+{"t":"13:59:30.602","msg":"Conducting a dry run election to see if we could be elected","attr":{}}
+{"t":"13:59:30.603","msg":"Dry election run succeeded, running for election","attr":{"newTerm":6}}
+{"t":"13:59:30.607","msg":"Election succeeded, assuming primary role","attr":{"term":6}}
+{"t":"13:59:30.607","msg":"Replica set state transition","attr":{"oldState":"SECONDARY","newState":"PRIMARY"}}
+{"t":"13:59:30.608","msg":"Entering primary catch-up mode","attr":{}}
+{"t":"13:59:30.609","msg":"Exited primary catch-up mode","attr":{}}
+{"t":"13:59:30.610","msg":"Starting to kill user operations","attr":{}}
+{"t":"13:59:30.612","msg":"Transition to primary complete; database writes are now permitted","attr":{"term":6}}
+{"t":"13:58:45.994","msg":"Searching for local Rollback ID document"}
+{"t":"13:58:45.995","msg":"Initializing rollback ID"}
+{"t":"13:58:45.995","msg":"Incrementing the rollback ID after unclean shutdown"}
+{"t":"13:58:45.995","msg":"Incremented the rollback ID"}
+[exit=0]
+
+# (m06-c)
+$ cat /tmp/retry2.log
+$ cat /tmp/noretry2.log
+13:59:29.029 i=27 ok after 26652 ms
+done 124 inserts, 124 docs
+13:59:29.021 i=27 error after 26645 ms: NotWritablePrimary - not primary
+done 124 inserts, 123 docs
+[exit=0]
+
+
+######## 7. 과반이 없으면 primary도 없다
+
+$ mongod --dbpath /data/db --shutdown | tail -1
+Killing process with pid: 33
+[exit=0]
+
+# (m06-3)
+$ mongod --dbpath /data/db --shutdown | tail -1
+Killing process with pid: 17
+[exit=0]
+
+# (m06-2) mongosh 
+rs0 [direct: secondary] test> var st = rs.status(); ({term: st.term, members: st.members.map(m => ({name: m.name, stateStr: m.stateStr, health: m.health}))})
+{
+  term: Long('6'),
+  members: [
+    {
+      name: 'm06-1:27017',
+      stateStr: '(not reachable/healthy)',
+      health: 0
+    },
+    { name: 'm06-2:27017', stateStr: 'SECONDARY', health: 1 },
+    {
+      name: 'm06-3:27017',
+      stateStr: '(not reachable/healthy)',
+      health: 0
+    }
+  ]
+}
+rs0 [direct: secondary] test> db.t.insertOne({x: "no majority"})
+MongoServerError[NotWritablePrimary]: not primary
+rs0 [direct: secondary] test> db.t.countDocuments()
+1
+
+# (m06-2)
+$ jq -c -f /tmp/elog.jq /data/mongod.log | tail -4
+$ jq -c 'select(.msg=="Not starting an election, since we are not electable")|{t:.t."$date",msg,attr}' /data/mongod.log | tail -1
+{"t":"14:00:25.649","msg":"Can't see a majority of the set, relinquishing primary","attr":{}}
+{"t":"14:00:25.649","msg":"Stepping down from primary in response to heartbeat","attr":{}}
+{"t":"14:00:25.650","msg":"Starting to kill user operations","attr":{}}
+{"t":"14:00:25.650","msg":"Replica set state transition","attr":{"oldState":"PRIMARY","newState":"SECONDARY"}}
+{"t":"2026-09-27T14:00:36.427+00:00","msg":"Not starting an election, since we are not electable","attr":{"reason":"Not standing for election because I cannot see a majority (mask 0x1)"}}
+[exit=0]
+
